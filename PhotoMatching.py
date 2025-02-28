@@ -16,14 +16,13 @@ baseModel = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
 model = Model(inputs=baseModel.input, outputs=baseModel.output)
 
 databasePath = "C:/Lore Book/Card_Images"
-imageSize = (224, 224)
 cacheFile = "DBCardCache.json"
 outputDir = "captured_cards"
 os.makedirs(outputDir, exist_ok=True)
 
 # Image preprocessing 
 def preprocess_image(imgPath):
-    img = image.load_img(imgPath, targetSize=imageSize)
+    img = image.load_img(imgPath)
     imgArray = image.img_to_array(img)
     imgArray = np.expand_dims(imgArray, axis=0)  # Shape: (1, 224, 224, 3)
     imgArray = preprocess_input(imgArray)  
