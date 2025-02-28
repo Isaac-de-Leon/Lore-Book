@@ -1,73 +1,137 @@
-#PhotoMatching
-
 import cv2
 import numpy as np
 import os
+import json
+import concurrent.futures
+from datetime import datetime
+import tensorflow as tf
+from keras.applications import MobileNetV2
+from keras.applications.mobilenet_v2 import preprocess_input
+from keras.preprocessing import image
+from keras.models import Model
+from sklearn.metrics.pairwise import cosine_similarity
 
-# Path to database images (folder containing card images)
-database_path = "C:\Lore Book\Card_Images"
+# Load MobileNetV2 model (feature extraction only)
+baseModel = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
+model = Model(inputs=baseModel.input, outputs=baseModel.output)
 
-# Initialize ORB feature detector
-orb = cv2.ORB_create()
+databasePath = "C:/Lore Book/Card_Images"
+imageSize = (224, 224)
+cacheFile = "DBCardCache.json"
+outputDir = "captured_cards"
+os.makedirs(outputDir, exist_ok=True)
 
-# Function to capture an image from the webcam
-def capture_image():
-    cap = cv2.VideoCapture(1)  # Open webcam (0 = default camera)
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Failed to capture image")
-            break
+# Image preprocessing 
+def preprocess_image(imgPath):
+    img = image.load_img(imgPath, targetSize=imageSize)
+    imgArray = image.img_to_array(img)
+    imgArray = np.expand_dims(imgArray, axis=0)  # Shape: (1, 224, 224, 3)
+    imgArray = preprocess_input(imgArray)  
+    return imgArray
 
-        cv2.imshow("Press SPACE to capture", frame)
+# Image preprocessing and flattening 
+def extract_features(imgPath):
+    imgArray = preprocess_image(imgPath)
+    features = model.predict(imgArray)  
+    return features.flatten()  
 
-        key = cv2.waitKey(1) & 0xFF
-        if key == 32:  # Press SPACE to capture
-            img_path = "captured_card.jpg"
-            cv2.imwrite(img_path, frame)
-            print("Image captured!")
-            return img_path
-           
-        elif key == ord('q'):  # Quit
-            cap.release()
-            cv2.destroyAllWindows()
-            break
 
-# Function to find the best match in the database
-def find_best_match(input_image_path):
-    input_image = cv2.imread(input_image_path, cv2.IMREAD_GRAYSCALE)
-    keypoints1, descriptors1 = orb.detectAndCompute(input_image, None)
+# Save cache
+def save_cache(featureDB):
+    with open(cacheFile, "w") as f:
+        json.dump({k: v.tolist() for k, v in featureDB.items()}, f)
 
-    best_match = None
-    best_score = 0
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+# Load cache
+def load_cache():
+    if os.path.exists(cacheFile):
+        with open(cacheFile, "r") as f:
+            try:
+                return {k: np.array(v) for k, v in json.load(f).items()}
+            except json.JSONDecodeError:
+                print("Warning: Cache file corrupted. Rebuilding cache.")
+    return {}
 
-    for filename in os.listdir(database_path):
-        if filename.endswith(".webp") or filename.endswith(".png"):
-            db_image = cv2.imread(os.path.join(database_path, filename), cv2.IMREAD_GRAYSCALE)
-            keypoints2, descriptors2 = orb.detectAndCompute(db_image, None)
+# Process each image
+def process_image(filename):
+    imgPath = os.path.join(databasePath, filename)
+    return filename, extract_features(imgPath)
 
-            if descriptors2 is None:
-                continue  # Skip if no descriptors
+# Build feature database with threading
+def build_feature_database():
+    featureDB = load_cache()
+    imageFiles = [f for f in os.listdir(databasePath) if f.endswith((".webp", ".jpg", ".jpeg", ".png"))]
+    newFiles = [f for f in imageFiles if f not in featureDB]
 
-            # Match descriptors
-            matches = bf.match(descriptors1, descriptors2)
-            score = len(matches)  # More matches = better match
+    if newFiles:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = executor.map(process_image, newFiles)
+            featureDB.update(results)
 
-            if score > best_score:
-                best_score = score
-                best_match = filename
+        save_cache(featureDB)
 
-    return best_match
+    return featureDB
 
-# Capture image from webcam
-captured_image = capture_image()
+# Improved matching using cosine similarity
+def find_best_match(inputFeatures, featureDB):
+    bestMatch = None
+    bestScore = -1  # Cosine similarity ranges from -1 to 1
 
-# Find the best matching card
-if captured_image:
-    matched_filename = find_best_match(captured_image)
-    if matched_filename:
-        print(f"Best match: {matched_filename}")
-    else:
-        print("No close match found.")
+    for filename, features in featureDB.items():
+        #if not filename.startswith("005"):  
+            #continue  
+        
+        similarity = cosine_similarity([inputFeatures], [features])[0][0]
+        #print(f"Comparing with {filename}: Score = {similarity:.4f}")  # Debugging
+        
+        if similarity > bestScore:
+            bestScore = similarity
+            bestMatch = filename
+            
+    print(f"Comparing with {bestMatch}: Score = {bestScore}")
+    return bestMatch if bestScore > 0.65 else None  # Adjust threshold as needed
+# Initialize camera
+cap = cv2.VideoCapture(1)
+if not cap.isOpened():
+    print("Error: Could not open camera.")
+    exit()
+
+print("Building feature database...")
+featureDatabase = build_feature_database()
+print("Feature database ready!")
+
+# Crop function
+def crop_image(frame, x, y, width, height):
+    return frame[y:y + height, x:x + width]
+
+# Video loop
+while True:
+    x, y, width, height = 130, 40, 270, 390  
+    ret, frame = cap.read()
+    if not ret:
+        print("Failed to capture image")
+        break
+
+    cv2.rectangle(frame, (x-3, y-3), (x + width+6, y + height+6), (0, 255, 0), 2)
+    cv2.imshow("Press SPACE to capture, 'q' to quit", frame)
+
+    key = cv2.waitKey(1) & 0xFF
+    if key == 32:  # Press SPACE
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        croppedImage = crop_image(frame, x, y, width, height)
+        croppedImagePath = f"{outputDir}/Cropped_card_{timestamp}.jpg"
+        cv2.imwrite(croppedImagePath, croppedImage)
+
+        # Extract features & find best match
+        inputFeatures = extract_features(croppedImagePath)
+        matchedFilename = find_best_match(inputFeatures, featureDatabase)
+
+        print("Best Match Found:" if matchedFilename else "No close match found.")
+        if matchedFilename:
+            print(matchedFilename)
+
+    elif key == ord('q'):
+        print("Exiting...")
+        break
+
+cap.release()
+cv2.destroyAllWindows()
