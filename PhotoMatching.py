@@ -3,6 +3,7 @@ import numpy as np
 import os
 import json
 import concurrent.futures
+import csv
 from datetime import datetime
 import tensorflow as tf
 from keras.applications import MobileNetV2
@@ -18,6 +19,7 @@ model = Model(inputs=baseModel.input, outputs=baseModel.output)
 databasePath = "C:/Lore Book/Card_Images"
 cacheFile = "DBCardCache.json"
 outputDir = "captured_cards"
+CSV_file = "C:/Lore Book/Card_Images/BulkData.csv"
 os.makedirs(outputDir, exist_ok=True)
 
 # Image preprocessing 
@@ -127,6 +129,48 @@ while True:
         print("Best Match Found:" if matchedFilename else "No close match found.")
         if matchedFilename:
             print(matchedFilename)
+            print("Is this correct? (y/n)")
+            cardImage = cv2.imread(f"{databasePath}/{matchedFilename}")
+            cv2.imshow("Matched Card", cardImage)
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('y'):
+                
+                cardSorting = matchedFilename[:-5]
+                splitCard = cardSorting.split('-')
+                print("Is the card foil? (y/n)")
+                key = cv2.waitKey(0) & 0xFF
+                if key == ord('y'):
+                    print("Foil")
+                    variant = "foil"
+                elif key == ord('n'):
+                    print(f"Normal")
+                    variant = "normal"
+                    
+                
+                with open(CSV_file, mode="r", newline="") as file:
+                    reader = csv.reader(file)
+                    for row in reader:
+                        if row and row[0] == splitCard[0] and row[1] == splitCard[1] and row[2] == variant:
+                            print("Row already exists:", row)
+                            row[3] = int(row[3]) + 1
+                            break
+                        else:
+                            print("New Card!")
+                            dataEntry = [splitCard[0], splitCard[1], variant, 1]
+                            with open("data.csv", mode="a", newline="") as file:
+                                writer = csv.writer(file)
+                                writer.writerow(dataEntry)
+                            break
+                cv2.destroyWindow("Matched Card")
+                            
+                
+                                
+            elif key == ord('n'):
+                print("Card not matched.")
+                cv2.destroyWindow("Matched Card")
+            else:
+                print("Invalid input. Try again.")
+                cv2.destroyWindow("Matched Card")
 
     elif key == ord('q'):
         print("Exiting...")
