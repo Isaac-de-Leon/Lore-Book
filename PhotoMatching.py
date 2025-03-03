@@ -19,7 +19,7 @@ model = Model(inputs=baseModel.input, outputs=baseModel.output)
 databasePath = "C:/Lore Book/Card_Images"
 cacheFile = "DBCardCache.json"
 outputDir = "captured_cards"
-CSV_file = "C:/Lore Book/Card_Images/BulkData.csv"
+CSV_file = "C:/Lore Book/Bulk_Add.csv"
 os.makedirs(outputDir, exist_ok=True)
 
 # Image preprocessing 
@@ -149,21 +149,25 @@ while True:
                 
                 with open(CSV_file, mode="r", newline="") as file:
                     reader = csv.reader(file)
+                    flag = False
+                    updated_rows = [] 
                     for row in reader:
                         if row and row[0] == splitCard[0] and row[1] == splitCard[1] and row[2] == variant:
                             print("Row already exists:", row)
-                            row[3] = int(row[3]) + 1
-                            break
-                        else:
-                            print("New Card!")
-                            dataEntry = [splitCard[0], splitCard[1], variant, 1]
-                            with open("data.csv", mode="a", newline="") as file:
-                                writer = csv.writer(file)
-                                writer.writerow(dataEntry)
-                            break
+                            row[3] = str(int(row[3]) + 1)  # Update count immediately
+                            flag = True
+
+                        updated_rows.append(row) 
+                        
+                    if not flag:
+                        print("New Card!")
+                        updated_rows.append([splitCard[0], splitCard[1], variant, "1"])
+                        
+                with open(CSV_file, mode="w", newline="") as file:
+                    writer = csv.writer(file)
+                    writer.writerows(updated_rows)
+
                 cv2.destroyWindow("Matched Card")
-                            
-                
                                 
             elif key == ord('n'):
                 print("Card not matched.")
