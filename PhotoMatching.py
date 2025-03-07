@@ -73,23 +73,65 @@ def build_feature_database():
     return featureDB
 
 # Improved matching using cosine similarity
-def find_best_match(inputFeatures, featureDB):
-    bestMatch = None
-    bestScore = -1  # Cosine similarity ranges from -1 to 1
+def find_best_matches(inputFeatures, featureDB, threshold=0.65):
+    matches = []
 
     for filename, features in featureDB.items():
-        #if not filename.startswith("005"):  
-            #continue  
-        
         similarity = cosine_similarity([inputFeatures], [features])[0][0]
-        #print(f"Comparing with {filename}: Score = {similarity:.4f}")  # Debugging
+
+        if similarity >= threshold:
+            matches.append((filename, similarity))
+
+    # Sort matches from highest to lowest similarity
+    matches.sort(key=lambda x: x[1], reverse=True)
+
+    return matches  # Returns a list of (filename, similarity) tuples
+
+# CSV file handling
+def update_csv(matchedFilename):
+
+    cardSorting = matchedFilename[:-5]
+    splitCard = cardSorting.split('-')
+    if int(splitCard[1]) >204:
+        variant = "foil"
+    else:
+        print("Is the card foil? (y/n)")
+        key = cv2.waitKey(0) & 0xFF
+        if key == ord('y'):
+            print("Foil")
+            variant = "foil"
+        elif key == ord('n'):
+            print(f"Normal")
+            variant = "normal"
+                    
+                
+    with open(CSV_file, mode="r", newline="") as file:
+        reader = csv.reader(file)
+        flag = False
+        updated_rows = [] 
+        for row in reader:
+            if row and row[0] == splitCard[0] and row[1] == splitCard[1] and row[2] == variant:
+                print("Row already exists:", row)
+                row[3] = str(int(row[3]) + 1)  # Update count immediately
+                flag = True
+                
+            updated_rows.append(row) 
+                        
+    if not flag:
+        print("New Card!")
+        updated_rows.append([splitCard[0], splitCard[1], variant, "1"])
+                        
+    with open(CSV_file, mode="w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerows(updated_rows)
         
-        if similarity > bestScore:
-            bestScore = similarity
-            bestMatch = filename
-            
-    print(f"Comparing with {bestMatch}: Score = {bestScore}")
-    return bestMatch if bestScore > 0.65 else None  # Adjust threshold as needed
+    with open(CSV_file, mode="r", newline="") as file:
+        reader = csv.reader(file)
+        print("Current Card List:")
+        for row in reader:
+                print(row)
+
+
 # Initialize camera
 cap = cv2.VideoCapture(1)
 if not cap.isOpened():
@@ -124,58 +166,48 @@ while True:
 
         # Extract features & find best match
         inputFeatures = extract_features(croppedImagePath)
-        matchedFilename = find_best_match(inputFeatures, featureDatabase)
+        matchedCards = find_best_matches(inputFeatures, featureDatabase)
 
-        print("Best Match Found:" if matchedFilename else "No close match found.")
-        if matchedFilename:
-            print(matchedFilename)
-            print("Is this correct? (y/n)")
-            cardImage = cv2.imread(f"{databasePath}/{matchedFilename}")
+        print("Best Match Found:" if matchedCards else "No close match found.")
+        if matchedCards and len(matchedCards) > 0:
+            print("Top Matches Found:")
+            for i, (filename, similarity) in enumerate(matchedCards):
+                print(f"{i + 1}. {filename} (Score: {similarity:.4f})")
+
+            # Display the closest match
+            top_match = matchedCards[0][0]  # Get the most accurate match
+            print(f"\nMost likely match: {top_match}. Is this correct? (y/n)")
+            cardImage = cv2.imread(f"{databasePath}/{top_match}")
             cv2.imshow("Matched Card", cardImage)
             key = cv2.waitKey(0) & 0xFF
+
             if key == ord('y'):
                 
-                cardSorting = matchedFilename[:-5]
-                splitCard = cardSorting.split('-')
-                print("Is the card foil? (y/n)")
-                key = cv2.waitKey(0) & 0xFF
-                if key == ord('y'):
-                    print("Foil")
-                    variant = "foil"
-                elif key == ord('n'):
-                    print(f"Normal")
-                    variant = "normal"
-                    
-                
-                with open(CSV_file, mode="r", newline="") as file:
-                    reader = csv.reader(file)
-                    flag = False
-                    updated_rows = [] 
-                    for row in reader:
-                        if row and row[0] == splitCard[0] and row[1] == splitCard[1] and row[2] == variant:
-                            print("Row already exists:", row)
-                            row[3] = str(int(row[3]) + 1)  # Update count immediately
-                            flag = True
-
-                        updated_rows.append(row) 
-                        
-                    if not flag:
-                        print("New Card!")
-                        updated_rows.append([splitCard[0], splitCard[1], variant, "1"])
-                        
-                with open(CSV_file, mode="w", newline="") as file:
-                    writer = csv.writer(file)
-                    writer.writerows(updated_rows)
-
+                update_csv(top_match)
                 cv2.destroyWindow("Matched Card")
                                 
             elif key == ord('n'):
-                print("Card not matched.")
+                print("Card not matched. Showing alternatives...")
                 cv2.destroyWindow("Matched Card")
-            else:
-                print("Invalid input. Try again.")
-                cv2.destroyWindow("Matched Card")
+                for filename, similarity in matchedCards[1:]:  # Skip the top match
+                    print(f"Alternative match: {filename} (Score: {similarity:.4f})")
+                    alt_card_image = cv2.imread(f"{databasePath}/{filename}")
+                    cv2.imshow("Alternative Match", alt_card_image)
+                    key = cv2.waitKey(0) & 0xFF
 
+                    if key == ord('y'):
+                        print(f"Selected alternative: {filename}")
+                        update_csv(filename)
+                        break  # Stop once a match is confirmed
+                    elif key == ord('n'):
+                        cv2.destroyWindow("Alternative Match")
+                        continue  # Show the next alternative
+                    else:
+                        print("Invalid input, skipping to next.")
+                        
+                        
+        cv2.destroyAllWindows()
+        
     elif key == ord('q'):
         print("Exiting...")
         break
