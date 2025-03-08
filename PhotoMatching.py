@@ -5,7 +5,6 @@ import json
 import concurrent.futures
 import csv
 from datetime import datetime
-import tensorflow as tf
 from keras.applications import MobileNetV2
 from keras.applications.mobilenet_v2 import preprocess_input
 from keras.preprocessing import image
