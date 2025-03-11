@@ -5,7 +5,6 @@ import json
 import concurrent.futures
 import csv
 from datetime import datetime
-import tensorflow as tf
 from keras.applications import MobileNetV2
 from keras.applications.mobilenet_v2 import preprocess_input
 from keras.preprocessing import image
@@ -16,10 +15,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 baseModel = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
 model = Model(inputs=baseModel.input, outputs=baseModel.output)
 
-databasePath = "C:/Lore Book/Card_Images"
+databasePath = "Card_Images"
 cacheFile = "DBCardCache.json"
 outputDir = "captured_cards"
-CSV_file = "C:/Lore Book/Bulk_Add.csv"
+CSV_file = "Bulk_Add.csv"
 os.makedirs(outputDir, exist_ok=True)
 
 # Image preprocessing 
