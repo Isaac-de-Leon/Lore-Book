@@ -5,10 +5,10 @@ import json
 import concurrent.futures
 import csv
 from datetime import datetime
-from keras.applications import MobileNetV2
-from keras.applications.mobilenet_v2 import preprocess_input
-from keras.preprocessing import image
-from keras.models import Model
+from keras.applications import MobileNetV2  # type: ignore
+from keras.applications.mobilenet_v2 import preprocess_input # type: ignore
+from keras.preprocessing import image # type: ignore
+from keras.models import Model # type: ignore
 from sklearn.metrics.pairwise import cosine_similarity
 
 # Load MobileNetV2 model (feature extraction only)
@@ -19,6 +19,7 @@ databasePath = "Card_Images"
 cacheFile = "DBCardCache.json"
 outputDir = "captured_cards"
 CSV_file = "Bulk_Add.csv"
+debug = False
 os.makedirs(outputDir, exist_ok=True)
 
 # Image preprocessing 
@@ -30,8 +31,9 @@ def preprocess_image(imgPath):
     return imgArray
 
 # Image preprocessing and flattening 
-def extract_features(imgPath):
-    imgArray = preprocess_image(imgPath)
+def extract_features(image):
+    imgArray = preprocess_input(image)
+    imgArray = np.expand_dims(imgArray, axis=0)  # Shape: (1, 224, 224, 3)
     features = model.predict(imgArray)  
     return features.flatten()  
 
@@ -54,7 +56,8 @@ def load_cache():
 # Process each image
 def process_image(filename):
     imgPath = os.path.join(databasePath, filename)
-    return filename, extract_features(imgPath)
+    img = preprocess_image(imgPath)
+    return filename, extract_features(img)
 
 # Build feature database with threading
 def build_feature_database():
@@ -161,10 +164,11 @@ while True:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         croppedImage = crop_image(frame, x, y, width, height)
         croppedImagePath = f"{outputDir}/Cropped_card_{timestamp}.jpg"
-        cv2.imwrite(croppedImagePath, croppedImage)
+        if debug:
+            cv2.imwrite(croppedImagePath, croppedImage)
 
         # Extract features & find best match
-        inputFeatures = extract_features(croppedImagePath)
+        inputFeatures = extract_features(croppedImage)
         matchedCards = find_best_matches(inputFeatures, featureDatabase)
 
         print("Best Match Found:" if matchedCards else "No close match found.")
@@ -185,7 +189,7 @@ while True:
                 update_csv(top_match)
                 cv2.destroyWindow("Matched Card")
                                 
-            elif key == ord('n'):
+            elif key == ord('n') and len(matchedCards) > 1:
                 print("Card not matched. Showing alternatives...")
                 cv2.destroyWindow("Matched Card")
                 for filename, similarity in matchedCards[1:]:  # Skip the top match
