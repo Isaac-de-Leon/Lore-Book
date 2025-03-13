@@ -3,6 +3,8 @@ import numpy as np
 import os
 import json
 import concurrent.futures
+import hashlib
+import tensorflow as tf
 import csv
 from datetime import datetime
 from keras.applications import MobileNetV2  # type: ignore
@@ -10,6 +12,7 @@ from keras.applications.mobilenet_v2 import preprocess_input # type: ignore
 from keras.preprocessing import image # type: ignore
 from keras.models import Model # type: ignore
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import normalize
 
 # Load MobileNetV2 model (feature extraction only)
 baseModel = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
@@ -23,59 +26,170 @@ debug = False
 os.makedirs(outputDir, exist_ok=True)
 
 # Image preprocessing 
-def preprocess_image(imgPath):
-    img = image.load_img(imgPath)
-    imgArray = image.img_to_array(img)
-    imgArray = np.expand_dims(imgArray, axis=0)  # Shape: (1, 224, 224, 3)
-    imgArray = preprocess_input(imgArray)  
-    return imgArray
-
-# Image preprocessing and flattening 
-def extract_features(image):
-    imgArray = preprocess_input(image)
-    imgArray = np.expand_dims(imgArray, axis=0)  # Shape: (1, 224, 224, 3)
-    features = model.predict(imgArray)  
-    return features.flatten()  
+def process_image(filename):
+    imgPath = os.path.join(databasePath, filename)
 
 
-# Save cache
+
+    img = cv2.imread(imgPath)
+    if img is None:
+        print(f"ERROR: Could not read image {imgPath}")
+        return filename, None  # Return None for failure
+
+    features = extract_features(img)
+
+    if features is None or len(features) == 0:
+        print(f"ERROR: Feature extraction failed for {filename}")
+        return filename, None  # Return None if extraction fails
+
+    return filename, features
+
+def predict_features(model, img):
+    return model(img).numpy().flatten()
+
+def extract_features(img):
+    if isinstance(img, str):  
+        img = cv2.imread(img)
+        if img is None:
+            print(f"ERROR: Could not read image from path: {img}")
+            return None
+
+    if img is None or img.size == 0:
+        print("ERROR: Received an empty image!")
+        return None
+
+    # Convert grayscale or RGBA images to RGB
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    elif img.shape[-1] == 4:
+        img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
+
+    # Resize image
+    img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_AREA)
+
+    # Normalize and expand dimensions once
+    img = preprocess_input(np.expand_dims(img, axis=0))
+
+    # Extract features
+    features = model.predict(img).flatten()
+    features = normalize([features])[0]
+
+    if len(features) == 0:
+        print("ERROR: Feature extraction failed! Empty vector returned.")
+        return None  
+
+    print(f"Extracted feature vector: {features[:5]}... (Total length: {len(features)})")
+    return features
+
 def save_cache(featureDB):
+    if not featureDB:
+        print("Warning: Attempting to save an empty feature database! Aborting save.")
+        return
+
+    #Ensure that only numerical feature vectors are saved
+    featureDB_cleaned = {k: v.tolist() for k, v in featureDB.items() if isinstance(v, np.ndarray)}
+
+    if not featureDB_cleaned:
+        print("ERROR: No valid feature vectors to save. Database is empty!")
+        return
+
     with open(cacheFile, "w") as f:
-        json.dump({k: v.tolist() for k, v in featureDB.items()}, f)
+        json.dump(featureDB_cleaned, f)
+
+    print(f"Successfully saved {len(featureDB_cleaned)} feature vectors to cache.")
 
 # Load cache
 def load_cache():
     if os.path.exists(cacheFile):
         with open(cacheFile, "r") as f:
             try:
-                return {k: np.array(v) for k, v in json.load(f).items()}
+                cached_data = json.load(f)
+                
+                #Filter out invalid entries (hashes)
+                featureDB = {k: np.array(v, dtype=np.float32) for k, v in cached_data.items() if isinstance(v, list) and len(v) > 0}
+
+                if not featureDB:
+                    print("Warning: Cache file exists but contains no valid feature data. Rebuilding cache.")
+                    return {}
+
+                print(f"Loaded {len(featureDB)} feature vectors from cache.")
+                return featureDB
+
             except json.JSONDecodeError:
-                print("Warning: Cache file corrupted. Rebuilding cache.")
+                print("ERROR: Cache file is corrupted. Rebuilding cache.")
+                return {}
+
+    print("No cache file found. Generating a new feature database.")
+    return {}
+
+def compute_image_hash(image_path):
+    #Compute a hash of the images.
+    hasher = hashlib.md5()
+    with open(image_path, "rb") as f:
+        hasher.update(f.read())
+    return hasher.hexdigest()
+
+def load_previous_hashes():
+    #Load the previous stored image hashes
+    if os.path.exists("ImageHashes.json"):
+        with open("ImageHashes.json", "r") as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return {}  # Return an empty dict if JSON is corrupt
     return {}
 
 # Process each image
-def process_image(filename):
-    imgPath = os.path.join(databasePath, filename)
-    img = preprocess_image(imgPath)
-    return filename, extract_features(img)
+def save_image_hashes(image_hashes):
+    #Save the current image hashes
+    with open("ImageHashes.json", "w") as f:
+        json.dump(image_hashes, f)
 
 # Build feature database with threading
 def build_feature_database():
     featureDB = load_cache()
+    previous_hashes = load_previous_hashes()
+    current_hashes = {}
+
     imageFiles = [f for f in os.listdir(databasePath) if f.endswith((".webp", ".jpg", ".jpeg", ".png"))]
-    newFiles = [f for f in imageFiles if f not in featureDB]
+    files_to_process = []
 
-    if newFiles:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = executor.map(process_image, newFiles)
-            featureDB.update(results)
+    for filename in imageFiles:
+        imgPath = os.path.join(databasePath, filename)
+        img_hash = compute_image_hash(imgPath)
+        current_hashes[filename] = img_hash  
 
-        save_cache(featureDB)
+        if filename not in previous_hashes or previous_hashes[filename] != img_hash:
+            files_to_process.append(filename)
 
-    return featureDB
+    if not files_to_process:
+        if featureDB:
+            print(f"No changes detected. Using cached features ({len(featureDB)} entries).")
+            return featureDB  
+        else:
+            print("No changes detected, but cache is empty! Rebuilding database...")
+
+    print(f"Changes detected! Processing {len(files_to_process)} files. Rebuilding database...")
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        results = list(executor.map(process_image, files_to_process))
+
+    valid_results = {filename: np.array(features) for filename, features in results if features is not None}
+
+    if not valid_results:
+        print("ERROR: No valid features were extracted! Database is empty.")
+        return {}
+
+    print(f"Successfully built database with {len(valid_results)} feature vectors.")
+
+    save_cache(valid_results)
+    save_image_hashes(current_hashes)  
+    return valid_results
+
 
 # Improved matching using cosine similarity
-def find_best_matches(inputFeatures, featureDB, threshold=0.65):
+def find_best_matches(inputFeatures, featureDB, threshold=0.75):
+    inputFeatures = normalize([inputFeatures])[0]  # Normalize input once
     matches = []
 
     for filename, features in featureDB.items():
@@ -84,55 +198,41 @@ def find_best_matches(inputFeatures, featureDB, threshold=0.65):
         if similarity >= threshold:
             matches.append((filename, similarity))
 
-    # Sort matches from highest to lowest similarity
-    matches.sort(key=lambda x: x[1], reverse=True)
+    return sorted(matches, key=lambda x: x[1], reverse=True) # Sort by similarity
 
-    return matches  # Returns a list of (filename, similarity) tuples
 
 # CSV file handling
 def update_csv(matchedFilename):
-
     cardSorting = matchedFilename[:-5]
     splitCard = cardSorting.split('-')
-    if int(splitCard[1]) >204:
-        variant = "foil"
-    else:
+    variant = "foil" if int(splitCard[1]) > 204 else "normal"
+    
+    if variant == "normal":
         print("Is the card foil? (y/n)")
         key = cv2.waitKey(0) & 0xFF
         if key == ord('y'):
-            print("Foil")
             variant = "foil"
-        elif key == ord('n'):
-            print(f"Normal")
-            variant = "normal"
-                    
-                
+    updated_rows = []
+    found = False
     with open(CSV_file, mode="r", newline="") as file:
         reader = csv.reader(file)
-        flag = False
-        updated_rows = [] 
         for row in reader:
             if row and row[0] == splitCard[0] and row[1] == splitCard[1] and row[2] == variant:
-                print("Row already exists:", row)
-                row[3] = str(int(row[3]) + 1)  # Update count immediately
-                flag = True
-                
-            updated_rows.append(row) 
-                        
-    if not flag:
+                row[3] = str(int(row[3]) + 1)  # Update count
+                found = True
+            updated_rows.append(row)
+    if not found:
         print("New Card!")
         updated_rows.append([splitCard[0], splitCard[1], variant, "1"])
-                        
+
     with open(CSV_file, mode="w", newline="") as file:
-        writer = csv.writer(file)
-        writer.writerows(updated_rows)
-        
+        csv.writer(file).writerows(updated_rows)
     with open(CSV_file, mode="r", newline="") as file:
         reader = csv.reader(file)
         print("Current Card List:")
         for row in reader:
                 print(row)
-
+    return
 
 # Initialize camera
 cap = cv2.VideoCapture(1)
