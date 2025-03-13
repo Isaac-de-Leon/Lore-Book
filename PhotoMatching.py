@@ -78,7 +78,6 @@ def extract_features(img):
         print("ERROR: Feature extraction failed! Empty vector returned.")
         return None  
 
-    print(f"Extracted feature vector: {features[:5]}... (Total length: {len(features)})")
     return features
 
 def save_cache(featureDB):
@@ -188,7 +187,7 @@ def build_feature_database():
 
 
 # Improved matching using cosine similarity
-def find_best_matches(inputFeatures, featureDB, threshold=0.75):
+def find_best_matches(inputFeatures, featureDB, threshold=0.72):
     inputFeatures = normalize([inputFeatures])[0]  # Normalize input once
     matches = []
 
@@ -240,9 +239,9 @@ if not cap.isOpened():
     print("Error: Could not open camera.")
     exit()
 
-print("Building feature database...")
+print("Building database...")
 featureDatabase = build_feature_database()
-print("Feature database ready!")
+print("Database ready!")
 
 # Crop function
 def crop_image(frame, x, y, width, height):
