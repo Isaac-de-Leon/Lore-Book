@@ -28,9 +28,6 @@ os.makedirs(outputDir, exist_ok=True)
 # Image preprocessing 
 def process_image(filename):
     imgPath = os.path.join(databasePath, filename)
-
-
-
     img = cv2.imread(imgPath)
     if img is None:
         print(f"ERROR: Could not read image {imgPath}")
@@ -304,6 +301,8 @@ while True:
                     elif key == ord('n'):
                         cv2.destroyWindow("Alternative Match")
                         continue  # Show the next alternative
+                    elif key == ord('c'):
+                        break  # Cancel and exit early
                     else:
                         print("Invalid input, skipping to next.")
                         
