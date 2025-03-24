@@ -87,23 +87,17 @@ def process_image(filename):
     return filename, extract_features(img) if img is not None else None
 
 
-def find_best_matches(inputFeatures, featureDB, threshold=0.72):
+def find_best_matches(inputFeatures, featureDB, threshold=0.70):
     #Find best matches using cosine similarity.
     inputFeatures = normalize([inputFeatures])[0]
     matches = [(k, cosine_similarity([inputFeatures], [v])[0][0]) for k, v in featureDB.items()]
     return sorted([(f, s) for f, s in matches if s >= threshold], key=lambda x: x[1], reverse=True)
 
-def update_csv(matchedFilename):
+def update_csv(matchedFilename, is_foil):
     #Updates CSV file when a card is confirmed
     cardSorting = matchedFilename[:-5]
     splitCard = cardSorting.split('-')
-    variant = "foil" if int(splitCard[1]) > 204 else "normal"
-
-    if variant == "normal":
-        print("Is the card foil? (y/n)")
-        key = cv2.waitKey(0) & 0xFF
-        if key == ord('y'):
-            variant = "foil"
+    variant = "foil" if is_foil else "normal"
 
     updated_rows = []
     found = False
@@ -117,17 +111,10 @@ def update_csv(matchedFilename):
             updated_rows.append(row)
 
     if not found:
-        print("New Card!")
         updated_rows.append([splitCard[0], splitCard[1], variant, "1"])
 
     with open(CSV_file, mode="w", newline="") as file:
         csv.writer(file).writerows(updated_rows)
-
-    with open(CSV_file, mode="r", newline="") as file:
-        reader = csv.reader(file)
-        print("Current Card List:")
-        for row in reader:
-            print(row)
 
 
 # Initialize Feature Database
