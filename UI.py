@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import os
 from PySide6.QtWidgets import (
-    QApplication, QLabel, QPushButton, QFileDialog, QVBoxLayout, QWidget, QHBoxLayout, QCheckBox, QDialog, QComboBox, QFormLayout, QPushButton)
+    QApplication, QLabel, QPushButton, QFileDialog, QVBoxLayout, QWidget, QHBoxLayout, QCheckBox, QDialog, QComboBox, QFormLayout, QPushButton, QLineEdit)
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt, QTimer
 from PhotoMatching import extract_features, find_best_matches, featureDatabase, databasePath, update_csv
@@ -74,6 +74,12 @@ class CardScannerUI(QWidget):
         self.foil_checkbox = QCheckBox("Foil")
         self.foil_checkbox.setEnabled(False)  # Enable after scanning
 
+        # Add this block before using self.count_input
+        self.count_input = QLineEdit(self)
+        self.count_input.setPlaceholderText("Count")
+        self.count_input.setFixedWidth(60)
+        self.count_input.setEnabled(False)  # Enable after scanning
+
         self.confirm_button = QPushButton("Confirm", self)
         self.confirm_button.clicked.connect(self.confirm_match)
         self.confirm_button.setEnabled(False)
@@ -94,6 +100,7 @@ class CardScannerUI(QWidget):
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.prev_button)
         button_layout.addWidget(self.foil_checkbox)
+        button_layout.addWidget(self.count_input) 
         button_layout.addWidget(self.confirm_button)
         button_layout.addWidget(self.next_button)
 
@@ -206,7 +213,33 @@ class CardScannerUI(QWidget):
         self.prev_button.setEnabled(len(self.matched_cards) > 1)
         self.next_button.setEnabled(len(self.matched_cards) > 1)
         self.foil_checkbox.setEnabled(True)
+        self.count_input.setEnabled(True) 
         self.confirm_button.setEnabled(True)
+
+    def confirm_match(self):
+        #Confirms the selected card and updates the CSV
+        if not self.matched_cards:
+            return
+
+        match_filename, _ = self.matched_cards[self.current_match_index]
+        is_foil = self.foil_checkbox.isChecked()
+        count = self.count_input.text()
+        try:
+            count = int(count)
+            if count < 1:
+                raise ValueError
+        except ValueError:
+            self.result_label.setText("Please enter a valid count (positive integer).")
+            return
+
+        update_csv(match_filename, is_foil, count)  # Pass count directly
+
+        self.result_label.setText(f"Card Confirmed: {match_filename}\nFoil: {'Yes' if is_foil else 'No'}\nCount: {count}")
+        self.foil_checkbox.setChecked(False)
+        self.foil_checkbox.setEnabled(False)
+        self.count_input.setText("")
+        self.count_input.setEnabled(False)
+        self.confirm_button.setEnabled(False)
 
     def show_current_match(self):
         #Displays the current matched card
@@ -235,21 +268,6 @@ class CardScannerUI(QWidget):
         if self.matched_cards:
             self.current_match_index = (self.current_match_index - 1) % len(self.matched_cards)
             self.show_current_match()
-
-    def confirm_match(self):
-        #Confirms the selected card and updates the CSV
-        if not self.matched_cards:
-            return
-
-        match_filename, _ = self.matched_cards[self.current_match_index]
-        is_foil = self.foil_checkbox.isChecked()
-
-        update_csv(match_filename, is_foil)  # Update CSV with foil status
-
-        self.result_label.setText(f"Card Confirmed: {match_filename}\nFoil: {'Yes' if is_foil else 'No'}")
-        self.foil_checkbox.setChecked(False)
-        self.foil_checkbox.setEnabled(False)
-        self.confirm_button.setEnabled(False)
 
     def display_match_image(self, img_path):
         #Displays matched image in the QLabel

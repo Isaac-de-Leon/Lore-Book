@@ -93,7 +93,9 @@ def find_best_matches(inputFeatures, featureDB, threshold=0.70):
     matches = [(k, cosine_similarity([inputFeatures], [v])[0][0]) for k, v in featureDB.items()]
     return sorted([(f, s) for f, s in matches if s >= threshold], key=lambda x: x[1], reverse=True)
 
-def update_csv(matchedFilename, is_foil):
+def update_csv(matchedFilename, is_foil, count=0):
+    # Ensure count is an integer
+    count = int(count)
     #Updates CSV file when a card is confirmed
     cardSorting = matchedFilename[:-5]
     splitCard = cardSorting.split('-')
@@ -106,12 +108,12 @@ def update_csv(matchedFilename, is_foil):
         reader = csv.reader(file)
         for row in reader:
             if row and row[0] == splitCard[0] and row[1] == splitCard[1] and row[2] == variant:
-                row[3] = str(int(row[3]) + 1)  # Update count
+                row[3] = str(int(row[3]) + count)  # Update count by 'count'
                 found = True
             updated_rows.append(row)
 
     if not found:
-        updated_rows.append([splitCard[0], splitCard[1], variant, "1"])
+        updated_rows.append([splitCard[0], splitCard[1], variant, str(count)])
 
     with open(CSV_file, mode="w", newline="") as file:
         csv.writer(file).writerows(updated_rows)
