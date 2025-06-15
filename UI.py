@@ -21,6 +21,8 @@ class SettingsWindow(QDialog):
         layout.addRow(self.keep_foil_checked)
         self.set_list = QListWidget()
         self.set_list.setSelectionMode(QListWidget.MultiSelection)
+        self.confidence_threshold = 0.9
+        self.debug_mode = False
         for set_code in get_available_sets():
             item = QListWidgetItem(set_code)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
@@ -31,6 +33,11 @@ class SettingsWindow(QDialog):
         apply_button.clicked.connect(self.apply_settings)
         layout.addRow(apply_button)
         self.setLayout(layout)
+        self.confidence_input = QLineEdit("90")
+        layout.addRow("Confidence Threshold (%):", self.confidence_input)
+        self.debug_mode_checkbox = QCheckBox("Enable Debug Mode")
+        layout.addRow(self.debug_mode_checkbox)
+
     def apply_settings(self):
         if self.parent():
             self.parent().keep_foil_checked = self.keep_foil_checked.isChecked()
@@ -40,6 +47,8 @@ class SettingsWindow(QDialog):
                 if item.checkState() == Qt.Checked:
                     selected.append(item.text())
             self.parent().selected_sets = selected
+            self.parent().confidence_threshold = float(self.confidence_input.text()) / 100.0
+            self.parent().debug_mode = self.debug_mode_checkbox.isChecked()
         self.close()
 
 class CacheProgressDialog(QDialog):
@@ -132,6 +141,7 @@ class CardScannerUI(QWidget):
         self.keep_foil_checked = False
         self.selected_sets = get_available_sets()
         self.featureDatabase = {}
+        
     def open_settings(self):
         self.settings_window = SettingsWindow(self)
         self.settings_window.keep_foil_checked.setChecked(self.keep_foil_checked)
