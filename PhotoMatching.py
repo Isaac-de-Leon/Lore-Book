@@ -4,7 +4,6 @@ import os
 import json
 import concurrent.futures
 import csv
-import matplotlib.pyplot as plt
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from tensorflow.keras.models import Model
@@ -16,10 +15,15 @@ os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 # Model and paths
 baseModel = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
 model = Model(inputs=baseModel.input, outputs=baseModel.output)
-
 activationModel = Model(inputs=model.input, outputs=baseModel.layers[-2].output)
 
-databasePath = "Card_Images"
+baseDatabasePath = "Card_Images"
+databasePath = os.path.join(baseDatabasePath, "Lorcana")  # default
+
+def set_database_path(game_name):
+    global databasePath
+    databasePath = os.path.join(baseDatabasePath, game_name)
+
 cacheFile = "DBCardCache.json"
 outputDir = "captured_cards"
 CSV_file = "Bulk_Add.csv"
@@ -94,7 +98,7 @@ def backup_csv():
         import shutil
         shutil.copy(CSV_file, CSV_file + ".bak")
 
-def update_csv(matchedFilename, is_foil, count=1):
+def update_csv(matchedFilename, is_foil, count=1, tag=""):
     count = int(count)
     if count < 1:
         return
@@ -107,16 +111,16 @@ def update_csv(matchedFilename, is_foil, count=1):
     if not os.path.exists(CSV_file):
         with open(CSV_file, "w", newline="") as file:
             writer = csv.writer(file)
-            writer.writerow(["Set", "Card", "Variant", "Count"])
+            writer.writerow(["Set", "Card", "Variant", "Tag", "Count"])
     with open(CSV_file, mode="r", newline="") as file:
         reader = csv.reader(file)
         for row in reader:
-            if row and row[0] == splitCard[0] and row[1] == splitCard[1] and row[2] == variant:
-                row[3] = str(int(row[3]) + count)
+            if row and row[0] == splitCard[0] and row[1] == splitCard[1] and row[2] == variant and row[3] == tag:
+                row[4] = str(int(row[4]) + count)
                 found = True
             updated_rows.append(row)
     if not found:
-        updated_rows.append([splitCard[0], splitCard[1], variant, str(count)])
+        updated_rows.append([splitCard[0], splitCard[1], variant, tag, str(count)])
     with open(CSV_file, mode="w", newline="") as file:
         csv.writer(file).writerows(updated_rows)
 
