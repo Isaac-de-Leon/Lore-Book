@@ -2,3 +2,6 @@ DBCardCache.json
 .idea/
 ImageHashes.json
 __pycache__/PhotoMatching.cpython-310.pyc
+DBCardCache_Lorcana.json
+ui_settings.json
+CardList.csv

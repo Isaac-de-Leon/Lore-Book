@@ -5,10 +5,17 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File",
+            "name": "Run UI.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/UI.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Run PhotoMatching.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PhotoMatching.py",
             "console": "integratedTerminal"
         }
     ]
