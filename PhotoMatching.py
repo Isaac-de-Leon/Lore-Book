@@ -42,6 +42,7 @@ _feat_model: Optional[Model] = None         # 1280-dim pooled features
 _act_model: Optional[Model] = None          # last conv (for heatmaps)
 
 def _cache_path() -> str:
+    # Returns the path to the feature cache file for the current game.
     game = os.path.basename(databasePath) or "default"
     return f"DBCardCache_{game}.json"
 
@@ -55,6 +56,7 @@ def _get_models() -> Tuple[Model, Model]:
     """Return (feature_model, activation_model), lazy-initialized."""
     global _base_model, _feat_model, _act_model
     if _feat_model is None or _act_model is None:
+        # Load MobileNetV2 and create two models: one for features, one for activations
         _base_model = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
         _feat_model = Model(inputs=_base_model.input, outputs=_base_model.output)  # (1280,)
         # Last conv activation (7x7x1280) used for heatmaps
@@ -62,6 +64,7 @@ def _get_models() -> Tuple[Model, Model]:
     return _feat_model, _act_model
 
 def _l2_normalize(vec: np.ndarray) -> np.ndarray:
+    # L2-normalize a vector, using sklearn if available.
     if sk_normalize is not None:
         return sk_normalize([vec])[0]
     v = np.asarray(vec, dtype=np.float32)
@@ -130,6 +133,7 @@ def visualize_activation_overlay(img_bgr: np.ndarray, model: Optional[Model] = N
     return cv2.addWeighted(img_bgr, 0.6, heatmap_color, 0.4, 0)
 
 def load_cache() -> Dict[str, np.ndarray]:
+    # Load the feature cache from disk, if present.
     path = _cache_path()
     if not os.path.exists(path):
         return {}
@@ -141,11 +145,13 @@ def load_cache() -> Dict[str, np.ndarray]:
         return {}
 
 def _list_image_files(folder: str) -> List[str]:
+    # List all supported image files in a folder.
     if not os.path.isdir(folder):
         return []
     return sorted([n for n in os.listdir(folder) if n.lower().endswith(SUPPORTED_EXTS)])
 
 def process_image(filename: str) -> Tuple[str, Optional[np.ndarray]]:
+    # Helper for parallel feature extraction.
     img_path = os.path.join(databasePath, filename)
     img = cv2.imread(img_path, cv2.IMREAD_COLOR)
     return (filename, extract_features(img)) if img is not None else (filename, None)
@@ -163,6 +169,7 @@ def build_feature_database(progress_callback: Optional[Callable[[int, Optional[s
             progress_callback(100, None)
         return featureDB
 
+    # Extract features in parallel for new images
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for idx, (k, v) in enumerate(executor.map(process_image, files_to_process), 1):
             if v is not None:
@@ -194,13 +201,24 @@ def clear_from_cache(filename: str) -> None:
         pass
 
 def _cosine_score(a: np.ndarray, b: np.ndarray) -> float:
-    """Cosine similarity for normalized vectors."""
+    """
+    Cosine similarity for l2-normalized vectors.
+    Both input vectors must be l2-normalized; otherwise, results may be incorrect.
+    """
+    def is_l2_normalized(v: np.ndarray, tol: float = 1e-3) -> bool:
+        norm = np.linalg.norm(v)
+        return abs(norm - 1.0) < tol
+
+    if not is_l2_normalized(a) or not is_l2_normalized(b):
+        raise ValueError("Both input vectors must be l2-normalized.")
+
     if sk_cosine is not None:
         return float(sk_cosine([a], [b])[0][0])
     return float(np.dot(a, b))  # both are l2-normalized
 
 def find_best_matches(inputFeatures: np.ndarray, featureDB: Dict[str, np.ndarray],
                       threshold: float = 0.70) -> List[Tuple[str, float]]:
+    # Find all DB entries with cosine similarity above threshold, sorted descending.
     if inputFeatures is None or inputFeatures.size == 0 or not featureDB:
         return []
     q = _l2_normalize(inputFeatures)
@@ -219,7 +237,7 @@ def find_best_matches(inputFeatures: np.ndarray, featureDB: Dict[str, np.ndarray
 def _normalize_existing_rows(csv_path: str) -> List[List[str]]:
     """
     Read an existing CSV that might be 4- or 5-columns and return rows as
-    [Set Number, Card Number, Variant, Count]. No backups, no .bak files.
+    [Set Number, Card Number, Variant, Count].
     """
     rows: List[List[str]] = []
     if not os.path.exists(csv_path):
@@ -244,6 +262,7 @@ def _normalize_existing_rows(csv_path: str) -> List[List[str]]:
     return rows
 
 def _write_rows_4col(csv_path: str, rows: List[List[str]]) -> None:
+    # Write rows to CSV with 4 columns and header.
     header = ["Set Number", "Card Number", "Variant", "Count"]
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -252,6 +271,7 @@ def _write_rows_4col(csv_path: str, rows: List[List[str]]) -> None:
             writer.writerow([r[0], r[1], r[2], r[3]])
 
 def _split_filename(matchedFilename: str) -> Tuple[str, str]:
+    # Split filename into set code and card code.
     base = os.path.splitext(os.path.basename(matchedFilename))[0]
     splitCard = base.split("-")
     if len(splitCard) < 2:
@@ -287,6 +307,7 @@ def update_cardlist(matchedFilename: str, is_foil: bool, count: int = 1) -> None
     _write_rows_4col(CARDLIST_FILE, existing)
 
 def get_available_sets() -> List[str]:
+    # Return a sorted list of all set codes found in the database folder.
     sets = set()
     for fname in _list_image_files(databasePath):
         if len(fname) >= 3 and fname[:3].isdigit():
@@ -307,10 +328,12 @@ def foil_score(img_bgr: np.ndarray) -> float:
     return float(np.clip(0.7 * bright_ratio + 0.3 * contrast, 0.0, 1.0))
 
 def is_probably_foil(img_bgr: np.ndarray, threshold: float = 0.08) -> bool:
+    # Returns True if the image is likely a foil card.
     return foil_score(img_bgr) >= threshold
 
 # ---- CLI (optional) ------------------------------------------------------------
 if __name__ == "__main__":
+    # Optional command-line interface for building DB and matching images.
     import argparse
     parser = argparse.ArgumentParser(description="Build feature DB and/or match an image.")
     parser.add_argument("--game", type=str, default="Lorcana", help="Game folder inside Card_Images/")

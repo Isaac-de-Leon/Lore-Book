@@ -34,6 +34,10 @@ from PhotoMatching import (
 SETTINGS_FILE = "ui_settings.json"
 
 class SettingsWindow(QDialog):
+    """
+    Settings dialog for camera and UI options.
+    Allows user to select camera, adjust thresholds, toggle debug, and filter sets.
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -51,27 +55,31 @@ class SettingsWindow(QDialog):
             self.camera_combo.setCurrentIndex(self.camera_indices.index(current_idx))
         layout.addRow("Camera:", self.camera_combo)
 
+        # Checkbox for keeping foil checked by default
         self.keep_foil_checked = QCheckBox("Keep Foil Checked")
         self.keep_foil_checked.setChecked(getattr(parent, "keep_foil_checked", False))
         layout.addRow(self.keep_foil_checked)
 
+        # Checkbox for rotating preview/capture
         self.rotate_checkbox = QCheckBox("Rotate preview & capture 180°")
         self.rotate_checkbox.setChecked(getattr(parent, "rotate_display", False))
         layout.addRow(self.rotate_checkbox)
 
+        # Checkbox for cropping to focus box
         self.crop_checkbox = QCheckBox("Scan only inside focus box")
         self.crop_checkbox.setChecked(getattr(parent, "crop_to_focus", True))
         layout.addRow(self.crop_checkbox)
 
-        # Confidence & debug
+        # Confidence threshold input
         self.confidence_input = QLineEdit(str(int(100 * getattr(parent, "confidence_threshold", 0.90))))
         layout.addRow("Confidence Threshold (%):", self.confidence_input)
 
+        # Debug mode toggle
         self.debug_mode_checkbox = QCheckBox("Enable Debug Mode (heatmap overlay)")
         self.debug_mode_checkbox.setChecked(getattr(parent, "debug_mode", False))
         layout.addRow(self.debug_mode_checkbox)
 
-        # Set filter
+        # Set filter list
         self.set_list = QListWidget()
         self.set_list.setSelectionMode(QListWidget.MultiSelection)
         current_selected = set(getattr(parent, "selected_sets", []))
@@ -82,17 +90,24 @@ class SettingsWindow(QDialog):
             self.set_list.addItem(item)
         layout.addRow("Filter Sets:", self.set_list)
 
+        # Apply button
         apply_button = QPushButton("Apply")
         apply_button.clicked.connect(self.apply_settings)
         layout.addRow(apply_button)
         self.setLayout(layout)
 
     def scan_cameras(self, max_index: int = 8) -> List[int]:
+        """
+        Scan for available camera indices up to max_index.
+        Returns a list of indices with available cameras.
+        """
         found = []
         for i in range(max_index):
             if platform.system() == "Windows":
                 cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
                 if not (cap and cap.isOpened()):
+                    if cap is not None:
+                        cap.release()
                     cap = cv2.VideoCapture(i)
             else:
                 cap = cv2.VideoCapture(i)
@@ -102,6 +117,9 @@ class SettingsWindow(QDialog):
         return found or [0]
 
     def apply_settings(self):
+        """
+        Apply settings to parent MainWindow and save them.
+        """
         if self.parent():
             self.parent().keep_foil_checked = self.keep_foil_checked.isChecked()
             try:
@@ -128,12 +146,16 @@ class SettingsWindow(QDialog):
         self.close()
 
 class MainWindow(QWidget):
+    """
+    Main application window for camera preview, card matching, and CSV export.
+    Handles camera control, UI updates, and user interactions.
+    """
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Card Matcher — Camera")
         self.resize(1280, 800)
 
-        # State
+        # State variables
         self.featureDB = load_cache()  # preload from cache, refresh in background
         self.selected_sets: List[str] = []
         self.keep_foil_checked = False
@@ -163,34 +185,38 @@ class MainWindow(QWidget):
         self.load_settings()
 
         # UI ------------------------------------------------------------------
+        # Progress bar for DB build
         self.progress = QProgressBar()
         self.progress.setFixedHeight(6)
         self.progress.setTextVisible(True)
         self.progress.setValue(0)
 
-        # Left: live preview (crop-to-fill). Use Ignored policy so pixmap size doesn’t grow window
+        # Left: live preview (crop-to-fill)
         self.preview_label = QLabel("Camera stopped")
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("border: 1px solid #444; background: #111; color: #bbb;")
         self.preview_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.preview_label.setMinimumSize(640, 360)
 
-        # Right: match image (keep aspect). Also use Ignored policy to avoid growth loops
+        # Right: match image (keep aspect)
         self.image_label = QLabel("Best match image")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setStyleSheet("border: 1px solid #444; background: #111; color: #bbb;")
         self.image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.image_label.setMinimumSize(360, 360)
 
+        # Label for match info
         self.match_label = QLabel("—")
         self.match_label.setAlignment(Qt.AlignCenter)
 
+        # Navigation buttons for matches
         self.prev_btn = QPushButton("◀ Prev")
         self.next_btn = QPushButton("Next ▶")
         self.prev_btn.clicked.connect(self.prev_match)
         self.next_btn.clicked.connect(self.next_match)
         self.match_pos_label = QLabel("")
 
+        # Camera control buttons
         self.start_btn = QPushButton("Start Camera")
         self.start_btn.clicked.connect(self.start_camera)
         self.stop_btn = QPushButton("Stop Camera")
@@ -198,6 +224,7 @@ class MainWindow(QWidget):
         self.settings_btn = QPushButton("Settings")
         self.settings_btn.clicked.connect(self.open_settings)
 
+        # Scan/capture button
         self.capture_btn = QPushButton("Scan Card")
         self.capture_btn.clicked.connect(self.capture_and_match)
         self.capture_btn.setStyleSheet(
@@ -205,34 +232,38 @@ class MainWindow(QWidget):
             "font-size: 18px; padding: 12px 24px; border-radius: 8px;"
         )
 
+        # Foil checkbox
         self.foil_check = QCheckBox("Foil")
         self.foil_check.setChecked(self.keep_foil_checked)
 
+        # Count input for CSV
         self.count_edit = QLineEdit("1")
         self.count_edit.setFixedWidth(60)
 
+        # Add to CSV button
         self.add_csv_btn = QPushButton("Add to card list")
         self.add_csv_btn.clicked.connect(self.add_to_csv)
         self.add_csv_btn.setEnabled(False)  # enabled after a successful scan
 
-        # Inline CSV status
+        # Inline CSV status label
         self.csv_status = QLabel("")
         self.csv_status.setStyleSheet("color: #8bc34a; padding-left: 8px;")
 
-        # --- Top bar
+        # --- Top bar layout
         top = QHBoxLayout()
         top.addWidget(self.start_btn)
         top.addWidget(self.stop_btn)
         top.addWidget(self.settings_btn)
         top.addStretch()
 
-        # --- Split panels
+        # --- Split panels for preview and match image
         splitter = QSplitter()
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(self.preview_label)
         splitter.addWidget(self.image_label)
         splitter.setSizes([600, 600])  # balanced start
-        # --- Bottom: controls
+
+        # --- Bottom controls (scan, navigation)
         under = QHBoxLayout()
         under.addWidget(self.capture_btn)
         under.addStretch()
@@ -247,6 +278,7 @@ class MainWindow(QWidget):
         layout.addLayout(under)
         layout.addWidget(self.match_label)
 
+        # --- Bottom bar for foil, count, add, status
         bottom = QHBoxLayout()
         bottom.addWidget(self.foil_check)
         bottom.addWidget(QLabel("Count:"))
@@ -265,6 +297,9 @@ class MainWindow(QWidget):
 
     # ---- Settings persistence ----
     def load_settings(self):
+        """
+        Load UI and camera settings from SETTINGS_FILE.
+        """
         if not os.path.exists(SETTINGS_FILE):
             return
         try:
@@ -281,6 +316,9 @@ class MainWindow(QWidget):
             pass
 
     def save_settings(self):
+        """
+        Save UI and camera settings to SETTINGS_FILE.
+        """
         s = {
             "camera_index": self.camera_index,
             "keep_foil_checked": self.keep_foil_checked,
@@ -297,6 +335,9 @@ class MainWindow(QWidget):
             pass
 
     def closeEvent(self, event):
+        """
+        Save settings on window close.
+        """
         try:
             self.save_settings()
         finally:
@@ -304,6 +345,10 @@ class MainWindow(QWidget):
 
     # ---- Background DB build (non-blocking) ----
     def start_db_build_in_background(self):
+        """
+        Start building the feature database in a background thread.
+        Updates progress bar via timer.
+        """
         self._db_progress_pct = 0
         self._db_progress_timer = QTimer(self)
         self._db_progress_timer.setInterval(100)
@@ -323,6 +368,9 @@ class MainWindow(QWidget):
         self._db_progress_timer.start()
 
     def _tick_db_progress(self):
+        """
+        Update progress bar for DB build.
+        """
         try:
             self.progress.setValue(int(getattr(self, "_db_progress_pct", 0)))
         except Exception:
@@ -332,6 +380,9 @@ class MainWindow(QWidget):
 
     # -------- Camera control --------
     def start_camera(self):
+        """
+        Start the camera and begin frame grabbing.
+        """
         self.stop_camera()  # just in case
 
         # Prefer CAP_DSHOW on Windows
@@ -350,7 +401,7 @@ class MainWindow(QWidget):
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-        # Warm-up
+        # Warm-up: try to get a frame
         ok = False
         for _ in range(20):
             ret, frm = self.cap.read()
@@ -369,10 +420,16 @@ class MainWindow(QWidget):
         self.match_label.setText("Camera running …")
 
     def _fail_and_stop(self, message: str):
+        """
+        Stop camera and show error message.
+        """
         self.stop_camera()
         QMessageBox.warning(self, "Camera", message)
 
     def stop_camera(self):
+        """
+        Stop camera and timers, release resources.
+        """
         self.timer.stop()
         self.watchdog.stop()
         if self.cap:
@@ -384,13 +441,18 @@ class MainWindow(QWidget):
         self.preview_label.setText("Camera stopped")
 
     def _watchdog_tick(self):
+        """
+        Watchdog timer to detect camera hangs.
+        """
         if self.cap is None or self.last_frame_time is None:
             return
         if (time.monotonic() - self.last_frame_time) > 3.0:
             self._fail_and_stop("No frames received for 3 seconds. Camera stopped.")
 
     def _focus_rect(self, h: int, w: int) -> Tuple[int, int, int, int]:
-        """Return (fx, fy, fw, fh) for a 63:88 portrait box occupying ~60% of height, centered."""
+        """
+        Return (fx, fy, fw, fh) for a 63:88 portrait box occupying ~60% of height, centered.
+        """
         card_ratio = 63 / 88.0
         fh = int(h * 0.6)
         fw = int(fh * card_ratio)
@@ -401,6 +463,9 @@ class MainWindow(QWidget):
         return fx, fy, fw, fh
 
     def _grab_frame(self):
+        """
+        Grab a frame from the camera, draw focus overlay, and update preview.
+        """
         if not self.cap:
             return
         try:
@@ -423,7 +488,7 @@ class MainWindow(QWidget):
 
         self.last_frame = frame
 
-        # Focus overlay
+        # Draw focus rectangle overlay
         overlay = frame.copy()
         h, w = overlay.shape[:2]
         fx, fy, fw, fh = self._focus_rect(h, w)
@@ -431,7 +496,7 @@ class MainWindow(QWidget):
         thickness = 2
         cv2.rectangle(overlay, (fx, fy), (fx + fw, fy + fh), color, thickness)
 
-        # Corners
+        # Draw corner lines for focus box
         cl = 40
         cv2.line(overlay, (fx, fy), (fx + cl, fy), color, thickness)
         cv2.line(overlay, (fx, fy), (fx, fy + cl), color, thickness)
@@ -448,12 +513,16 @@ class MainWindow(QWidget):
 
     # -------- Matching & navigation --------
     def capture_and_match(self):
+        """
+        Capture current frame, extract features, match against DB, and show results.
+        """
         if self.last_frame is None:
             QMessageBox.warning(self, "Scan Card", "Camera is not running or no frame available.")
             return
 
         img_bgr = self.last_frame.copy()
 
+        # Crop to focus box if enabled
         if self.crop_to_focus:
             h, w = img_bgr.shape[:2]
             fx, fy, fw, fh = self._focus_rect(h, w)
@@ -463,6 +532,7 @@ class MainWindow(QWidget):
             if fw > 10 and fh > 10:
                 img_bgr = img_bgr[fy:fy+fh, fx:fx+fw].copy()
 
+        # Auto-check foil if detected
         self.foil_check.setChecked(self.keep_foil_checked or is_probably_foil(img_bgr))
 
         features = extract_features(img_bgr)
@@ -491,6 +561,9 @@ class MainWindow(QWidget):
         self.add_csv_btn.setEnabled(True)
 
     def _show_match_at(self, idx: int):
+        """
+        Show match at given index in the UI.
+        """
         if not self.last_matches:
             return
         idx = max(0, min(idx, len(self.last_matches)-1))
@@ -508,16 +581,25 @@ class MainWindow(QWidget):
             self.image_label.hide()
 
     def prev_match(self):
+        """
+        Show previous match in the list.
+        """
         if not self.last_matches:
             return
         self._show_match_at(self.current_match_idx - 1)
 
     def next_match(self):
+        """
+        Show next match in the list.
+        """
         if not self.last_matches:
             return
         self._show_match_at(self.current_match_idx + 1)
 
     def _filter_matches(self, matches: List[Tuple[str, float]]) -> List[Tuple[str, float]]:
+        """
+        Filter matches by selected sets, if any.
+        """
         if not matches:
             return []
         use_sets = set(self.selected_sets or [])
@@ -533,11 +615,17 @@ class MainWindow(QWidget):
         return out
 
     def open_settings(self):
+        """
+        Open the settings dialog.
+        """
         dlg = SettingsWindow(self)
         dlg.exec()
         self.foil_check.setChecked(self.keep_foil_checked)
 
     def add_to_csv(self):
+        """
+        Add the currently selected match to CardList.csv.
+        """
         if not self.last_matches:
             self.csv_status.setStyleSheet("color: #f44336; padding-left: 8px;")
             self.csv_status.setText("No match to add.")
@@ -558,11 +646,12 @@ class MainWindow(QWidget):
         QTimer.singleShot(3500, lambda: self.csv_status.setText(""))
 
     # -------- Helpers --------
-    def _crop_to_fill(self, img_bgr, target_w: int, target_h: int):
-        """Center-crop img to match target aspect (cover). Always returns a C-contiguous copy."""
+        # Helper for cropping image to fill a target size (no black bars)
         if img_bgr is None or img_bgr.size == 0 or target_w <= 0 or target_h <= 0:
-            return img_bgr
+            return np.ascontiguousarray(img_bgr) if img_bgr is not None else img_bgr
         h, w = img_bgr.shape[:2]
+        if h == 0 or w == 0:
+            return np.ascontiguousarray(img_bgr)
         if h == 0 or w == 0:
             return img_bgr
         img_aspect = w / float(h)
@@ -585,6 +674,9 @@ class MainWindow(QWidget):
 
 
     def _show_on_label(self, label: QLabel, img_bgr, fill: bool = False):
+        """
+        Display an image on a QLabel, optionally cropping to fill.
+        """
         if img_bgr is None or img_bgr.size == 0:
             return
 
@@ -612,6 +704,7 @@ class MainWindow(QWidget):
 
 
 if __name__ == "__main__":
+    # Entry point: create and show the main window, start camera automatically
     app = QApplication([])
     w = MainWindow()
     w.show()
