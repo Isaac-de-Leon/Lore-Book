@@ -33,6 +33,7 @@ from PhotoMatching import (
 
 SETTINGS_FILE = "ui_settings.json"
 
+
 class SettingsWindow(QDialog):
     """
     Settings dialog for camera and UI options.
@@ -144,6 +145,7 @@ class SettingsWindow(QDialog):
 
             self.parent().save_settings()
         self.close()
+
 
 class MainWindow(QWidget):
     """
@@ -646,14 +648,16 @@ class MainWindow(QWidget):
         QTimer.singleShot(3500, lambda: self.csv_status.setText(""))
 
     # -------- Helpers --------
-        # Helper for cropping image to fill a target size (no black bars)
+    def _crop_to_fill(self, img_bgr, target_w: int, target_h: int) -> np.ndarray:
+        """
+        Center-crop img to match target aspect (cover). Returns a C-contiguous copy.
+        """
         if img_bgr is None or img_bgr.size == 0 or target_w <= 0 or target_h <= 0:
             return np.ascontiguousarray(img_bgr) if img_bgr is not None else img_bgr
         h, w = img_bgr.shape[:2]
         if h == 0 or w == 0:
             return np.ascontiguousarray(img_bgr)
-        if h == 0 or w == 0:
-            return img_bgr
+
         img_aspect = w / float(h)
         target_aspect = target_w / float(target_h)
         if img_aspect > target_aspect:
@@ -669,13 +673,12 @@ class MainWindow(QWidget):
             y1 = min(y0 + new_h, h)
             cropped = img_bgr[y0:y1, :]
 
-        # return a C-contiguous copy
         return np.ascontiguousarray(cropped)
-
 
     def _show_on_label(self, label: QLabel, img_bgr, fill: bool = False):
         """
         Display an image on a QLabel, optionally cropping to fill.
+        Ensures format & contiguity for QImage.
         """
         if img_bgr is None or img_bgr.size == 0:
             return
