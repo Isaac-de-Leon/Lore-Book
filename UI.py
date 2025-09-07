@@ -17,6 +17,9 @@ import cv2
 import numpy as np
 from typing import List, Tuple, Optional
 
+import logging
+logging.basicConfig(level=logging.ERROR)  # Suppress OpenCV warnings
+
 from PySide6.QtWidgets import (
     QApplication, QLabel, QPushButton, QVBoxLayout, QWidget, QHBoxLayout, QCheckBox,
     QDialog, QFormLayout, QLineEdit, QListWidget, QListWidgetItem, QProgressBar,
@@ -98,24 +101,31 @@ class SettingsWindow(QDialog):
         self.setLayout(layout)
 
     def scan_cameras(self, max_index: int = 8) -> List[int]:
-        """
-        Scan for available camera indices up to max_index.
-        Returns a list of indices with available cameras.
-        """
+        """Scan for available camera indices up to max_index."""
         found = []
         for i in range(max_index):
-            if platform.system() == "Windows":
-                cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-                if not (cap and cap.isOpened()):
+            try:
+                # Try only basic open first - less verbose
+                cap = cv2.VideoCapture(i)
+                if cap is not None and cap.isOpened():
+                    found.append(i)
+                    cap.release()
+                    continue
+
+                # Only try DSHOW if basic open failed
+                if platform.system() == "Windows":
+                    cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                    if cap is not None and cap.isOpened():
+                        found.append(i)
                     if cap is not None:
                         cap.release()
-                    cap = cv2.VideoCapture(i)
-            else:
-                cap = cv2.VideoCapture(i)
-            if cap is not None and cap.isOpened():
-                found.append(i)
-                cap.release()
-        return found or [0]
+            except Exception:
+                pass  # Silently skip failed cameras
+                
+        # Always include 0 if no cameras found
+        if not found:
+            found = [0]
+        return sorted(list(set(found)))  # Remove duplicates
 
     def apply_settings(self):
         """
@@ -297,6 +307,19 @@ class MainWindow(QWidget):
         self.image_label.hide()
         self.start_db_build_in_background()
 
+        # After layout setup, add key bindings
+        self.setFocusPolicy(Qt.StrongFocus)  # Enable key events
+        self._setup_tooltips()  # Move this here, after all widgets are created
+
+        # Prevent widgets from stealing keyboard focus
+        for widget in [self.capture_btn, self.start_btn, self.stop_btn, 
+                      self.settings_btn, self.add_csv_btn, self.prev_btn, 
+                      self.next_btn, self.foil_check]:
+            widget.setFocusPolicy(Qt.NoFocus)
+        
+        # Keep edit box focusable but prevent space from activating checkboxes
+        self.count_edit.setFocusPolicy(Qt.StrongFocus)
+
     # ---- Settings persistence ----
     def load_settings(self):
         """
@@ -382,35 +405,56 @@ class MainWindow(QWidget):
 
     # -------- Camera control --------
     def start_camera(self):
-        """
-        Start the camera and begin frame grabbing.
-        """
-        self.stop_camera()  # just in case
+        """Start the camera and begin frame grabbing."""
+        self.stop_camera()
 
-        # Prefer CAP_DSHOW on Windows
+        # Try different backends in order
+        backends = []
         if platform.system() == "Windows":
-            self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
-            if not (self.cap and self.cap.isOpened()):
-                self.cap = cv2.VideoCapture(self.camera_index)
+            backends = [
+                (cv2.CAP_MSMF, None),      # Try Media Foundation first
+                (cv2.CAP_DSHOW, None),      # Then DirectShow
+                (cv2.CAP_ANY, None),        # Then default
+            ]
         else:
-            self.cap = cv2.VideoCapture(self.camera_index)
+            backends = [(cv2.CAP_ANY, None)]  # Default for non-Windows
 
-        if not (self.cap and self.cap.isOpened()):
-            self._fail_and_stop(f"Failed to open camera index {self.camera_index}.")
+        cap = None
+        for api, props in backends:
+            try:
+                cap = cv2.VideoCapture(self.camera_index + api)
+                if cap is not None and cap.isOpened():
+                    break
+            except Exception:
+                if cap is not None:
+                    cap.release()
+                cap = None
+
+        if not (cap and cap.isOpened()):
+            self._fail_and_stop(f"Failed to open camera {self.camera_index} with any backend.")
             return
 
-        # Optional resolution
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.cap = cap
 
-        # Warm-up: try to get a frame
+        # Try to set resolution
+        try:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        except Exception:
+            pass
+
+        # Warm-up with more attempts and longer timeout
         ok = False
-        for _ in range(20):
-            ret, frm = self.cap.read()
-            if ret and frm is not None:
-                ok = True
-                break
-            time.sleep(0.05)
+        for _ in range(30):  # More attempts
+            try:
+                ret, frm = self.cap.read()
+                if ret and frm is not None and frm.size > 0:
+                    ok = True
+                    break
+            except Exception:
+                pass
+            time.sleep(0.1)  # Longer sleep between attempts
+
         if not ok:
             self._fail_and_stop("Camera opened but not delivering frames.")
             return
@@ -422,11 +466,10 @@ class MainWindow(QWidget):
         self.match_label.setText("Camera running …")
 
     def _fail_and_stop(self, message: str):
-        """
-        Stop camera and show error message.
-        """
+        """Stop camera and show error message."""
         self.stop_camera()
-        QMessageBox.warning(self, "Camera", message)
+        QMessageBox.warning(self, "Camera Error", 
+                          f"{message}\n\nTry a different camera index in Settings.")
 
     def stop_camera(self):
         """
@@ -705,6 +748,37 @@ class MainWindow(QWidget):
             )
         )
 
+    def focusInEvent(self, event):
+        # Ensure main window keeps focus
+        self.setFocus()
+        super().focusInEvent(event)
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts."""
+        key = event.key()
+        if key == Qt.Key_C:
+            event.accept()
+            self.capture_and_match()
+        elif key == Qt.Key_S and (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
+            if self.add_csv_btn.isEnabled():
+                self.add_to_csv()
+        elif key == Qt.Key_A:
+            self.prev_match()
+        elif key == Qt.Key_D:
+            self.next_match()
+        elif key == Qt.Key_F:  # Added F key to toggle foil
+            self.foil_check.setChecked(not self.foil_check.isChecked())
+        else:
+            super().keyPressEvent(event)
+
+    def _setup_tooltips(self):
+        """Setup keyboard shortcut tooltips."""
+        self.capture_btn.setToolTip("Scan Card (C)")
+        self.add_csv_btn.setToolTip("Add to card list (Ctrl+S or Alt+S)")
+        self.prev_btn.setToolTip("Previous match (A)")
+        self.next_btn.setToolTip("Next match (D)")
+        self.foil_check.setToolTip("Toggle Foil (F)")  # Added foil tooltip
+
 
 if __name__ == "__main__":
     # Entry point: create and show the main window, start camera automatically
@@ -712,4 +786,11 @@ if __name__ == "__main__":
     w = MainWindow()
     w.show()
     QTimer.singleShot(0, w.start_camera)
+    app.exec()
+    # Entry point: create and show the main window, start camera automatically
+    app = QApplication([])
+    w = MainWindow()
+    w.show()
+    QTimer.singleShot(0, w.start_camera)
+    app.exec()
     app.exec()

@@ -10,7 +10,16 @@ import csv
 import cv2
 import numpy as np
 import concurrent.futures
+import warnings
+import logging
 from typing import Callable, Dict, List, Optional, Tuple, Union
+import tensorflow as tf
+
+# Suppress various warnings
+logging.getLogger('tensorflow').setLevel(logging.ERROR)
+tf.get_logger().setLevel('ERROR')
+warnings.filterwarnings('ignore', category=UserWarning)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # ---- Optional sklearn fallbacks ------------------------------------------------
 try:
@@ -24,9 +33,9 @@ except Exception:
     sk_cosine = None
 
 # ---- TensorFlow / Keras (use tf.keras for broad compatibility) ----------------
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.models import Model
+from keras.applications import MobileNetV2
+from keras.applications.mobilenet_v2 import preprocess_input
+from keras.models import Model
 
 # ---- Globals & paths -----------------------------------------------------------
 SUPPORTED_EXTS = (".webp", ".jpg", ".jpeg", ".png")
