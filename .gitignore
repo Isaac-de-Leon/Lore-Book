@@ -1,7 +1,36 @@
-DBCardCache.json
+# Python bytecode & build
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
 .idea/
-ImageHashes.json
-__pycache__/PhotoMatching.cpython-310.pyc
+.vscode/
+
+# App caches & runtime artifacts
+DBCardCache.json
+Bulk_Add.csv
+Bulk_Add.csv.bak
+card_metadata.json
+captured_cards/
+
+# Logs, temp, backups
+*.log
+*.tmp
+*.bak
+
+# If you keep large image sets out of git (optional)
+# Card_Images/** 
+# !Card_Images/.gitkeep
+DBCardCache_RiftBound.json
 DBCardCache_Lorcana.json
-ui_settings.json
-CardList.csv
+__pycache__/PhotoMatching.cpython-313.pyc
