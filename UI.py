@@ -158,6 +158,12 @@ class SettingsWindow(QDialog):
         self.confidence_input = QLineEdit(str(int(100 * getattr(parent, "confidence_threshold", 0.90))))
         layout.addRow("Confidence Threshold (%):", self.confidence_input)
 
+        # Foil detection threshold input (displayed as percentage 0–100)
+        self.foil_threshold_input = QLineEdit(
+            str(round(100 * getattr(parent, "foil_threshold", 0.08), 1))
+        )
+        layout.addRow("Foil Threshold (%):", self.foil_threshold_input)
+
         # Debug mode toggle
         self.debug_mode_checkbox = QCheckBox("Enable Debug Mode (heatmap overlay)")
         self.debug_mode_checkbox.setChecked(getattr(parent, "debug_mode", False))
@@ -221,6 +227,12 @@ class SettingsWindow(QDialog):
         self.set_tree.expandAll()
         layout.addRow("Filter Sets:", self.set_tree)
 
+        # Rebuild database button
+        rebuild_button = QPushButton("Rebuild Database")
+        rebuild_button.setToolTip("Re-scan all card images and rebuild the feature cache")
+        rebuild_button.clicked.connect(self._rebuild_database)
+        layout.addRow(rebuild_button)
+
         # Apply button
         apply_button = QPushButton("Apply")
         apply_button.clicked.connect(self.apply_settings)
@@ -242,6 +254,11 @@ class SettingsWindow(QDialog):
                 self.parent().confidence_threshold = max(0.0, min(1.0, pct / 100.0))
             except Exception:
                 self.parent().confidence_threshold = 0.90
+            try:
+                fpct = float(self.foil_threshold_input.text())
+                self.parent().foil_threshold = max(0.0, min(1.0, fpct / 100.0))
+            except Exception:
+                self.parent().foil_threshold = 0.08
             self.parent().debug_mode = self.debug_mode_checkbox.isChecked()
 
             # Process tree selection
@@ -294,6 +311,13 @@ class SettingsWindow(QDialog):
 
             self.parent().save_settings()
         self.close()
+
+    def _rebuild_database(self):
+        """Apply current settings then trigger a full DB rebuild in the background."""
+        self.apply_settings()
+        parent = self.parent()
+        if parent and hasattr(parent, "start_db_build_in_background"):
+            parent.start_db_build_in_background()
 
 
 class MainWindow(QWidget):
@@ -424,6 +448,7 @@ class MainWindow(QWidget):
         
         self.keep_foil_checked = False
         self.confidence_threshold = 0.90
+        self.foil_threshold = 0.08
         self.debug_mode = False
         self.camera_index = 0
         self.rotate_display = False
@@ -587,6 +612,7 @@ class MainWindow(QWidget):
             "camera_index": 0,
             "keep_foil_checked": False,
             "confidence_threshold": 0.90,
+            "foil_threshold": 0.08,
             "debug_mode": False,
             "selected_games": {
                 "lorcana": True,
@@ -599,7 +625,7 @@ class MainWindow(QWidget):
             "rotate_display": False,
             "crop_to_focus": True
         }
-        
+
         if not os.path.exists(SETTINGS_FILE):
             self.logger.info("No settings file found, using defaults")
             for key, value in defaults.items():
@@ -627,7 +653,7 @@ class MainWindow(QWidget):
                         value = default
                         
                     # Special validation
-                    if key == "confidence_threshold":
+                    if key in ("confidence_threshold", "foil_threshold"):
                         value = max(0.0, min(1.0, float(value)))
                     elif key == "camera_index":
                         value = max(0, int(value))
@@ -684,6 +710,7 @@ class MainWindow(QWidget):
             "camera_index": self.camera_index,
             "keep_foil_checked": self.keep_foil_checked,
             "confidence_threshold": float(self.confidence_threshold),
+            "foil_threshold": float(self.foil_threshold),
             "debug_mode": self.debug_mode,
             "selected_games": getattr(self, 'selected_games', {}),
             "selected_sets": getattr(self, 'selected_sets', {}),
@@ -1226,7 +1253,9 @@ class MainWindow(QWidget):
                 img_bgr = img_bgr[fy:fy+fh, fx:fx+fw].copy()
 
         # Auto-check foil if detected
-        self.foil_check.setChecked(self.keep_foil_checked or is_probably_foil(img_bgr))
+        self.foil_check.setChecked(
+            self.keep_foil_checked or is_probably_foil(img_bgr, threshold=self.foil_threshold)
+        )
 
         # Update feature database based on selected game type
         if hasattr(self, 'selected_games'):

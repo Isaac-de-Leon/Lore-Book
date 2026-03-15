@@ -7,6 +7,7 @@ os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
 import json
 import csv
+import sqlite3
 import cv2
 import numpy as np
 import concurrent.futures
@@ -87,9 +88,9 @@ _feat_model: Optional[Model] = None         # 1280-dim pooled features
 _act_model: Optional[Model] = None          # last conv (for heatmaps)
 
 def _cache_path() -> str:
-    # Returns the path to the feature cache file for the current game.
+    # Returns the path to the SQLite feature cache for the current game.
     game = os.path.basename(databasePath) or "default"
-    return f"DBCardCache_{game}.json"
+    return f"DBCardCache_{game}.db"
 
 def set_database_path(game_name: str) -> None:
     """Switch the database folder to a different game (e.g., 'Lorcana', 'Pokémon')."""
@@ -202,18 +203,26 @@ def visualize_activation_overlay(img_bgr: np.ndarray, model: Optional[Model] = N
     heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
     return cv2.addWeighted(img_bgr, 0.6, heatmap_color, 0.4, 0)
 
+def _init_db(path: str) -> None:
+    """Create the features table if it doesn't already exist."""
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS features "
+            "(filename TEXT PRIMARY KEY, vector BLOB NOT NULL)"
+        )
+
+
 def load_cache() -> Dict[str, np.ndarray]:
-    """Load the feature cache from disk, if present."""
+    """Load the feature cache from the SQLite database, if present."""
     path = _cache_path()
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        return {k: np.array(v, dtype=np.float32) for k, v in raw.items()}
-    except (json.JSONDecodeError, ValueError) as e:
-        logging.error(f"Error loading cache from {path}: {e}")
-        return {}
+        result: Dict[str, np.ndarray] = {}
+        with sqlite3.connect(path) as conn:
+            for filename, blob in conn.execute("SELECT filename, vector FROM features"):
+                result[filename] = np.frombuffer(blob, dtype=np.float32).copy()
+        return result
     except Exception as e:
         logging.error(f"Unexpected error loading cache from {path}: {e}")
         return {}
@@ -290,11 +299,15 @@ def build_feature_database(
                 if progress_callback:
                     progress_callback(int(idx / total * 100), fname)
 
-        # Save updated cache
+        # Save updated cache to SQLite
         cache_path = _cache_path()
         try:
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump({k: v.tolist() for k, v in featureDB.items()}, f, indent=2)
+            _init_db(cache_path)
+            with sqlite3.connect(cache_path) as conn:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO features (filename, vector) VALUES (?, ?)",
+                    [(k, v.tobytes()) for k, v in featureDB.items()],
+                )
             logging.info(f"Saved {len(featureDB)} entries to {cache_path}")
         except Exception as e:
             logging.error(f"Error saving cache to {cache_path}: {e}")
@@ -308,20 +321,14 @@ def build_feature_database(
         return featureDB
 
 def clear_from_cache(filename: str) -> None:
-    """Remove a single filename from the cache file (helpful if you delete the image)."""
+    """Remove a single filename from the SQLite cache (helpful if you delete the image)."""
     path = _cache_path()
     if not os.path.exists(path):
         return
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if filename in data:
-            del data[filename]
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            logging.info(f"Cleared {filename} from cache {path}")
-    except json.JSONDecodeError as e:
-        logging.error(f"Error reading cache file {path}: {e}")
+        with sqlite3.connect(path) as conn:
+            conn.execute("DELETE FROM features WHERE filename = ?", (filename,))
+        logging.info(f"Cleared {filename} from cache {path}")
     except Exception as e:
         logging.error(f"Unexpected error while clearing cache entry {filename}: {e}")
 
