@@ -990,23 +990,33 @@ class MainWindow(QWidget):
     def start_camera(self):
         """
         Start the camera with error handling and automatic backend selection.
-        
-        Tries multiple backends in order:
-        1. DirectShow (Windows-specific, preferred)
-        2. MSMF (Windows Media Foundation)
-        3. Generic backend
-        
-        Also attempts to configure optimal camera settings.
+
+        Selects backends appropriate for the current OS:
+        - Windows: DirectShow → Media Foundation → Default
+        - Linux:   V4L2 → Default
+        - macOS:   AVFoundation → Default
         """
         # Clean up old resources
         self.stop_camera()
         cv2.destroyAllWindows()
 
-        backends = [
-            (cv2.CAP_DSHOW, "DirectShow"),
-            (cv2.CAP_MSMF, "Media Foundation"),
-            (0, "Default")  # No extra flag
-        ]
+        system = platform.system()
+        if system == "Windows":
+            backends = [
+                (cv2.CAP_DSHOW, "DirectShow"),
+                (cv2.CAP_MSMF, "Media Foundation"),
+                (cv2.CAP_ANY, "Default"),
+            ]
+        elif system == "Linux":
+            backends = [
+                (cv2.CAP_V4L2, "V4L2"),
+                (cv2.CAP_ANY, "Default"),
+            ]
+        else:  # macOS and others
+            backends = [
+                (cv2.CAP_AVFOUNDATION, "AVFoundation"),
+                (cv2.CAP_ANY, "Default"),
+            ]
 
         camera_opened = False
         last_error = None
