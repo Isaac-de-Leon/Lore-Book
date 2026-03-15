@@ -12,35 +12,46 @@ Lore-Book is a desktop trading-card scanner application. It uses a webcam to pho
 
 ```
 Lore-Book/
-├── PhotoMatching.py      # Core logic: feature extraction, DB build, CSV writer
-├── UI.py                 # PySide6 GUI (camera preview, match display, settings)
+├── UI.py                  # Entry point — creates app, shows MainWindow
+├── main_window.py         # MainWindow: camera, scan, match nav, CSV export
+├── settings_window.py     # SettingsWindow dialog
+│
+├── features.py            # MobileNetV2 feature extraction + heatmap overlay
+├── matching.py            # L2-normalize, cosine similarity, find_best_matches
+├── card_database.py       # Feature cache build/load, set_database_path
+├── csv_manager.py         # CSV read/write, update_cardlist, get_available_sets
+├── image_utils.py         # ensure_valid_image, foil_score, is_probably_foil
+├── game_types.py          # GameType enum, get_game_type, shared constants
+│
+├── PhotoMatching.py       # Backward-compat re-export shim + CLI entry point
+│
 ├── Card_Images/
-│   ├── Lorcana/          # Reference card images (.webp / .jpg / .png)
-│   └── Riftbound/        # Reference card images
-├── DBCardCache_Lorcana.json   # Cached feature vectors (auto-generated)
-├── DBCardCache_Riftbound.json # Cached feature vectors (auto-generated)
-├── LorcanaList.csv       # Scanned Lorcana card collection
-├── RiftboundList.csv     # Scanned Riftbound card collection
-├── CardList.csv          # Legacy combined list (older format)
-├── ui_settings.json      # Persisted UI preferences
-├── requirements.txt      # Python dependencies
+│   ├── Lorcana/           # Reference card images (.webp / .jpg / .png)
+│   └── Riftbound/
+├── DBCardCache_Lorcana.json    # Cached feature vectors (auto-generated)
+├── DBCardCache_Riftbound.json
+├── LorcanaList.csv        # Scanned Lorcana collection
+├── RiftboundList.csv      # Scanned Riftbound collection
+├── ui_settings.json       # Persisted UI preferences
+├── requirements.txt
 └── tests/
     └── test_photo_matching.py  # Unit tests (no camera / no model weights needed)
 ```
 
-### Key Modules
+### Module responsibilities
 
-**`PhotoMatching.py`**
-- `extract_features(img_or_path)` — runs image through MobileNetV2, returns 1280-d L2-normalized vector
-- `build_feature_database(callback)` — parallel scan of `Card_Images/<game>/`, writes `DBCardCache_<game>.json`
-- `find_best_matches(features, db, threshold)` — cosine similarity search against cached vectors
-- `update_cardlist(filename, is_foil, count)` — appends/increments a row in the correct CSV
-- `foil_score(img_bgr)` / `is_probably_foil(img_bgr)` — heuristic foil detector (bright spots + Laplacian contrast)
-- `GameType` enum + `get_game_type(filepath)` — LORCANA / RIFTBOUND / UNKNOWN from folder path
-
-**`UI.py`**
-- `MainWindow` — live camera preview, scan-on-click, next/prev match navigation, "Add to card list" button
-- `SettingsWindow` — camera index, confidence threshold, foil defaults, game/set filter, debug mode (activation heatmap)
+| File | What it owns |
+|------|-------------|
+| `game_types.py` | `GameType` enum, `get_game_type()`, path/CSV constants |
+| `image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil` |
+| `matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches` |
+| `features.py` | MobileNetV2 lazy-load, `extract_features`, `visualize_activation_overlay` |
+| `card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
+| `csv_manager.py` | `update_cardlist`, `get_available_sets`, CSV read/write helpers |
+| `settings_window.py` | `SettingsWindow` PySide6 dialog |
+| `main_window.py` | `MainWindow`, `setup_logging` |
+| `UI.py` | `QApplication` entry point |
+| `PhotoMatching.py` | Re-exports all of the above for backward compatibility; also runnable as CLI |
 
 ---
 

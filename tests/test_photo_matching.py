@@ -305,12 +305,12 @@ class TestNormalizeExistingRows:
         rows = _normalize_existing_rows(str(p))
         assert rows == [["009", "041", "normal", "0"]]
 
-    def test_5col_uses_fifth_as_count(self, tmp_path):
+    def test_5col_ignores_fifth_column(self, tmp_path):
         p = tmp_path / "test.csv"
-        # When len > 4, the code uses row[4] as count (not row[3])
-        self._write_csv(p, [["009", "041", "normal", "ignored", "5"]])
+        # 5th column is a legacy "Tag" field and must be ignored; count is col[3]
+        self._write_csv(p, [["009", "041", "normal", "2", "Tag"]])
         rows = _normalize_existing_rows(str(p))
-        assert rows[0] == ["009", "041", "normal", "5"]
+        assert rows[0] == ["009", "041", "normal", "2"]
 
     def test_empty_count_becomes_zero(self, tmp_path):
         p = tmp_path / "test.csv"
