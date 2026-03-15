@@ -71,7 +71,7 @@ setup_logging()
 from PySide6.QtWidgets import (
     QApplication, QLabel, QPushButton, QVBoxLayout, QWidget, QHBoxLayout, QCheckBox,
     QDialog, QFormLayout, QLineEdit, QListWidget, QListWidgetItem, QProgressBar,
-    QMessageBox, QComboBox, QSizePolicy, QSplitter
+    QMessageBox, QComboBox, QSizePolicy, QFrame
 )
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt, QTimer
@@ -83,6 +83,179 @@ from PhotoMatching import (
 )
 
 SETTINGS_FILE = "ui_settings.json"
+
+APP_STYLESHEET = """
+/* ── Base ─────────────────────────────────────────────── */
+QWidget {
+    background-color: #0D1117;
+    color: #E6EDF3;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+}
+QDialog { background-color: #0D1117; }
+
+/* ── Buttons ───────────────────────────────────────────── */
+QPushButton {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 5px 12px;
+}
+QPushButton:hover  { background-color: #30363D; border-color: #8B949E; }
+QPushButton:pressed { background-color: #161B22; }
+QPushButton:disabled { color: #484F58; border-color: #21262D; }
+
+/* Scan FAB */
+QPushButton#scanBtn {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #D97706, stop:1 #F97316);
+    color: #fff;
+    border: none;
+    border-radius: 28px;
+    font-size: 16px;
+    font-weight: bold;
+    min-height: 56px;
+    min-width: 220px;
+    padding: 0 32px;
+}
+QPushButton#scanBtn:hover {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #F59E0B, stop:1 #FB923C);
+}
+QPushButton#scanBtn:pressed {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #B45309, stop:1 #EA580C);
+}
+
+/* Add to Collection */
+QPushButton#addBtn {
+    background-color: #0D2818;
+    color: #3FB950;
+    border: 1px solid #238636;
+    border-radius: 6px;
+    font-weight: bold;
+    padding: 5px 14px;
+}
+QPushButton#addBtn:hover    { background-color: #122D1F; }
+QPushButton#addBtn:disabled { color: #23863680; border-color: #23863650; }
+
+/* ── Result panel card ─────────────────────────────────── */
+QFrame#resultPanel {
+    background-color: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 12px;
+}
+
+/* ── Labels ────────────────────────────────────────────── */
+QLabel { color: #E6EDF3; background: transparent; }
+QLabel#appTitle {
+    color: #F97316;
+    font-size: 17px;
+    font-weight: bold;
+    letter-spacing: 2px;
+}
+QLabel#previewLabel {
+    background-color: #010409;
+    border: 1px solid #21262D;
+    border-radius: 8px;
+    color: #484F58;
+}
+QLabel#thumbLabel {
+    background-color: #0D1117;
+    border: 1px solid #21262D;
+    border-radius: 6px;
+    color: #484F58;
+}
+QLabel#matchName {
+    color: #E6EDF3;
+    font-size: 15px;
+    font-weight: bold;
+}
+QLabel#matchDetail { color: #8B949E; font-size: 12px; }
+QLabel#statusLabel { color: #8B949E; font-size: 11px; }
+
+/* ── Inputs ────────────────────────────────────────────── */
+QLineEdit {
+    background-color: #0D1117;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+QLineEdit:focus { border-color: #F97316; }
+
+QCheckBox { color: #E6EDF3; spacing: 6px; }
+QCheckBox::indicator {
+    width: 16px; height: 16px;
+    border: 1px solid #30363D;
+    border-radius: 3px;
+    background: #0D1117;
+}
+QCheckBox::indicator:checked {
+    background-color: #F97316;
+    border-color: #F97316;
+}
+
+QComboBox {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+QComboBox::drop-down { border: none; }
+QComboBox QAbstractItemView {
+    background-color: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    selection-background-color: #F97316;
+    selection-color: #fff;
+}
+
+/* ── Progress bar (thin accent strip) ─────────────────── */
+QProgressBar {
+    background-color: #21262D;
+    border: none;
+    border-radius: 2px;
+    max-height: 4px;
+    text-align: center;
+    color: transparent;
+}
+QProgressBar::chunk {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #D97706, stop:1 #F97316);
+    border-radius: 2px;
+}
+
+/* ── Tree widget (Settings) ────────────────────────────── */
+QTreeWidget {
+    background-color: #0D1117;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    outline: none;
+}
+QTreeWidget::item:selected   { background-color: #1F3A5F; }
+QTreeWidget::item:hover      { background-color: #21262D; }
+
+/* ── Scroll bars ───────────────────────────────────────── */
+QScrollBar:vertical {
+    background: #0D1117; width: 6px; border-radius: 3px;
+}
+QScrollBar::handle:vertical {
+    background: #30363D; border-radius: 3px; min-height: 20px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+
+/* ── Dialogs ───────────────────────────────────────────── */
+QMessageBox           { background-color: #0D1117; }
+QMessageBox QLabel    { color: #E6EDF3; }
+QPushButton#qt_msgbox_button,
+QPushButton[text="OK"], QPushButton[text="Cancel"] {
+    min-width: 72px;
+}
+"""
 
 
 class SettingsWindow(QDialog):
@@ -121,7 +294,8 @@ class SettingsWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setFixedSize(360, 520)
+        self.setStyleSheet(APP_STYLESHEET)
+        self.setFixedSize(390, 640)
         self.logger.info("Initializing settings window")
 
         layout = QFormLayout()
@@ -473,117 +647,152 @@ class MainWindow(QWidget):
 
         self.load_settings()
 
-        # UI ------------------------------------------------------------------
-        # Progress bar for DB build
-        self.progress = QProgressBar()
-        self.progress.setFixedHeight(20)  # Make it taller
-        self.progress.setTextVisible(True)
-        self.progress.setValue(0)
-        self.progress.setFormat("")  # Will be set dynamically
-        self.progress.hide()  # Hide initially
+        # ── Apply theme ──────────────────────────────────────────────────────
+        self.setStyleSheet(APP_STYLESHEET)
+        self.setWindowTitle("Lore Book")
+        self.resize(960, 820)
 
-        # Left: live preview (crop-to-fill)
+        # ── Widgets ──────────────────────────────────────────────────────────
+
+        # Top bar
+        title_label = QLabel("LORE BOOK")
+        title_label.setObjectName("appTitle")
+
+        self.start_btn = QPushButton("▶  Start")
+        self.start_btn.clicked.connect(self.start_camera)
+        self.stop_btn = QPushButton("■  Stop")
+        self.stop_btn.clicked.connect(self.stop_camera)
+        self.settings_btn = QPushButton("⚙  Settings")
+        self.settings_btn.clicked.connect(self.open_settings)
+
+        # Thin progress bar (DB build indicator)
+        self.progress = QProgressBar()
+        self.progress.setTextVisible(False)
+        self.progress.setValue(0)
+        self.progress.hide()
+
+        # Camera preview
         self.preview_label = QLabel("Camera stopped")
+        self.preview_label.setObjectName("previewLabel")
         self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setStyleSheet("border: 1px solid #444; background: #111; color: #bbb;")
         self.preview_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.preview_label.setMinimumSize(640, 360)
 
-        # Right: match image (keep aspect)
-        self.image_label = QLabel("Best match image")
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setStyleSheet("border: 1px solid #444; background: #111; color: #bbb;")
-        self.image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        self.image_label.setMinimumSize(360, 360)
-
-        # Label for match info
+        # Status / DB-build message (below camera, above result panel)
         self.match_label = QLabel("—")
+        self.match_label.setObjectName("statusLabel")
         self.match_label.setAlignment(Qt.AlignCenter)
 
-        # Navigation buttons for matches
-        self.prev_btn = QPushButton("◀ Prev")
-        self.next_btn = QPushButton("Next ▶")
+        # ── Result panel ─────────────────────────────────────────────────────
+        result_panel = QFrame()
+        result_panel.setObjectName("resultPanel")
+        result_panel.setFixedHeight(152)
+
+        # Thumbnail (card image)
+        self.image_label = QLabel()
+        self.image_label.setObjectName("thumbLabel")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setFixedSize(92, 128)
+        self.image_label.setText("—")
+
+        # Card name / code
+        self.match_name_label = QLabel("—")
+        self.match_name_label.setObjectName("matchName")
+
+        # Score + set detail
+        self.match_detail_label = QLabel("")
+        self.match_detail_label.setObjectName("matchDetail")
+
+        # Navigation
+        self.prev_btn = QPushButton("◀")
+        self.prev_btn.setFixedSize(30, 30)
         self.prev_btn.clicked.connect(self.prev_match)
-        self.next_btn.clicked.connect(self.next_match)
         self.match_pos_label = QLabel("")
+        self.match_pos_label.setObjectName("matchDetail")
+        self.next_btn = QPushButton("▶")
+        self.next_btn.setFixedSize(30, 30)
+        self.next_btn.clicked.connect(self.next_match)
 
-        # Camera control buttons
-        self.start_btn = QPushButton("Start Camera")
-        self.start_btn.clicked.connect(self.start_camera)
-        self.stop_btn = QPushButton("Stop Camera")
-        self.stop_btn.clicked.connect(self.stop_camera)
-        self.settings_btn = QPushButton("Settings")
-        self.settings_btn.clicked.connect(self.open_settings)
+        nav_row = QHBoxLayout()
+        nav_row.setContentsMargins(0, 0, 0, 0)
+        nav_row.setSpacing(6)
+        nav_row.addWidget(self.prev_btn)
+        nav_row.addWidget(self.match_pos_label)
+        nav_row.addWidget(self.next_btn)
+        nav_row.addStretch()
 
-        # Scan/capture button
-        self.capture_btn = QPushButton("Scan Card")
-        self.capture_btn.clicked.connect(self.capture_and_match)
-        self.capture_btn.setStyleSheet(
-            "background-color: #ff9800; color: white; font-weight: bold; "
-            "font-size: 18px; padding: 12px 24px; border-radius: 8px;"
-        )
-
-        # Foil checkbox
+        # Foil / count / add / status
         self.foil_check = QCheckBox("Foil")
         self.foil_check.setChecked(self.keep_foil_checked)
 
-        # Count input for CSV
         self.count_edit = QLineEdit("1")
-        self.count_edit.setFixedWidth(60)
+        self.count_edit.setFixedWidth(48)
 
-        # Add to CSV button
-        self.add_csv_btn = QPushButton("Add to card list")
+        self.add_csv_btn = QPushButton("+ Add to Collection")
+        self.add_csv_btn.setObjectName("addBtn")
         self.add_csv_btn.clicked.connect(self.add_to_csv)
-        self.add_csv_btn.setEnabled(False)  # enabled after a successful scan
+        self.add_csv_btn.setEnabled(False)
 
-        # Inline CSV status label
         self.csv_status = QLabel("")
-        self.csv_status.setStyleSheet("color: #8bc34a; padding-left: 8px;")
+        self.csv_status.setObjectName("statusLabel")
 
-        # --- Top bar layout
+        actions_row = QHBoxLayout()
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(8)
+        actions_row.addWidget(self.foil_check)
+        actions_row.addWidget(QLabel("×"))
+        actions_row.addWidget(self.count_edit)
+        actions_row.addWidget(self.add_csv_btn)
+        actions_row.addStretch()
+        actions_row.addWidget(self.csv_status)
+
+        info_col = QVBoxLayout()
+        info_col.setContentsMargins(10, 10, 10, 10)
+        info_col.setSpacing(4)
+        info_col.addWidget(self.match_name_label)
+        info_col.addWidget(self.match_detail_label)
+        info_col.addLayout(nav_row)
+        info_col.addStretch()
+        info_col.addLayout(actions_row)
+
+        panel_inner = QHBoxLayout()
+        panel_inner.setContentsMargins(10, 10, 10, 10)
+        panel_inner.setSpacing(10)
+        panel_inner.addWidget(self.image_label)
+        panel_inner.addLayout(info_col, stretch=1)
+        result_panel.setLayout(panel_inner)
+
+        # ── Scan FAB ─────────────────────────────────────────────────────────
+        self.capture_btn = QPushButton("●  SCAN CARD")
+        self.capture_btn.setObjectName("scanBtn")
+        self.capture_btn.clicked.connect(self.capture_and_match)
+
+        scan_row = QHBoxLayout()
+        scan_row.addStretch()
+        scan_row.addWidget(self.capture_btn)
+        scan_row.addStretch()
+
+        # ── Top bar layout ────────────────────────────────────────────────────
         top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(title_label)
+        top.addStretch()
         top.addWidget(self.start_btn)
         top.addWidget(self.stop_btn)
         top.addWidget(self.settings_btn)
-        top.addStretch()
 
-        # --- Split panels for preview and match image
-        splitter = QSplitter()
-        splitter.setChildrenCollapsible(False)
-        splitter.addWidget(self.preview_label)
-        splitter.addWidget(self.image_label)
-        splitter.setSizes([600, 600])  # balanced start
+        # ── Root layout ───────────────────────────────────────────────────────
+        root = QVBoxLayout()
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+        root.addLayout(top)
+        root.addWidget(self.progress)
+        root.addWidget(self.preview_label, stretch=1)
+        root.addWidget(self.match_label)
+        root.addWidget(result_panel)
+        root.addLayout(scan_row)
+        self.setLayout(root)
 
-        # --- Bottom controls (scan, navigation)
-        under = QHBoxLayout()
-        under.addWidget(self.capture_btn)
-        under.addStretch()
-        under.addWidget(self.prev_btn)
-        under.addWidget(self.match_pos_label)
-        under.addWidget(self.next_btn)
-
-        layout = QVBoxLayout()
-        layout.addLayout(top)
-        layout.addWidget(self.progress)
-        layout.addWidget(splitter, stretch=1)
-        layout.addLayout(under)
-        layout.addWidget(self.match_label)
-
-        # --- Bottom bar for foil, count, add, status
-        bottom = QHBoxLayout()
-        bottom.addWidget(self.foil_check)
-        bottom.addWidget(QLabel("Count:"))
-        bottom.addWidget(self.count_edit)
-        bottom.addWidget(self.add_csv_btn)
-        bottom.addWidget(self.csv_status)
-        bottom.addStretch()
-        layout.addLayout(bottom)
-
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-        self.setLayout(layout)
-
-        self.image_label.hide()
         self.start_db_build_in_background()
 
         # After layout setup, add key bindings
@@ -1292,7 +1501,6 @@ class MainWindow(QWidget):
                     self.logger.info(f"Database keys sample: {list(self.featureDB.keys())[:5]}")
             else:
                 self.match_label.setText("Please select a game type in settings.")
-                self.image_label.hide()
                 self.add_csv_btn.setEnabled(False)
                 return
 
@@ -1300,7 +1508,6 @@ class MainWindow(QWidget):
         if features is None:
             self.match_label.setText("Could not extract features from image.")
             self.logger.error("Feature extraction failed")
-            self.image_label.hide()
             self.add_csv_btn.setEnabled(False)
             return
 
@@ -1310,7 +1517,6 @@ class MainWindow(QWidget):
         if not self.featureDB:
             self.match_label.setText("Please select a game type in settings.")
             self.logger.error("No feature database loaded")
-            self.image_label.hide()
             self.add_csv_btn.setEnabled(False)
             return
 
@@ -1323,7 +1529,6 @@ class MainWindow(QWidget):
         
         if not matches:
             self.match_label.setText("No match found.")
-            self.image_label.hide()
             self.add_csv_btn.setEnabled(False)
             return
 
@@ -1333,38 +1538,41 @@ class MainWindow(QWidget):
         self.add_csv_btn.setEnabled(True)
 
     def _show_match_at(self, idx: int):
-        """
-        Show match at given index in the UI.
-        """
+        """Show the match at the given index in the result panel."""
         if not self.last_matches:
             return
-        idx = max(0, min(idx, len(self.last_matches)-1))
+        idx = max(0, min(idx, len(self.last_matches) - 1))
         self.current_match_idx = idx
         fname, score = self.last_matches[idx]
-        self.match_label.setText(f"{score:.3f}  {fname}")
-        self.match_pos_label.setText(f"{idx+1} / {len(self.last_matches)}")
 
-        # Get active game folder
+        # Formatted labels for result panel
+        from PhotoMatching import _split_filename as _sf
+        set_code, card_code = _sf(fname)
+        self.match_name_label.setText(f"{set_code}-{card_code}" if set_code else fname)
+        self.match_detail_label.setText(f"Set {set_code}  ·  {score:.1%} match" if set_code else f"{score:.1%} match")
+        self.match_pos_label.setText(f"{idx + 1} / {len(self.last_matches)}")
+        # Keep legacy label in sync (used for DB-build status elsewhere)
+        self.match_label.setText(f"{score:.3f}  {fname}")
+
+        # Thumbnail
         active_game = None
         for game_name, is_selected in self.selected_games.items():
             if is_selected:
                 active_game = game_name.capitalize()
                 break
-        
+
         if active_game:
-            # Construct path using the active game folder
             match_path = os.path.join("Card_Images", active_game, fname)
             self.logger.info(f"Loading card image from: {match_path}")
             img = cv2.imread(match_path, cv2.IMREAD_COLOR)
             if img is not None:
                 self._show_on_label(self.image_label, img, fill=False)
-                self.image_label.show()
+                self.image_label.setText("")
             else:
                 self.logger.error(f"Failed to load image: {match_path}")
-                self.image_label.hide()
+                self.image_label.setText("—")
         else:
-            self.logger.error("No active game selected")
-            self.image_label.hide()
+            self.image_label.setText("—")
 
     def prev_match(self):
         """
