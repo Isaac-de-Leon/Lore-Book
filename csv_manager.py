@@ -79,7 +79,7 @@ def _normalize_existing_rows(csv_path: str) -> List[List[str]]:
                     if not row:
                         continue
                     if len(row) >= 4:
-                        # BUG FIX: count is always col[3]; the 5th column (tag) is ignored
+                        # Count is always col[3]; a 5th legacy "Tag" column is ignored
                         count = row[3] if row[3] != "" else "0"
                         rows.append([row[0], row[1], row[2], count])
                     elif len(row) == 3:

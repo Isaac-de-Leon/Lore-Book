@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from card_database import load_cache, set_database_path
 from csv_manager import get_available_sets
-from game_types import BASE_DATABASE_PATH, GameType
+from game_types import BASE_DATABASE_PATH
 from styles import APP_STYLESHEET
 
 
@@ -128,15 +128,21 @@ class SettingsWindow(QDialog):
         layout.addRow(rebuild_button)
 
         apply_button = QPushButton("Apply")
-        apply_button.clicked.connect(self.apply_settings)
+        # lambda guards against QPushButton.clicked's `checked` bool binding to `close`
+        apply_button.clicked.connect(lambda: self.apply_settings())
         layout.addRow(apply_button)
         self.setLayout(layout)
 
-    def apply_settings(self):
-        """Apply settings to parent MainWindow and persist them."""
+    def apply_settings(self, close: bool = True):
+        """Apply settings to parent MainWindow and persist them.
+
+        Set close=False to apply without dismissing the dialog (used by
+        the Rebuild Database button).
+        """
         parent = self.parent()
         if not parent:
-            self.close()
+            if close:
+                self.close()
             return
 
         parent.keep_foil_checked = self.keep_foil_checked.isChecked()
@@ -181,16 +187,21 @@ class SettingsWindow(QDialog):
         # Load the first selected game's database
         for game_name, is_selected in selected_games.items():
             if is_selected:
-                set_database_path(game_name.capitalize())
+                game_folder = game_name.capitalize()
+                set_database_path(game_folder)
                 parent.featureDB = load_cache()
+                # Keep MainWindow's per-game cache tracker in sync
+                parent._loaded_game = game_folder if parent.featureDB else None
                 break
 
         parent.save_settings()
-        self.close()
+        if close:
+            self.close()
 
     def _rebuild_database(self):
-        """Apply current settings then trigger a full DB rebuild in the background."""
-        self.apply_settings()
+        """Apply current settings, trigger a background DB rebuild, then close."""
+        self.apply_settings(close=False)
         parent = self.parent()
         if parent and hasattr(parent, "start_db_build_in_background"):
             parent.start_db_build_in_background()
+        self.close()

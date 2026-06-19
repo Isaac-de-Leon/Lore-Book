@@ -12,18 +12,17 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSplitter,
     QVBoxLayout,
     QWidget,
     QProgressBar,
@@ -87,6 +86,10 @@ class MainWindow(QWidget):
 
     logger = logging.getLogger("MainWindow")
 
+    # Signals for marshalling background-thread updates onto the main thread.
+    build_status = Signal(str)      # status text for the status label
+    build_done = Signal(bool)       # True = all builds succeeded
+
     # ------------------------------------------------------------------ helpers
 
     @staticmethod
@@ -99,7 +102,7 @@ class MainWindow(QWidget):
 
     def set_status(self, message: str, is_error: bool = False, timeout_ms: int = 3500) -> None:
         self.csv_status.setStyleSheet(
-            f"color: {'#f44336' if is_error else '#8bc34a'}; padding-left: 8px;"
+            f"color: {'#F85149' if is_error else '#3FB950'}; padding-left: 8px;"
         )
         self.csv_status.setText(message)
         if timeout_ms > 0:
@@ -119,12 +122,13 @@ class MainWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Card Matcher — Camera")
-        self.resize(1280, 800)
+        self.setWindowTitle("Lore Book")
+        self.resize(960, 820)
         self.setStyleSheet(APP_STYLESHEET)
 
         # State
         self.featureDB: Dict[str, np.ndarray] = load_cache()
+        self._loaded_game: Optional[str] = None  # game whose featureDB is in memory
         self.selected_games: Dict[str, bool] = {"lorcana": False, "riftbound": False}
         self.selected_sets: Dict[str, List[str]] = {"lorcana": [], "riftbound": []}
         self.keep_foil_checked = False
@@ -146,100 +150,150 @@ class MainWindow(QWidget):
 
         self.load_settings()
 
-        # ---- Widgets ----
+        # ── Widgets ──────────────────────────────────────────────────────────
+
+        # Top bar
+        title_label = QLabel("LORE BOOK")
+        title_label.setObjectName("appTitle")
+
+        self.start_btn = QPushButton("▶  Start")
+        self.start_btn.clicked.connect(self.start_camera)
+        self.stop_btn = QPushButton("■  Stop")
+        self.stop_btn.clicked.connect(self.stop_camera)
+        self.settings_btn = QPushButton("⚙  Settings")
+        self.settings_btn.clicked.connect(self.open_settings)
+
+        # Thin progress bar (DB build indicator)
         self.progress = QProgressBar()
-        self.progress.setFixedHeight(20)
-        self.progress.setTextVisible(True)
+        self.progress.setTextVisible(False)
         self.progress.setValue(0)
-        self.progress.setFormat("")
         self.progress.hide()
 
+        # Camera preview
         self.preview_label = QLabel("Camera stopped")
         self.preview_label.setObjectName("previewLabel")
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.preview_label.setMinimumSize(640, 360)
 
-        self.image_label = QLabel("Best match image")
-        self.image_label.setObjectName("thumbLabel")
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        self.image_label.setMinimumSize(360, 360)
-
+        # Status / DB-build message (below camera, above result panel)
         self.match_label = QLabel("—")
+        self.match_label.setObjectName("statusLabel")
         self.match_label.setAlignment(Qt.AlignCenter)
 
-        self.prev_btn = QPushButton("◀ Prev")
-        self.next_btn = QPushButton("Next ▶")
+        # ── Result panel ─────────────────────────────────────────────────────
+        result_panel = QFrame()
+        result_panel.setObjectName("resultPanel")
+        result_panel.setFixedHeight(152)
+
+        # Thumbnail (card image)
+        self.image_label = QLabel()
+        self.image_label.setObjectName("thumbLabel")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setFixedSize(92, 128)
+        self.image_label.setText("—")
+
+        # Card name / code
+        self.match_name_label = QLabel("—")
+        self.match_name_label.setObjectName("matchName")
+
+        # Score + set detail
+        self.match_detail_label = QLabel("")
+        self.match_detail_label.setObjectName("matchDetail")
+
+        # Navigation
+        self.prev_btn = QPushButton("◀")
+        self.prev_btn.setFixedSize(30, 30)
         self.prev_btn.clicked.connect(self.prev_match)
-        self.next_btn.clicked.connect(self.next_match)
         self.match_pos_label = QLabel("")
+        self.match_pos_label.setObjectName("matchDetail")
+        self.next_btn = QPushButton("▶")
+        self.next_btn.setFixedSize(30, 30)
+        self.next_btn.clicked.connect(self.next_match)
 
-        self.start_btn = QPushButton("Start Camera")
-        self.start_btn.clicked.connect(self.start_camera)
-        self.stop_btn = QPushButton("Stop Camera")
-        self.stop_btn.clicked.connect(self.stop_camera)
-        self.settings_btn = QPushButton("Settings")
-        self.settings_btn.clicked.connect(self.open_settings)
+        nav_row = QHBoxLayout()
+        nav_row.setContentsMargins(0, 0, 0, 0)
+        nav_row.setSpacing(6)
+        nav_row.addWidget(self.prev_btn)
+        nav_row.addWidget(self.match_pos_label)
+        nav_row.addWidget(self.next_btn)
+        nav_row.addStretch()
 
-        self.capture_btn = QPushButton("Scan Card")
-        self.capture_btn.setObjectName("scanBtn")
-        self.capture_btn.clicked.connect(self.capture_and_match)
-
+        # Foil / count / add / status
         self.foil_check = QCheckBox("Foil")
         self.foil_check.setChecked(self.keep_foil_checked)
 
         self.count_edit = QLineEdit("1")
-        self.count_edit.setFixedWidth(60)
+        self.count_edit.setFixedWidth(48)
 
-        self.add_csv_btn = QPushButton("Add to card list")
+        self.add_csv_btn = QPushButton("+ Add to Collection")
         self.add_csv_btn.setObjectName("addBtn")
         self.add_csv_btn.clicked.connect(self.add_to_csv)
         self.add_csv_btn.setEnabled(False)
 
         self.csv_status = QLabel("")
-        self.csv_status.setStyleSheet("color: #8bc34a; padding-left: 8px;")
+        self.csv_status.setObjectName("statusLabel")
 
-        # ---- Layout ----
+        actions_row = QHBoxLayout()
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(8)
+        actions_row.addWidget(self.foil_check)
+        actions_row.addWidget(QLabel("×"))
+        actions_row.addWidget(self.count_edit)
+        actions_row.addWidget(self.add_csv_btn)
+        actions_row.addStretch()
+        actions_row.addWidget(self.csv_status)
+
+        info_col = QVBoxLayout()
+        info_col.setContentsMargins(10, 10, 10, 10)
+        info_col.setSpacing(4)
+        info_col.addWidget(self.match_name_label)
+        info_col.addWidget(self.match_detail_label)
+        info_col.addLayout(nav_row)
+        info_col.addStretch()
+        info_col.addLayout(actions_row)
+
+        panel_inner = QHBoxLayout()
+        panel_inner.setContentsMargins(10, 10, 10, 10)
+        panel_inner.setSpacing(10)
+        panel_inner.addWidget(self.image_label)
+        panel_inner.addLayout(info_col, stretch=1)
+        result_panel.setLayout(panel_inner)
+
+        # ── Scan FAB ─────────────────────────────────────────────────────────
+        self.capture_btn = QPushButton("●  SCAN CARD")
+        self.capture_btn.setObjectName("scanBtn")
+        self.capture_btn.clicked.connect(self.capture_and_match)
+
+        scan_row = QHBoxLayout()
+        scan_row.addStretch()
+        scan_row.addWidget(self.capture_btn)
+        scan_row.addStretch()
+
+        # ── Top bar layout ────────────────────────────────────────────────────
         top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(title_label)
+        top.addStretch()
         top.addWidget(self.start_btn)
         top.addWidget(self.stop_btn)
         top.addWidget(self.settings_btn)
-        top.addStretch()
 
-        splitter = QSplitter()
-        splitter.setChildrenCollapsible(False)
-        splitter.addWidget(self.preview_label)
-        splitter.addWidget(self.image_label)
-        splitter.setSizes([600, 600])
+        # ── Root layout ───────────────────────────────────────────────────────
+        root = QVBoxLayout()
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+        root.addLayout(top)
+        root.addWidget(self.progress)
+        root.addWidget(self.preview_label, stretch=1)
+        root.addWidget(self.match_label)
+        root.addWidget(result_panel)
+        root.addLayout(scan_row)
+        self.setLayout(root)
 
-        under = QHBoxLayout()
-        under.addWidget(self.capture_btn)
-        under.addStretch()
-        under.addWidget(self.prev_btn)
-        under.addWidget(self.match_pos_label)
-        under.addWidget(self.next_btn)
-
-        bottom = QHBoxLayout()
-        bottom.addWidget(self.foil_check)
-        bottom.addWidget(QLabel("Count:"))
-        bottom.addWidget(self.count_edit)
-        bottom.addWidget(self.add_csv_btn)
-        bottom.addWidget(self.csv_status)
-        bottom.addStretch()
-
-        layout = QVBoxLayout()
-        layout.addLayout(top)
-        layout.addWidget(self.progress)
-        layout.addWidget(splitter, stretch=1)
-        layout.addLayout(under)
-        layout.addWidget(self.match_label)
-        layout.addLayout(bottom)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-        self.setLayout(layout)
-
-        self.image_label.hide()
+        # Signals from background build threads → main-thread slots
+        self.build_status.connect(self.match_label.setText)
+        self.build_done.connect(self._on_build_done)
 
         # Timers
         self.timer = QTimer(self)
@@ -377,7 +431,6 @@ class MainWindow(QWidget):
 
         set_database_path(self.current_game)
         self.progress.setValue(0)
-        self.progress.setFormat(f"Building {self.current_game} database… %p%")
         self.progress.show()
         self.match_label.setText(f"Building {self.current_game} database, please wait…")
 
@@ -385,14 +438,19 @@ class MainWindow(QWidget):
         self._db_progress_timer.start()
 
     def _start_current_game_build(self) -> None:
-        """Start the background build thread for self.current_game."""
+        """Start the background build thread for self.current_game.
+
+        The worker runs in a daemon thread and must NOT touch Qt widgets
+        directly — all UI updates are emitted via signals (build_status,
+        build_done) which Qt delivers on the main thread.
+        """
         game_name = self.current_game
         game_path = os.path.join("Card_Images", game_name)
 
         def progress_callback(pct: int, current_file: Optional[str]) -> None:
             self._db_progress_pct = pct
             if current_file:
-                self.match_label.setText(f"Processing {current_file}…")
+                self.build_status.emit(f"Processing {current_file}…")
 
         def build_worker() -> None:
             try:
@@ -417,15 +475,13 @@ class MainWindow(QWidget):
                     self.current_game = self.game_folders[self.current_game_index]
                     set_database_path(self.current_game)
                     self._db_progress_pct = 0
-                    self.progress.setFormat(f"Building {self.current_game} database… %p%")
-                    self.match_label.setText(f"Building {self.current_game} database…")
+                    self.build_status.emit(f"Building {self.current_game} database…")
                     self._start_current_game_build()
                 else:
                     elapsed = time.time() - self._db_build_state["start_time"]
                     self.logger.info(f"All DBs built in {elapsed:.1f}s")
-                    self.match_label.setText("All databases ready.")
-                    self.progress.hide()
                     self._db_build_state["running"] = False
+                    self.build_done.emit(True)
 
             except Exception as e:
                 self.logger.error(f"Error building DB for {game_name}: {e}")
@@ -436,10 +492,19 @@ class MainWindow(QWidget):
                     self.logger.info(f"Retrying {game_name} (attempt {retries + 1})")
                     threading.Thread(target=build_worker, daemon=True).start()
                 else:
-                    self.match_label.setText(f"Error building {game_name} database")
-                    self.progress.hide()
+                    self.build_status.emit(f"Error building {game_name} database")
+                    self.build_done.emit(False)
 
         threading.Thread(target=build_worker, daemon=True).start()
+
+    def _on_build_done(self, success: bool) -> None:
+        """Main-thread slot: finalize UI after the background build finishes."""
+        self.progress.hide()
+        self._db_progress_timer.stop()
+        if success:
+            self.match_label.setText("All databases ready.")
+        # The in-memory featureDB may be stale after a rebuild — force reload on next scan
+        self._loaded_game = None
 
     def _tick_db_progress(self) -> None:
         """Poll _db_progress_pct and update the progress bar."""
@@ -447,7 +512,6 @@ class MainWindow(QWidget):
         if progress != self.progress.value():
             self.progress.setValue(progress)
             self.progress.show()
-            QApplication.processEvents()
         if progress >= 100:
             self._db_progress_timer.stop()
             self.progress.hide()
@@ -653,24 +717,23 @@ class MainWindow(QWidget):
         active_game = self.get_active_game()
         if not active_game:
             self.match_label.setText("Please select a game type in Settings.")
-            self.image_label.hide()
             self.add_csv_btn.setEnabled(False)
             return
 
-        set_database_path(active_game)
-        self.featureDB = load_cache()
+        # Reload featureDB only when the active game changed (or after a rebuild)
+        if self._loaded_game != active_game or not self.featureDB:
+            set_database_path(active_game)
+            self.featureDB = load_cache()
+            self._loaded_game = active_game if self.featureDB else None
+            self.logger.info(f"Loaded {len(self.featureDB)} entries for {active_game}")
         if not self.featureDB:
             self.match_label.setText("No feature database found. Build the DB first.")
-            self.image_label.hide()
             self.add_csv_btn.setEnabled(False)
             return
-
-        self.logger.info(f"Loaded {len(self.featureDB)} entries for {active_game}")
 
         features = extract_features(img_bgr)
         if features is None:
             self.match_label.setText("Could not extract features from image.")
-            self.image_label.hide()
             self.add_csv_btn.setEnabled(False)
             return
 
@@ -680,7 +743,6 @@ class MainWindow(QWidget):
 
         if not matches:
             self.match_label.setText("No match found.")
-            self.image_label.hide()
             self.add_csv_btn.setEnabled(False)
             return
 
@@ -690,25 +752,31 @@ class MainWindow(QWidget):
         self.add_csv_btn.setEnabled(True)
 
     def _show_match_at(self, idx: int) -> None:
-        """Display the match at position idx."""
+        """Display the match at position idx in the result panel."""
         if not self.last_matches:
             return
         idx = max(0, min(idx, len(self.last_matches) - 1))
         self.current_match_idx = idx
         fname, score = self.last_matches[idx]
-        self.match_label.setText(f"{score:.3f}  {fname}")
+
+        set_code, card_code = _split_filename(fname)
+        self.match_name_label.setText(f"{set_code}-{card_code}" if set_code else fname)
+        self.match_detail_label.setText(
+            f"Set {set_code}  ·  {score:.1%} match" if set_code else f"{score:.1%} match"
+        )
         self.match_pos_label.setText(f"{idx + 1} / {len(self.last_matches)}")
+        self.match_label.setText(f"{score:.3f}  {fname}")
 
         active_game = self.get_active_game()
         if active_game:
             match_path = os.path.join("Card_Images", active_game, fname)
             img = cv2.imread(match_path, cv2.IMREAD_COLOR)
             if img is not None:
+                # setPixmap clears any placeholder text automatically
                 self._show_on_label(self.image_label, img, fill=False)
-                self.image_label.show()
                 return
             self.logger.error(f"Failed to load image: {match_path}")
-        self.image_label.hide()
+        self.image_label.setText("—")
 
     def prev_match(self) -> None:
         if self.last_matches:
@@ -830,7 +898,7 @@ class MainWindow(QWidget):
 
     def _setup_tooltips(self):
         self.capture_btn.setToolTip("Scan Card (C)")
-        self.add_csv_btn.setToolTip("Add to card list (Ctrl+S or Alt+S)")
+        self.add_csv_btn.setToolTip("Add to Collection (Ctrl+S or Alt+S)")
         self.prev_btn.setToolTip("Previous match (A)")
         self.next_btn.setToolTip("Next match (D)")
         self.foil_check.setToolTip("Toggle Foil (F)")
