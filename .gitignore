@@ -17,7 +17,8 @@ Thumbs.db
 .vscode/
 
 # App caches & runtime artifacts
-DBCardCache.json
+DBCardCache*.db
+DBCardCache*.json
 Bulk_Add.csv
 Bulk_Add.csv.bak
 card_metadata.json
@@ -29,8 +30,5 @@ captured_cards/
 *.bak
 
 # If you keep large image sets out of git (optional)
-# Card_Images/** 
+# Card_Images/**
 # !Card_Images/.gitkeep
-DBCardCache_RiftBound.json
-DBCardCache_Lorcana.json
-__pycache__/PhotoMatching.cpython-313.pyc
