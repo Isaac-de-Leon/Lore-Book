@@ -28,18 +28,18 @@ from PySide6.QtWidgets import (
     QProgressBar,
 )
 
-from card_database import (
+from lorebook.core.card_database import (
     build_feature_database,
     get_database_path,
     load_cache,
     set_database_path,
 )
-from csv_manager import _split_filename, update_cardlist
-from features import extract_features, visualize_activation_overlay
-from image_utils import is_probably_foil
-from matching import find_best_matches
-from settings_window import SettingsWindow
-from styles import APP_STYLESHEET
+from lorebook.core.csv_manager import _split_filename, update_cardlist
+from lorebook.core.features import extract_features, visualize_activation_overlay
+from lorebook.core.image_utils import is_probably_foil
+from lorebook.core.matching import find_best_matches
+from lorebook.ui.settings_window import SettingsWindow
+from lorebook.ui.styles import APP_STYLESHEET
 
 SETTINGS_FILE = "ui_settings.json"
 

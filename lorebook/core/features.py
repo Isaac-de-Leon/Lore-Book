@@ -20,8 +20,8 @@ from keras.applications import MobileNetV2
 from keras.applications.mobilenet_v2 import preprocess_input
 from keras.models import Model
 
-from image_utils import ensure_valid_image
-from matching import _l2_normalize
+from lorebook.core.image_utils import ensure_valid_image
+from lorebook.core.matching import _l2_normalize
 
 _base_model: Optional[Model] = None
 _feat_model: Optional[Model] = None   # 1280-dim pooled features

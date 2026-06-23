@@ -9,7 +9,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from game_types import BASE_DATABASE_PATH, SUPPORTED_EXTS
+from lorebook.core.game_types import BASE_DATABASE_PATH, SUPPORTED_EXTS
 
 # Current active database path — changed via set_database_path().
 databasePath: str = os.path.join(BASE_DATABASE_PATH, "Lorcana")
@@ -69,7 +69,7 @@ def _process_image(filename: str, db_path: str) -> Tuple[str, Optional[np.ndarra
     Extract features for a single image. db_path is passed explicitly so this
     function is safe to call from multiple threads without relying on the global.
     """
-    from features import extract_features  # lazy: avoids importing TF at module level
+    from lorebook.core.features import extract_features  # lazy: avoids importing TF at module level
     img = cv2.imread(os.path.join(db_path, filename), cv2.IMREAD_COLOR)
     return (filename, extract_features(img)) if img is not None else (filename, None)
 

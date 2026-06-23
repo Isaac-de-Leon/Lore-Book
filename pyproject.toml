@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lorebook"
+version = "0.1.0"
+description = "Desktop trading-card scanner: webcam capture, MobileNetV2 matching, CSV export for Dreamborn.ink."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "scikit-learn",
+    "tensorflow",
+    "keras",
+    "pillow",
+    "PySide6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+# Root-level UI.py / PhotoMatching.py are runnable scripts, not part of the
+# installable package; only the lorebook package is packaged.
+packages = ["lorebook", "lorebook.core", "lorebook.ui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

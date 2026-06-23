@@ -13,23 +13,30 @@ Lore-Book is a desktop trading-card scanner application. It uses a webcam to pho
 ```
 Lore-Book/
 ├── UI.py                  # Entry point — creates app, shows MainWindow
-├── main_window.py         # MainWindow: camera, scan, match nav, CSV export
-├── settings_window.py     # SettingsWindow dialog
-│
-├── features.py            # MobileNetV2 feature extraction + heatmap overlay
-├── matching.py            # L2-normalize, cosine similarity, find_best_matches
-├── card_database.py       # Feature cache build/load, set_database_path
-├── csv_manager.py         # CSV read/write, update_cardlist, get_available_sets
-├── image_utils.py         # ensure_valid_image, foil_score, is_probably_foil
-├── game_types.py          # GameType enum, get_game_type, shared constants
-│
 ├── PhotoMatching.py       # Backward-compat re-export shim + CLI entry point
+├── pyproject.toml         # Package metadata (pip install -e .)
+│
+├── lorebook/              # Importable package
+│   ├── __init__.py
+│   ├── core/              # Game-agnostic logic (no Qt)
+│   │   ├── __init__.py
+│   │   ├── game_types.py      # GameType enum, get_game_type, shared constants
+│   │   ├── image_utils.py     # ensure_valid_image, foil_score, is_probably_foil
+│   │   ├── matching.py        # L2-normalize, cosine similarity, find_best_matches
+│   │   ├── features.py        # MobileNetV2 feature extraction + heatmap overlay
+│   │   ├── card_database.py   # Feature cache build/load, set_database_path
+│   │   └── csv_manager.py     # CSV read/write, update_cardlist, get_available_sets
+│   └── ui/                # PySide6 widgets
+│       ├── __init__.py
+│       ├── styles.py          # APP_STYLESHEET dark theme
+│       ├── settings_window.py # SettingsWindow dialog
+│       └── main_window.py     # MainWindow: camera, scan, match nav, CSV export
 │
 ├── Card_Images/
 │   ├── Lorcana/           # Reference card images (.webp / .jpg / .png)
 │   └── Riftbound/
-├── DBCardCache_Lorcana.json    # Cached feature vectors (auto-generated)
-├── DBCardCache_Riftbound.json
+├── DBCardCache_Lorcana.db      # Cached feature vectors (SQLite, auto-generated)
+├── DBCardCache_Riftbound.db
 ├── LorcanaList.csv        # Scanned Lorcana collection
 ├── RiftboundList.csv      # Scanned Riftbound collection
 ├── ui_settings.json       # Persisted UI preferences
@@ -42,16 +49,19 @@ Lore-Book/
 
 | File | What it owns |
 |------|-------------|
-| `game_types.py` | `GameType` enum, `get_game_type()`, path/CSV constants |
-| `image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil` |
-| `matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches` |
-| `features.py` | MobileNetV2 lazy-load, `extract_features`, `visualize_activation_overlay` |
-| `card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
-| `csv_manager.py` | `update_cardlist`, `get_available_sets`, CSV read/write helpers |
-| `settings_window.py` | `SettingsWindow` PySide6 dialog |
-| `main_window.py` | `MainWindow`, `setup_logging` |
+| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, path/CSV constants |
+| `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil` |
+| `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches` |
+| `lorebook/core/features.py` | MobileNetV2 lazy-load, `extract_features`, `visualize_activation_overlay` |
+| `lorebook/core/card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
+| `lorebook/core/csv_manager.py` | `update_cardlist`, `get_available_sets`, CSV read/write helpers |
+| `lorebook/ui/styles.py` | `APP_STYLESHEET` dark theme |
+| `lorebook/ui/settings_window.py` | `SettingsWindow` PySide6 dialog |
+| `lorebook/ui/main_window.py` | `MainWindow`, `setup_logging` |
 | `UI.py` | `QApplication` entry point |
 | `PhotoMatching.py` | Re-exports all of the above for backward compatibility; also runnable as CLI |
+
+> Internal imports use absolute package paths (e.g. `from lorebook.core.matching import find_best_matches`). Tests and external callers can keep importing from the `PhotoMatching` shim unchanged.
 
 ---
 
@@ -73,7 +83,7 @@ pip install -r requirements.txt
 ```bash
 python PhotoMatching.py --game Lorcana --build
 ```
-This scans all images in `Card_Images/Lorcana/` and writes `DBCardCache_Lorcana.json`.
+This scans all images in `Card_Images/Lorcana/` and writes `DBCardCache_Lorcana.db`.
 
 ### Run the application
 ```bash
@@ -134,27 +144,27 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 ## Adding a New Card Game
 
 1. Create `Card_Images/<GameName>/` and add card images.
-2. Add a `GameType` entry in `PhotoMatching.py`'s `GameType` enum.
-3. Update `get_game_type()` to detect the new folder name.
-4. Add a `<GameName>List.csv` constant and update `update_cardlist()`.
+2. Add a `GameType` entry in `lorebook/core/game_types.py`'s `GameType` enum.
+3. Update `get_game_type()` (same file) to detect the new folder name.
+4. Add a `<GameName>List.csv` constant and update `update_cardlist()` in `lorebook/core/csv_manager.py`.
 5. The UI's game/set tree widget discovers game folders automatically.
 
 ---
 
 ## Common Tasks for Claude
 
-- **Add a feature** — edit `PhotoMatching.py` for logic, `UI.py` for UI wiring.
-- **Fix a CSV parsing bug** — see `_normalize_existing_rows()` and `_write_rows_4col()` in `PhotoMatching.py`.
-- **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()`.
-- **Change match threshold** — default is `0.70` in `find_best_matches()`; UI exposes it as confidence %.
-- **Cache issues** — delete `DBCardCache_<game>.json` and rebuild with `--build` flag.
+- **Add a feature** — edit the relevant module under `lorebook/core/` for logic, `lorebook/ui/` for UI wiring.
+- **Fix a CSV parsing bug** — see `_normalize_existing_rows()` and `_write_rows_4col()` in `lorebook/core/csv_manager.py`.
+- **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()` (`lorebook/core/image_utils.py`).
+- **Change match threshold** — default is `0.70` in `find_best_matches()` (`lorebook/core/matching.py`); UI exposes it as confidence %.
+- **Cache issues** — delete `DBCardCache_<game>.db` and rebuild with `--build` flag.
 
 ---
 
 ## Known Limitations / Gotchas
 
 - `tensorflow_intel` is only for Windows Intel CPUs — remove from `requirements.txt` on other platforms.
-- `Card_Images/` is git-ignored (images can be large); the JSON cache is also git-ignored.
+- `Card_Images/` is git-ignored (images can be large); the SQLite/JSON caches are also git-ignored.
 - The feature model (MobileNetV2 weights) is downloaded from the internet on first run (~14 MB).
 - Camera index `0` may not be correct on machines with multiple cameras — adjust in Settings.
 - `foil_score` threshold (default `0.08`) was tuned empirically; may need adjustment per lighting setup.

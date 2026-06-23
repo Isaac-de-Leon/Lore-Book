@@ -1,6 +1,6 @@
 # PhotoMatching.py — backward-compatible re-export shim.
 #
-# All logic has been moved to focused modules:
+# All logic has been moved to focused modules under lorebook/core/:
 #   game_types.py    — GameType enum, get_game_type, constants
 #   image_utils.py   — ensure_valid_image, foil_score, is_probably_foil
 #   matching.py      — _l2_normalize, _cosine_score, find_best_matches
@@ -10,7 +10,7 @@
 #
 # Existing imports of the form `from PhotoMatching import ...` continue to work.
 
-from card_database import (
+from lorebook.core.card_database import (
     build_feature_database,
     clear_from_cache,
     databasePath,
@@ -18,15 +18,15 @@ from card_database import (
     load_cache,
     set_database_path,
 )
-from csv_manager import (
+from lorebook.core.csv_manager import (
     _normalize_existing_rows,
     _split_filename,
     _write_rows_4col,
     get_available_sets,
     update_cardlist,
 )
-from features import extract_features, visualize_activation_overlay
-from game_types import (
+from lorebook.core.features import extract_features, visualize_activation_overlay
+from lorebook.core.game_types import (
     BASE_DATABASE_PATH,
     LORCANA_CSV,
     RIFTBOUND_CSV,
@@ -34,8 +34,8 @@ from game_types import (
     GameType,
     get_game_type,
 )
-from image_utils import ensure_valid_image, foil_score, is_probably_foil
-from matching import _cosine_score, _l2_normalize, find_best_matches
+from lorebook.core.image_utils import ensure_valid_image, foil_score, is_probably_foil
+from lorebook.core.matching import _cosine_score, _l2_normalize, find_best_matches
 
 # Legacy name aliases
 baseDatabasePath = BASE_DATABASE_PATH

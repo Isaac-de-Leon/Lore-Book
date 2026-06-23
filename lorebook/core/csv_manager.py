@@ -5,7 +5,7 @@ import logging
 import os
 from typing import List, Optional, Tuple
 
-from game_types import (
+from lorebook.core.game_types import (
     BASE_DATABASE_PATH,
     LORCANA_CSV,
     RIFTBOUND_CSV,
@@ -44,7 +44,7 @@ def get_available_sets(
     game_type is accepted for API compatibility but no longer restricts results —
     all set codes present in the folder are returned regardless of format.
     """
-    from card_database import _list_image_files, databasePath
+    from lorebook.core.card_database import _list_image_files, databasePath
 
     resolved = db_path or databasePath
     sets = set()

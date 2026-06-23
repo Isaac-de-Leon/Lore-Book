@@ -17,10 +17,10 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from card_database import load_cache, set_database_path
-from csv_manager import get_available_sets
-from game_types import BASE_DATABASE_PATH
-from styles import APP_STYLESHEET
+from lorebook.core.card_database import load_cache, set_database_path
+from lorebook.core.csv_manager import get_available_sets
+from lorebook.core.game_types import BASE_DATABASE_PATH
+from lorebook.ui.styles import APP_STYLESHEET
 
 
 class SettingsWindow(QDialog):
