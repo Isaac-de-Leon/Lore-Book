@@ -33,6 +33,7 @@ from PhotoMatching import (
     ensure_valid_image,
     find_best_matches,
     foil_score,
+    get_extractor,
     get_game_type,
     is_probably_foil,
 )
@@ -269,6 +270,37 @@ class TestFoilScore:
     def test_is_probably_foil_black(self):
         img = np.zeros((50, 50, 3), dtype=np.uint8)
         assert not is_probably_foil(img)
+
+
+# ===========================================================================
+# get_extractor backend dispatch
+# ===========================================================================
+
+class TestGetExtractor:
+    def test_keras_backend(self):
+        ex = get_extractor("keras")
+        assert type(ex).__name__ == "_KerasExtractor"
+        assert hasattr(ex, "extract")
+
+    def test_tflite_backend(self):
+        # Constructing the tflite extractor must NOT load the interpreter,
+        # so this works even without a .tflite model present.
+        ex = get_extractor("tflite")
+        assert type(ex).__name__ == "_TFLiteExtractor"
+        assert hasattr(ex, "extract")
+
+    def test_default_is_keras(self):
+        assert type(get_extractor()).__name__ == "_KerasExtractor"
+
+    def test_case_insensitive(self):
+        assert type(get_extractor("TFLite")).__name__ == "_TFLiteExtractor"
+
+    def test_unknown_backend_raises(self):
+        with pytest.raises(ValueError):
+            get_extractor("onnx")
+
+    def test_extractors_are_cached(self):
+        assert get_extractor("keras") is get_extractor("keras")
 
 
 # ===========================================================================

@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Convert the MobileNetV2 feature model to a .tflite file for the sorter.
+
+Run once on a desktop (where full TensorFlow is installed); copy the resulting
+.tflite to the Raspberry Pi, where it runs via tflite-runtime without TF.
+
+    python scripts/convert_to_tflite.py
+    python scripts/convert_to_tflite.py --output mobilenetv2_features.tflite
+"""
+import argparse
+import os
+
+# Mirror the feature model used by the keras extractor (1280-dim avg pooling).
+from lorebook.core.features import DEFAULT_TFLITE_MODEL
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", default=DEFAULT_TFLITE_MODEL, help="Output .tflite path."
+    )
+    args = parser.parse_args()
+
+    import tensorflow as tf
+    from keras.applications import MobileNetV2
+
+    model = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    tflite_model = converter.convert()
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    with open(args.output, "wb") as f:
+        f.write(tflite_model)
+    print(f"Wrote {args.output} ({len(tflite_model) / 1e6:.1f} MB)")
+
+
+if __name__ == "__main__":
+    main()

@@ -20,6 +20,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Raspberry Pi sorter runtime: lightweight tflite inference instead of full
+# TensorFlow. Install with `pip install lorebook[sorter]` on the Pi.
+sorter = ["tflite-runtime"]
 
 [tool.setuptools]
 # Root-level UI.py / PhotoMatching.py are runnable scripts, not part of the

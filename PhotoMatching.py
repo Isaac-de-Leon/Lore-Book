@@ -25,7 +25,11 @@ from lorebook.core.csv_manager import (
     get_available_sets,
     update_cardlist,
 )
-from lorebook.core.features import extract_features, visualize_activation_overlay
+from lorebook.core.features import (
+    extract_features,
+    get_extractor,
+    visualize_activation_overlay,
+)
 from lorebook.core.game_types import (
     BASE_DATABASE_PATH,
     LORCANA_CSV,
