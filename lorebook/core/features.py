@@ -15,26 +15,22 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 import logging
 import warnings
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 import cv2
 import numpy as np
-import tensorflow as tf
 
-logging.getLogger("tensorflow").setLevel(logging.ERROR)
-tf.get_logger().setLevel("ERROR")
 warnings.filterwarnings("ignore", category=UserWarning)
-
-from keras.applications import MobileNetV2
-from keras.applications.mobilenet_v2 import preprocess_input
-from keras.models import Model
 
 from lorebook.core.image_utils import ensure_valid_image
 from lorebook.core.matching import _l2_normalize
 
-_base_model: Optional[Model] = None
-_feat_model: Optional[Model] = None   # 1280-dim pooled features
-_act_model: Optional[Model] = None    # last conv activations (for heatmaps)
+# TensorFlow/Keras are imported lazily (only when the "keras" backend or the
+# heatmap overlay is actually used) so importing this module — and the "tflite"
+# backend — works on a Raspberry Pi that has only tflite-runtime installed.
+_base_model = None
+_feat_model = None   # 1280-dim pooled features
+_act_model = None    # last conv activations (for heatmaps)
 
 # Where the tflite feature model lives. Override with LOREBOOK_TFLITE_MODEL.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,10 +39,31 @@ DEFAULT_TFLITE_MODEL = os.environ.get(
 )
 
 
-def _get_models() -> Tuple[Model, Model]:
-    """Return (feature_model, activation_model), lazy-initialized on first call."""
+def _mobilenet_preprocess(batch: np.ndarray) -> np.ndarray:
+    """
+    MobileNetV2 'tf'-mode preprocessing: scale pixels to [-1, 1].
+
+    Pure-numpy equivalent of keras.applications.mobilenet_v2.preprocess_input,
+    so the keras and tflite backends share identical preprocessing without the
+    tflite path needing TensorFlow installed.
+    """
+    return batch.astype(np.float32) / 127.5 - 1.0
+
+
+def _get_models():
+    """Return (feature_model, activation_model), lazy-initialized on first call.
+
+    Imports TensorFlow/Keras on first use only (keras backend / heatmap overlay).
+    """
     global _base_model, _feat_model, _act_model
     if _feat_model is None or _act_model is None:
+        import tensorflow as tf
+        from keras.applications import MobileNetV2
+        from keras.models import Model
+
+        logging.getLogger("tensorflow").setLevel(logging.ERROR)
+        tf.get_logger().setLevel("ERROR")
+
         _base_model = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
         _feat_model = Model(inputs=_base_model.input, outputs=_base_model.output)
         _act_model = Model(inputs=_base_model.input, outputs=_base_model.layers[-2].output)
@@ -75,7 +92,7 @@ def _preprocess_to_batch(img_or_path: Union[np.ndarray, str]) -> Optional[np.nda
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(img_rgb, (224, 224), interpolation=cv2.INTER_AREA)
     batch = np.expand_dims(resized.astype(np.float32), axis=0)
-    return preprocess_input(batch)
+    return _mobilenet_preprocess(batch)
 
 
 def _finalize(features: np.ndarray) -> Optional[np.ndarray]:
@@ -185,7 +202,7 @@ def extract_features(img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray
     return get_extractor("keras").extract(img_or_path)
 
 
-def visualize_activation_overlay(img_bgr: np.ndarray, model: Optional[Model] = None) -> np.ndarray:
+def visualize_activation_overlay(img_bgr: np.ndarray, model=None) -> np.ndarray:
     """Return the image with a jet-colormap heatmap of average last-conv activations blended in."""
     if img_bgr is None or img_bgr.size == 0:
         return img_bgr
@@ -200,7 +217,7 @@ def visualize_activation_overlay(img_bgr: np.ndarray, model: Optional[Model] = N
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(img_rgb, (224, 224), interpolation=cv2.INTER_AREA)
     batch = np.expand_dims(resized.astype(np.float32), axis=0)
-    activations = use_model.predict(preprocess_input(batch), verbose=0)[0]  # (7,7,1280)
+    activations = use_model.predict(_mobilenet_preprocess(batch), verbose=0)[0]  # (7,7,1280)
 
     heatmap = activations.mean(axis=-1)  # (7,7)
     heatmap = cv2.resize(heatmap, (img_bgr.shape[1], img_bgr.shape[0]), interpolation=cv2.INTER_CUBIC)
