@@ -1,0 +1,11 @@
+{
+  "_comment": "Example multi-bin sort rules. Rules are evaluated top-to-bottom; the first rule whose every present condition matches wins. Anything unmatched (including no-match / low-confidence cards) falls through to reject_bin. Conditions: game, set_code, foil, min_confidence.",
+  "reject_bin": "reject",
+  "rules": [
+    {"foil": true, "min_confidence": 0.75, "bin": "foils"},
+    {"set_code": "001", "bin": "bin-set-001"},
+    {"set_code": "008", "bin": "bin-set-008"},
+    {"set_code": "009", "bin": "bin-set-009"},
+    {"min_confidence": 0.75, "bin": "bin-other-matched"}
+  ]
+}
