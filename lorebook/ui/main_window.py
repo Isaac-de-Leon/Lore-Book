@@ -5,7 +5,6 @@ import json
 import logging
 import logging.handlers
 import os
-import platform
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -38,6 +37,7 @@ from lorebook.core.csv_manager import _split_filename, update_cardlist
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_utils import is_probably_foil
 from lorebook.core.matching import find_best_matches
+from lorebook.hardware.camera import open_capture
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import APP_STYLESHEET
 
@@ -522,91 +522,17 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ camera
 
     def start_camera(self) -> None:
-        """Open the camera, trying DirectShow → MSMF → generic backends in order."""
+        """Open the camera via the shared backend-probe helper, then start the preview."""
         self.stop_camera()
         cv2.destroyAllWindows()
 
-        system = platform.system()
-        if system == "Windows":
-            backends = [
-                (cv2.CAP_DSHOW, "DirectShow"),
-                (cv2.CAP_MSMF, "Media Foundation"),
-                (cv2.CAP_ANY, "Default"),
-            ]
-        elif system == "Linux":
-            backends = [
-                (cv2.CAP_V4L2, "V4L2"),
-                (cv2.CAP_ANY, "Default"),
-            ]
-        else:  # macOS and others
-            backends = [
-                (cv2.CAP_AVFOUNDATION, "AVFoundation"),
-                (cv2.CAP_ANY, "Default"),
-            ]
-
-        camera_opened = False
-        last_error = None
-
-        for backend_flag, backend_name in backends:
-            try:
-                self.logger.info(f"Trying camera {self.camera_index} with {backend_name}…")
-                self.cap = (
-                    cv2.VideoCapture(self.camera_index)
-                    if backend_flag == cv2.CAP_ANY
-                    else cv2.VideoCapture(self.camera_index + backend_flag)
-                )
-                if not self.cap.isOpened():
-                    raise RuntimeError(f"{backend_name} failed to open camera")
-
-                for prop, value, name in [
-                    (cv2.CAP_PROP_BUFFERSIZE, 1, "Buffer Size"),
-                    (cv2.CAP_PROP_FRAME_WIDTH, 1280, "Width"),
-                    (cv2.CAP_PROP_FRAME_HEIGHT, 720, "Height"),
-                    (cv2.CAP_PROP_FPS, 30, "FPS"),
-                    (cv2.CAP_PROP_AUTOFOCUS, 1, "Autofocus"),
-                    (cv2.CAP_PROP_AUTO_EXPOSURE, 1, "Auto Exposure"),
-                ]:
-                    try:
-                        self.cap.set(prop, value)
-                    except Exception:
-                        pass
-
-                ret, frame = self.cap.read()
-                if not ret or frame is None or frame.size == 0:
-                    raise RuntimeError("Camera not providing valid frames")
-
-                camera_opened = True
-                self.logger.info(f"Camera opened with {backend_name}")
-                break
-
-            except Exception as e:
-                last_error = str(e)
-                self.logger.warning(f"Failed with {backend_name}: {e}")
-                if self.cap is not None:
-                    self.cap.release()
-                    self.cap = None
-
-        if not camera_opened:
-            self._fail_and_stop(
-                f"Failed to open camera {self.camera_index} with any backend"
-                + (f"\nLast error: {last_error}" if last_error else "")
-            )
-            return
-
-        # Warm-up
-        ok = False
-        for _ in range(30):
-            try:
-                ret, frm = self.cap.read()
-                if ret and frm is not None and frm.size > 0:
-                    ok = True
-                    break
-            except Exception:
-                pass
-            time.sleep(0.1)
-
-        if not ok:
-            self._fail_and_stop("Camera opened but not delivering frames.")
+        # open_capture() (lorebook.hardware.camera) holds the platform backend
+        # probe + warm-up logic shared with the headless sorter.
+        try:
+            self.cap = open_capture(self.camera_index)
+        except Exception as e:
+            self.cap = None
+            self._fail_and_stop(str(e))
             return
 
         self.read_fail_count = 0

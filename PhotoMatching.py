@@ -46,15 +46,25 @@ baseDatabasePath = BASE_DATABASE_PATH
 LORCANA_FILE = LORCANA_CSV
 RIFTBOUND_FILE = RIFTBOUND_CSV
 
-# ---- CLI (python PhotoMatching.py --build / --match) -----------------------
+# ---- CLI (python PhotoMatching.py --build / --match / --sort) --------------
 if __name__ == "__main__":
     import argparse
+    import sys
+
+    # --sort delegates to the headless sorter, which has its own argument set.
+    if "--sort" in sys.argv[1:]:
+        from lorebook.sorter.__main__ import main as sorter_main
+
+        rest = [a for a in sys.argv[1:] if a != "--sort"]
+        raise SystemExit(sorter_main(rest))
 
     parser = argparse.ArgumentParser(description="Build feature DB and/or match an image.")
     parser.add_argument("--game", default="Lorcana", help="Game folder inside Card_Images/")
     parser.add_argument("--build", action="store_true", help="Build/update feature DB.")
     parser.add_argument("--match", help="Path to an input image to match.")
     parser.add_argument("--threshold", type=float, default=0.85, help="Cosine similarity threshold.")
+    parser.add_argument("--sort", action="store_true",
+                        help="Run the headless sorter (see `python -m lorebook.sorter --help`).")
     args = parser.parse_args()
 
     set_database_path(args.game)
