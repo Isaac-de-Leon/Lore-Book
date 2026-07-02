@@ -33,10 +33,13 @@ from PhotoMatching import (
     ensure_valid_image,
     find_best_matches,
     foil_score,
+    game_type_from_name,
     get_extractor,
     get_game_type,
     is_probably_foil,
 )
+from lorebook.core.card_database import _cache_path
+from lorebook.core.features import _check_tflite_input_dtype
 
 
 # ===========================================================================
@@ -301,6 +304,44 @@ class TestGetExtractor:
 
     def test_extractors_are_cached(self):
         assert get_extractor("keras") is get_extractor("keras")
+
+
+# ===========================================================================
+# game_type_from_name / _cache_path / tflite dtype guard
+# ===========================================================================
+
+class TestGameTypeFromName:
+    def test_known_games(self):
+        assert game_type_from_name("Lorcana") == GameType.LORCANA
+        assert game_type_from_name("riftbound") == GameType.RIFTBOUND
+        assert game_type_from_name("  LORCANA  ") == GameType.LORCANA
+
+    def test_unknown_game(self):
+        assert game_type_from_name("Pokemon") == GameType.UNKNOWN
+        assert game_type_from_name("") == GameType.UNKNOWN
+        assert game_type_from_name(None) == GameType.UNKNOWN
+
+
+class TestCachePath:
+    def test_normal_path(self):
+        assert _cache_path(os.path.join("Card_Images", "Lorcana")) == "DBCardCache_Lorcana.db"
+
+    def test_trailing_slash_does_not_collapse_to_default(self):
+        assert _cache_path("Card_Images/Lorcana/") == "DBCardCache_Lorcana.db"
+        assert _cache_path("Card_Images/Lorcana//") == "DBCardCache_Lorcana.db"
+
+    def test_empty_falls_back_to_default(self):
+        assert _cache_path("") == "DBCardCache_default.db"
+
+
+class TestTfliteInputDtypeGuard:
+    def test_float32_accepted(self):
+        _check_tflite_input_dtype(np.float32, "model.tflite")  # no raise
+
+    def test_quantized_dtypes_rejected(self):
+        for dtype in (np.int8, np.uint8):
+            with pytest.raises(ValueError, match="float32"):
+                _check_tflite_input_dtype(dtype, "model.tflite")
 
 
 # ===========================================================================

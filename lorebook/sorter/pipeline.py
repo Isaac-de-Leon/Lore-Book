@@ -4,16 +4,19 @@
 # engine. Every collaborator (camera, transport, extractor) is injected, so the
 # whole loop runs against desktop mocks with no camera, motors, or TensorFlow.
 # In dry_run mode (the default) it logs the bin decision and never writes the
-# CSV; with dry_run=False it records the card via the existing update_cardlist.
+# CSV; with dry_run=False it records the card via the existing csv_manager,
+# batching writes so the CSV is rewritten every csv_flush_interval cards
+# (and at end of run) instead of once per card.
 
 import logging
-import os
+from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np
 
-from lorebook.core.csv_manager import _split_filename, update_cardlist
+from lorebook.core.csv_manager import _split_filename, update_cardlist_batch
+from lorebook.core.game_types import GameType, game_type_from_name
 from lorebook.core.image_utils import is_probably_foil
 from lorebook.core.matching import find_best_matches
 from lorebook.hardware.camera import CameraSource
@@ -40,6 +43,10 @@ class SortPipeline:
     """
     Drives one card at a time through capture → match → decide-bin → route.
 
+    Unmatched cards (no match above threshold, or extraction failure) always
+    go to rules.reject_bin — they never flow through the rule list, so a
+    foil-only or game-only rule can't capture an unidentified card.
+
     Args:
         camera:      frame source (real or mock).
         transport:   bin router (mock until the gantry exists).
@@ -48,11 +55,13 @@ class SortPipeline:
         feature_db:  {filename: vector} reference cache (from ``load_cache``).
         rules:       SortRules controlling bin assignment.
         game:        active game name (e.g. "Lorcana"); used for rule matching
-                     and to build the CSV path so update_cardlist picks the
-                     right file.
+                     and CSV routing. A game that isn't a known GameType
+                     disables CSV logging (with a warning) rather than
+                     silently writing into the wrong game's list.
         threshold:   minimum cosine match score.
         foil_threshold: optional override for foil detection.
         dry_run:     when True (default), never write the CSV.
+        csv_flush_interval: matched cards to accumulate between CSV writes.
     """
 
     def __init__(
@@ -67,6 +76,7 @@ class SortPipeline:
         threshold: float = 0.70,
         foil_threshold: Optional[float] = None,
         dry_run: bool = True,
+        csv_flush_interval: int = 25,
     ):
         self.camera = camera
         self.transport = transport
@@ -77,14 +87,34 @@ class SortPipeline:
         self.threshold = threshold
         self.foil_threshold = foil_threshold
         self.dry_run = dry_run
+        self.csv_flush_interval = max(1, csv_flush_interval)
+
+        self._game_type = game_type_from_name(game)
+        self._pending: Counter = Counter()  # (filename, is_foil) -> count
+        if not dry_run and self._game_type == GameType.UNKNOWN:
+            logger.warning(
+                "Unknown game %r: cards will still be sorted, but CSV logging "
+                "is disabled to avoid writing into the wrong game's list.",
+                game,
+            )
 
     def _is_foil(self, frame: np.ndarray) -> bool:
         if self.foil_threshold is None:
             return is_probably_foil(frame)
         return is_probably_foil(frame, threshold=self.foil_threshold)
 
+    def flush_csv(self) -> None:
+        """Write any accumulated matched cards to the CSV in one read+write."""
+        if not self._pending:
+            return
+        update_cardlist_batch(
+            [(fname, foil, count) for (fname, foil), count in self._pending.items()],
+            game_type=self._game_type,
+        )
+        self._pending.clear()
+
     def process_one(self, frame: np.ndarray) -> SortOutcome:
-        """Match a single frame, decide its bin, route it, and (optionally) log to CSV."""
+        """Match a single frame, decide its bin, route it, and (optionally) queue it for CSV."""
         is_foil = self._is_foil(frame)
 
         feat = self.extractor.extract(frame)
@@ -94,27 +124,27 @@ class SortPipeline:
             filename, confidence = matches[0]
             set_code, card_code = _split_filename(filename)
             matched = True
+            bin_id = decide_bin(
+                set_code=set_code,
+                card_code=card_code,
+                game=self.game,
+                is_foil=is_foil,
+                confidence=confidence,
+                rules=self.rules,
+            )
         else:
             filename, confidence = None, 0.0
             set_code, card_code = "", ""
             matched = False
-
-        bin_id = decide_bin(
-            set_code=set_code,
-            card_code=card_code,
-            game=self.game,
-            is_foil=is_foil,
-            confidence=confidence,
-            rules=self.rules,
-        )
+            bin_id = self.rules.reject_bin
 
         self.transport.route_to_bin(bin_id)
         self.transport.advance()
 
-        if matched and not self.dry_run:
-            # Build a game-scoped path so update_cardlist writes the right CSV.
-            csv_path = os.path.join("Card_Images", self.game, filename)
-            update_cardlist(csv_path, is_foil)
+        if matched and not self.dry_run and self._game_type != GameType.UNKNOWN:
+            self._pending[(filename, is_foil)] += 1
+            if sum(self._pending.values()) >= self.csv_flush_interval:
+                self.flush_csv()
 
         logger.info(
             "card=%s conf=%.3f foil=%s → bin=%s%s",
@@ -138,7 +168,8 @@ class SortPipeline:
     def run(self, max_cards: Optional[int] = None) -> List[SortOutcome]:
         """
         Process frames until the camera feed is exhausted or max_cards is hit.
-        Releases the camera and homes the transport on completion.
+        Flushes pending CSV rows, releases the camera, and homes the transport
+        on completion.
         """
         outcomes: List[SortOutcome] = []
         try:
@@ -148,6 +179,7 @@ class SortPipeline:
                     break
                 outcomes.append(self.process_one(frame))
         finally:
+            self.flush_csv()
             self.camera.release()
             self.transport.home()
 

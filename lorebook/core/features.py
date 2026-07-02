@@ -107,6 +107,10 @@ def _finalize(features: np.ndarray) -> Optional[np.ndarray]:
 class _KerasExtractor:
     """MobileNetV2 feature extractor backed by TensorFlow/Keras."""
 
+    def ensure_ready(self) -> None:
+        """Load the model now, raising on failure, so callers can fail fast."""
+        _get_models()
+
     def extract(self, img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray]:
         try:
             batch = _preprocess_to_batch(img_or_path)
@@ -120,6 +124,22 @@ class _KerasExtractor:
             return None
 
 
+def _check_tflite_input_dtype(dtype, model_path: str) -> None:
+    """
+    Reject non-float32 tflite models.
+
+    The [-1, 1] float batch from _mobilenet_preprocess would be silently
+    truncated to garbage by a blind cast to an int8/uint8 quantized input,
+    producing vectors that pass the size check but match near-randomly.
+    """
+    if np.dtype(dtype) != np.float32:
+        raise ValueError(
+            f"tflite model at {model_path} expects {np.dtype(dtype).name} input; "
+            "only float32 models are supported. Re-export without quantization "
+            "(scripts/convert_to_tflite.py)."
+        )
+
+
 class _TFLiteExtractor:
     """MobileNetV2 feature extractor backed by a .tflite Interpreter (lazy-loaded)."""
 
@@ -128,7 +148,10 @@ class _TFLiteExtractor:
         self._interpreter = None
         self._in_index = None
         self._out_index = None
-        self._in_dtype = None
+
+    def ensure_ready(self) -> None:
+        """Load the interpreter now, raising on failure, so callers can fail fast."""
+        self._ensure_interpreter()
 
     def _ensure_interpreter(self):
         if self._interpreter is not None:
@@ -151,10 +174,10 @@ class _TFLiteExtractor:
         interp.allocate_tensors()
         in_detail = interp.get_input_details()[0]
         out_detail = interp.get_output_details()[0]
+        _check_tflite_input_dtype(in_detail["dtype"], self.model_path)
         self._interpreter = interp
         self._in_index = in_detail["index"]
         self._out_index = out_detail["index"]
-        self._in_dtype = in_detail["dtype"]
 
     def extract(self, img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray]:
         try:
@@ -162,7 +185,7 @@ class _TFLiteExtractor:
             batch = _preprocess_to_batch(img_or_path)
             if batch is None:
                 return None
-            self._interpreter.set_tensor(self._in_index, batch.astype(self._in_dtype))
+            self._interpreter.set_tensor(self._in_index, batch)
             self._interpreter.invoke()
             features = self._interpreter.get_tensor(self._out_index)
             return _finalize(features)

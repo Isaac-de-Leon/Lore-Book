@@ -16,6 +16,14 @@ class GameType(Enum):
     UNKNOWN = "unknown"
 
 
+def game_type_from_name(name: str) -> "GameType":
+    """Resolve a game name (e.g. "Lorcana", "riftbound") to a GameType."""
+    try:
+        return GameType((name or "").strip().lower())
+    except ValueError:
+        return GameType.UNKNOWN
+
+
 def get_game_type(filepath: str) -> "GameType":
     """Determine game type based on image file location."""
     try:

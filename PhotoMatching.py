@@ -24,6 +24,7 @@ from lorebook.core.csv_manager import (
     _write_rows_4col,
     get_available_sets,
     update_cardlist,
+    update_cardlist_batch,
 )
 from lorebook.core.features import (
     extract_features,
@@ -36,6 +37,7 @@ from lorebook.core.game_types import (
     RIFTBOUND_CSV,
     SUPPORTED_EXTS,
     GameType,
+    game_type_from_name,
     get_game_type,
 )
 from lorebook.core.image_utils import ensure_valid_image, foil_score, is_probably_foil
@@ -51,20 +53,24 @@ if __name__ == "__main__":
     import argparse
     import sys
 
-    # --sort delegates to the headless sorter, which has its own argument set.
+    # --sort delegates everything after it to the headless sorter, which has
+    # its own argument set (it does not compose with --build/--match).
     if "--sort" in sys.argv[1:]:
         from lorebook.sorter.__main__ import main as sorter_main
 
         rest = [a for a in sys.argv[1:] if a != "--sort"]
         raise SystemExit(sorter_main(rest))
 
-    parser = argparse.ArgumentParser(description="Build feature DB and/or match an image.")
+    parser = argparse.ArgumentParser(
+        description="Build feature DB and/or match an image.",
+        epilog="For the headless sorter run `python PhotoMatching.py --sort [sorter options]` "
+               "(equivalent to `python -m lorebook.sorter`; --sort does not combine with the "
+               "flags above — see `python -m lorebook.sorter --help`).",
+    )
     parser.add_argument("--game", default="Lorcana", help="Game folder inside Card_Images/")
     parser.add_argument("--build", action="store_true", help="Build/update feature DB.")
     parser.add_argument("--match", help="Path to an input image to match.")
     parser.add_argument("--threshold", type=float, default=0.85, help="Cosine similarity threshold.")
-    parser.add_argument("--sort", action="store_true",
-                        help="Run the headless sorter (see `python -m lorebook.sorter --help`).")
     args = parser.parse_args()
 
     set_database_path(args.game)

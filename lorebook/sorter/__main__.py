@@ -73,7 +73,16 @@ def main(argv=None) -> int:
             return 1
         camera = MockCameraSource(args.source)
 
+    # Fail fast (and warm the model) instead of silently rejecting every card
+    # when e.g. the .tflite model hasn't been generated yet.
     extractor = get_extractor(args.backend)
+    try:
+        extractor.ensure_ready()
+    except Exception as e:
+        log.error("Feature extractor (%s) is not usable: %s", args.backend, e)
+        camera.release()
+        return 1
+
     transport = MockTransport()
 
     pipeline = SortPipeline(
