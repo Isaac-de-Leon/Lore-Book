@@ -25,6 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PhotoMatching import (
     GameType,
+    csv_for_game,
+    update_cardlist,
     _cosine_score,
     _l2_normalize,
     _normalize_existing_rows,
@@ -320,6 +322,42 @@ class TestGameTypeFromName:
         assert game_type_from_name("Pokemon") == GameType.UNKNOWN
         assert game_type_from_name("") == GameType.UNKNOWN
         assert game_type_from_name(None) == GameType.UNKNOWN
+
+
+class TestCsvForGame:
+    def test_legacy_games_keep_their_files(self):
+        assert csv_for_game("Lorcana") == "LorcanaList.csv"
+        assert csv_for_game("lorcana") == "LorcanaList.csv"
+        assert csv_for_game("RIFTBOUND") == "RiftboundList.csv"
+
+    def test_new_game_derives_from_folder_name(self):
+        assert csv_for_game("Pokemon") == "PokemonList.csv"
+        assert csv_for_game("MTG") == "MTGList.csv"
+
+    def test_trailing_separators_stripped(self):
+        assert csv_for_game("Lorcana/") == "LorcanaList.csv"
+        assert csv_for_game("Pokemon\\") == "PokemonList.csv"
+
+    def test_blank_raises(self):
+        with pytest.raises(ValueError):
+            csv_for_game("")
+        with pytest.raises(ValueError):
+            csv_for_game(None)
+
+
+class TestUpdateCardlistGameRouting:
+    def test_explicit_game_writes_named_csv(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, game="Pokemon")
+        rows = list(csv.reader((tmp_path / "PokemonList.csv").open(encoding="utf-8")))
+        assert ["001", "042", "normal", "1"] in rows
+        assert not os.path.exists(tmp_path / "LorcanaList.csv")
+
+    def test_legacy_path_inference_still_works(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist(os.path.join("Card_Images", "Riftbound", "001-042.webp"), is_foil=True)
+        rows = list(csv.reader((tmp_path / "RiftboundList.csv").open(encoding="utf-8")))
+        assert ["001", "042", "foil", "1"] in rows
 
 
 class TestCachePath:

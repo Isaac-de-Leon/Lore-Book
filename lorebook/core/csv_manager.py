@@ -10,6 +10,7 @@ from lorebook.core.game_types import (
     LORCANA_CSV,
     RIFTBOUND_CSV,
     GameType,
+    csv_for_game,
     get_game_type,
 )
 
@@ -108,16 +109,18 @@ def _csv_for_game_type(game_type: GameType) -> str:
 
 def update_cardlist_batch(
     cards,
-    game_type: Optional[GameType] = None,
+    game: Optional[str] = None,
 ) -> None:
     """
     Increment (or insert) rows for many cards with one read+write per CSV file.
 
     cards: iterable of (matchedFilename, is_foil, count) tuples.
-    game_type: explicit target game. When None (legacy behavior), each card's
-    game is inferred from its filename path: Riftbound paths → RiftboundList.csv,
-    everything else → LorcanaList.csv.
+    game: explicit game folder name; the target file is csv_for_game(game),
+    so any game gets its own <Game>List.csv. When None (legacy behavior),
+    each card's game is inferred from its filename path: Riftbound paths →
+    RiftboundList.csv, everything else → LorcanaList.csv.
     """
+    target = csv_for_game(game) if game is not None else None
     by_file: dict = {}
     for matchedFilename, is_foil, count in cards:
         try:
@@ -126,10 +129,10 @@ def update_cardlist_batch(
             count = 1
         if count < 1:
             continue
-        gt = game_type if game_type is not None else get_game_type(matchedFilename)
+        target_file = target or _csv_for_game_type(get_game_type(matchedFilename))
         set_code, card_code = _split_filename(matchedFilename)
         variant = "foil" if is_foil else "normal"
-        by_file.setdefault(_csv_for_game_type(gt), []).append((set_code, card_code, variant, count))
+        by_file.setdefault(target_file, []).append((set_code, card_code, variant, count))
 
     for target_file, updates in by_file.items():
         existing = _normalize_existing_rows(target_file)
@@ -150,13 +153,14 @@ def update_cardlist(
     matchedFilename: str,
     is_foil: bool,
     count: int = 1,
-    game_type: Optional[GameType] = None,
+    game: Optional[str] = None,
 ) -> None:
     """
     Increment (or insert) a row in the game-appropriate CSV.
 
-    When game_type is None the target file is chosen by inspecting the path of
+    When game is None the target file is chosen by inspecting the path of
     matchedFilename: Riftbound paths → RiftboundList.csv, everything else →
-    LorcanaList.csv. Pass game_type explicitly to skip the path inference.
+    LorcanaList.csv. Pass the game folder name explicitly to skip the path
+    inference and write to csv_for_game(game).
     """
-    update_cardlist_batch([(matchedFilename, is_foil, count)], game_type=game_type)
+    update_cardlist_batch([(matchedFilename, is_foil, count)], game=game)

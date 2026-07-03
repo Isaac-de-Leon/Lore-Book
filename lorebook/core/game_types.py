@@ -24,6 +24,26 @@ def game_type_from_name(name: str) -> "GameType":
         return GameType.UNKNOWN
 
 
+def csv_for_game(game_name: str) -> str:
+    """
+    Return the collection CSV filename for a game folder name.
+
+    Follows the `Card_Images/<Game>/` → `<Game>List.csv` convention. Lorcana
+    and Riftbound resolve to their legacy constants regardless of case; any
+    other game derives its CSV from the folder name verbatim, so new games
+    work without code changes.
+    """
+    name = (game_name or "").strip().strip("/\\")
+    if not name:
+        raise ValueError("game name is required")
+    game_type = game_type_from_name(name)
+    if game_type == GameType.LORCANA:
+        return LORCANA_CSV
+    if game_type == GameType.RIFTBOUND:
+        return RIFTBOUND_CSV
+    return f"{name}List.csv"
+
+
 def get_game_type(filepath: str) -> "GameType":
     """Determine game type based on image file location."""
     try:

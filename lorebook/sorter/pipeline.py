@@ -16,7 +16,6 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from lorebook.core.csv_manager import _split_filename, update_cardlist_batch
-from lorebook.core.game_types import GameType, game_type_from_name
 from lorebook.core.image_utils import is_probably_foil
 from lorebook.core.matching import find_best_matches
 from lorebook.hardware.camera import CameraSource
@@ -55,9 +54,8 @@ class SortPipeline:
         feature_db:  {filename: vector} reference cache (from ``load_cache``).
         rules:       SortRules controlling bin assignment.
         game:        active game name (e.g. "Lorcana"); used for rule matching
-                     and CSV routing. A game that isn't a known GameType
-                     disables CSV logging (with a warning) rather than
-                     silently writing into the wrong game's list.
+                     and CSV routing — cards are recorded in the game's own
+                     <Game>List.csv (csv_for_game).
         threshold:   minimum cosine match score.
         foil_threshold: optional override for foil detection.
         dry_run:     when True (default), never write the CSV.
@@ -88,15 +86,7 @@ class SortPipeline:
         self.foil_threshold = foil_threshold
         self.dry_run = dry_run
         self.csv_flush_interval = max(1, csv_flush_interval)
-
-        self._game_type = game_type_from_name(game)
         self._pending: Counter = Counter()  # (filename, is_foil) -> count
-        if not dry_run and self._game_type == GameType.UNKNOWN:
-            logger.warning(
-                "Unknown game %r: cards will still be sorted, but CSV logging "
-                "is disabled to avoid writing into the wrong game's list.",
-                game,
-            )
 
     def _is_foil(self, frame: np.ndarray) -> bool:
         if self.foil_threshold is None:
@@ -109,7 +99,7 @@ class SortPipeline:
             return
         update_cardlist_batch(
             [(fname, foil, count) for (fname, foil), count in self._pending.items()],
-            game_type=self._game_type,
+            game=self.game,
         )
         self._pending.clear()
 
@@ -141,7 +131,7 @@ class SortPipeline:
         self.transport.route_to_bin(bin_id)
         self.transport.advance()
 
-        if matched and not self.dry_run and self._game_type != GameType.UNKNOWN:
+        if matched and not self.dry_run:
             self._pending[(filename, is_foil)] += 1
             if sum(self._pending.values()) >= self.csv_flush_interval:
                 self.flush_csv()

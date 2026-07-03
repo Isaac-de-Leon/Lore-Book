@@ -37,6 +37,7 @@ from lorebook.core.game_types import (
     RIFTBOUND_CSV,
     SUPPORTED_EXTS,
     GameType,
+    csv_for_game,
     game_type_from_name,
     get_game_type,
 )

@@ -238,8 +238,8 @@ class TestPipelineCsv:
         pipeline.process_one(camera.read())
         assert (tmp_path / "LorcanaList.csv").exists()  # flushed after 1 card
 
-    def test_unknown_game_skips_csv_instead_of_writing_lorcana(self, tmp_path, monkeypatch):
-        """A game that isn't a known GameType must not corrupt LorcanaList.csv."""
+    def test_new_game_gets_its_own_csv(self, tmp_path, monkeypatch):
+        """A game beyond Lorcana/Riftbound writes <Game>List.csv, not LorcanaList.csv."""
         monkeypatch.chdir(tmp_path)
         camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8)])
         extractor = SequenceExtractor([_unit(0)])
@@ -252,9 +252,10 @@ class TestPipelineCsv:
         )
         outcomes = pipeline.run()
 
-        assert outcomes[0].bin == "bin-1"  # sorting itself still works
+        assert outcomes[0].bin == "bin-1"
         assert not os.path.exists(tmp_path / "LorcanaList.csv")
-        assert not os.path.exists(tmp_path / "RiftboundList.csv")
+        rows = list(csv.reader((tmp_path / "PokemonList.csv").open(encoding="utf-8")))
+        assert ["001", "001", "normal", "1"] in rows
 
 
 class TestMockCameraSource:

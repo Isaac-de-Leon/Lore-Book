@@ -109,14 +109,14 @@ python -m pytest tests/test_photo_matching.py::TestSplitFilename -v
 
 ## CSV Format
 
-Both `LorcanaList.csv` and `RiftboundList.csv` use the same 4-column format:
+Every game gets its own `<GameName>List.csv` (e.g. `LorcanaList.csv`, `RiftboundList.csv`), all using the same 4-column format:
 
 | Set Number | Card Number | Variant | Count |
 |------------|-------------|---------|-------|
 | 009        | 041         | normal  | 2     |
 | 001        | 007         | foil    | 1     |
 
-`update_cardlist()` determines which file to write by checking the `Card_Images/<game>/` folder in the matched filename path.
+The target file comes from `csv_for_game(game)` (`lorebook/core/game_types.py`): callers that know the game (GUI, sorter) pass it explicitly via `update_cardlist(..., game=...)`. When no game is passed, `update_cardlist()` falls back to inferring it from the `Card_Images/<game>/` folder in the matched filename path (Riftbound paths → `RiftboundList.csv`, everything else → `LorcanaList.csv`).
 
 ### Filename convention for card images
 ```
@@ -144,10 +144,12 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 ## Adding a New Card Game
 
 1. Create `Card_Images/<GameName>/` and add card images.
-2. Add a `GameType` entry in `lorebook/core/game_types.py`'s `GameType` enum.
-3. Update `get_game_type()` (same file) to detect the new folder name.
-4. Add a `<GameName>List.csv` constant and update `update_cardlist()` in `lorebook/core/csv_manager.py`.
-5. The UI's game/set tree widget discovers game folders automatically.
+2. That's it for the common path: the UI's game/set tree widget discovers game folders
+   automatically, and the collection CSV (`<GameName>List.csv`) is derived from the folder
+   name by `csv_for_game()` — no code changes needed.
+3. Optional: add a `GameType` entry in `lorebook/core/game_types.py` and update
+   `get_game_type()` if code needs to detect the game from file paths (only the legacy
+   path-inference fallback in `update_cardlist()` uses this).
 
 ---
 

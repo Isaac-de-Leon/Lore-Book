@@ -34,6 +34,7 @@ from lorebook.core.card_database import (
     set_database_path,
 )
 from lorebook.core.csv_manager import _split_filename, update_cardlist
+from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_utils import is_probably_foil
 from lorebook.core.matching import find_best_matches
@@ -751,10 +752,9 @@ class MainWindow(QWidget):
         is_foil = self.foil_check.isChecked()
 
         active_game = self.get_active_game() or "Lorcana"
-        full_path = os.path.join("Card_Images", active_game, fname)
-        target_file = "RiftboundList.csv" if active_game.lower() == "riftbound" else "LorcanaList.csv"
+        target_file = csv_for_game(active_game)
 
-        update_cardlist(full_path, is_foil, cnt)
+        update_cardlist(fname, is_foil, cnt, game=active_game)
         self.set_status(f"Added {cnt}× {fname} to {target_file}")
         self.add_csv_btn.setEnabled(False)
 
