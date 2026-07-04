@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
 
 from lorebook.core.card_database import (
     build_feature_database,
-    get_database_path,
     load_cache,
     set_database_path,
 )
@@ -401,7 +400,7 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ DB build
 
     def start_db_build_in_background(self) -> None:
-        """Discover game folders and kick off a background feature-DB build for each."""
+        """Discover game folders and kick off one background build thread for all of them."""
         card_images_dir = "Card_Images"
         try:
             os.makedirs(card_images_dir, exist_ok=True)
@@ -419,106 +418,80 @@ class MainWindow(QWidget):
             self.match_label.setText("No game folders found in Card_Images directory")
             return
 
-        self.game_folders = game_folders
-        self.current_game_index = 0
-        self.current_game = game_folders[0]
-        self._db_build_state = {
-            "running": True,
-            "completed": 0,
-            "failed": [],
-            "retry_count": {},
-            "start_time": time.time(),
-        }
-
-        set_database_path(self.current_game)
+        self._db_progress_pct = 0
         self.progress.setValue(0)
         self.progress.show()
-        self.match_label.setText(f"Building {self.current_game} database, please wait…")
+        self.match_label.setText(f"Building {game_folders[0]} database, please wait…")
 
-        self._start_current_game_build()
+        threading.Thread(
+            target=self._build_all_games_worker, args=(game_folders,), daemon=True
+        ).start()
         self._db_progress_timer.start()
 
-    def _start_current_game_build(self) -> None:
-        """Start the background build thread for self.current_game.
+    def _build_all_games_worker(self, game_folders: List[str]) -> None:
+        """Build every game's feature DB sequentially in one background thread.
 
-        The worker runs in a daemon thread and must NOT touch Qt widgets
-        directly — all UI updates are emitted via signals (build_status,
-        build_done) which Qt delivers on the main thread.
+        Runs off the main thread and must NOT touch Qt widgets directly — all
+        UI updates go through signals (build_status, build_done) which Qt
+        delivers on the main thread. The active database path global is left
+        alone; each build gets its db_path explicitly.
         """
-        game_name = self.current_game
-        game_path = os.path.join("Card_Images", game_name)
+        start_time = time.time()
+        failed: List[str] = []
 
         def progress_callback(pct: int, current_file: Optional[str]) -> None:
             self._db_progress_pct = pct
             if current_file:
                 self.build_status.emit(f"Processing {current_file}…")
 
-        def build_worker() -> None:
-            try:
-                self.logger.info(f"Building DB for {game_name} at {game_path}")
-                if not os.path.exists(game_path):
-                    raise RuntimeError(f"Game folder not found: {game_path}")
+        for game_name in game_folders:
+            game_path = os.path.join("Card_Images", game_name)
+            self._db_progress_pct = 0
+            self.build_status.emit(f"Building {game_name} database…")
 
-                db = build_feature_database(
-                    progress_callback=progress_callback,
-                    db_path=game_path,
-                )
-                if not db:
-                    raise RuntimeError("Database build returned no entries")
+            for attempt in range(1, 4):  # initial try + 2 retries
+                try:
+                    self.logger.info(
+                        f"Building DB for {game_name} at {game_path} (attempt {attempt})"
+                    )
+                    if not os.path.exists(game_path):
+                        raise RuntimeError(f"Game folder not found: {game_path}")
+                    db = build_feature_database(
+                        progress_callback=progress_callback,
+                        db_path=game_path,
+                    )
+                    if not db:
+                        raise RuntimeError("Database build returned no entries")
+                    self.logger.info(f"DB ready for {game_name}: {len(db)} entries")
+                    break
+                except Exception as e:
+                    self.logger.error(f"Error building DB for {game_name}: {e}")
+            else:
+                failed.append(game_name)
+                self.build_status.emit(f"Error building {game_name} database")
 
-                self.logger.info(f"DB ready for {game_name}: {len(db)} entries")
-                setattr(self, f"{game_name.lower()}_db", db)
-                self._db_build_state["completed"] += 1
-
-                # Move to next game
-                self.current_game_index += 1
-                if self.current_game_index < len(self.game_folders):
-                    self.current_game = self.game_folders[self.current_game_index]
-                    set_database_path(self.current_game)
-                    self._db_progress_pct = 0
-                    self.build_status.emit(f"Building {self.current_game} database…")
-                    self._start_current_game_build()
-                else:
-                    elapsed = time.time() - self._db_build_state["start_time"]
-                    self.logger.info(f"All DBs built in {elapsed:.1f}s")
-                    self._db_build_state["running"] = False
-                    self.build_done.emit(True)
-
-            except Exception as e:
-                self.logger.error(f"Error building DB for {game_name}: {e}")
-                self._db_build_state["failed"].append(game_name)
-                retries = self._db_build_state["retry_count"].get(game_name, 0)
-                if retries < 2:
-                    self._db_build_state["retry_count"][game_name] = retries + 1
-                    self.logger.info(f"Retrying {game_name} (attempt {retries + 1})")
-                    threading.Thread(target=build_worker, daemon=True).start()
-                else:
-                    self.build_status.emit(f"Error building {game_name} database")
-                    self.build_done.emit(False)
-
-        threading.Thread(target=build_worker, daemon=True).start()
+        elapsed = time.time() - start_time
+        self.logger.info(f"DB builds finished in {elapsed:.1f}s ({len(failed)} failed)")
+        self.build_done.emit(not failed)
 
     def _on_build_done(self, success: bool) -> None:
         """Main-thread slot: finalize UI after the background build finishes."""
-        self.progress.hide()
         self._db_progress_timer.stop()
+        self.progress.hide()
         if success:
-            self.match_label.setText("All databases ready.")
+            self.match_label.setText("All databases ready. Scan a card to begin.")
         # The in-memory featureDB may be stale after a rebuild — force reload on next scan
         self._loaded_game = None
 
     def _tick_db_progress(self) -> None:
-        """Poll _db_progress_pct and update the progress bar."""
+        """Poll _db_progress_pct and update the progress bar.
+
+        The timer keeps running until _on_build_done — a single game hitting
+        100% must not kill progress display for the games after it.
+        """
         progress = int(getattr(self, "_db_progress_pct", 0))
         if progress != self.progress.value():
             self.progress.setValue(progress)
-            self.progress.show()
-        if progress >= 100:
-            self._db_progress_timer.stop()
-            self.progress.hide()
-            if self.match_label.text().startswith(("Building", "Processing")):
-                current_game = os.path.basename(get_database_path())
-                self.match_label.setText(f"{current_game} database ready. Scan a card to begin.")
 
     # ------------------------------------------------------------------ camera
 
