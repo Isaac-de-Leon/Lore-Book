@@ -4,19 +4,11 @@
 
 import csv
 import os
-import sys
-import unittest.mock
 
 import numpy as np
 import pytest
 
-# Stub TF/Keras before any lorebook import that might transitively touch them.
-_tf_mock = unittest.mock.MagicMock()
-for _mod in ["tensorflow", "keras", "keras.applications",
-             "keras.applications.mobilenet_v2", "keras.models"]:
-    sys.modules.setdefault(_mod, _tf_mock)
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
 
 from lorebook.hardware.camera import CameraSource, MockCameraSource
 from lorebook.hardware.transport import MockTransport

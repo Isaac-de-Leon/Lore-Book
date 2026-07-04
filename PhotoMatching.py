@@ -21,6 +21,7 @@ from lorebook.core.card_database import (
 from lorebook.core.csv_manager import (
     _normalize_existing_rows,
     _split_filename,
+    split_filename,
     _write_rows_4col,
     get_available_sets,
     update_cardlist,
@@ -42,7 +43,7 @@ from lorebook.core.game_types import (
     get_game_type,
 )
 from lorebook.core.image_utils import ensure_valid_image, foil_score, is_probably_foil
-from lorebook.core.matching import _cosine_score, _l2_normalize, find_best_matches
+from lorebook.core.matching import MatchIndex, _cosine_score, _l2_normalize, find_best_matches
 
 # Legacy name aliases
 baseDatabasePath = BASE_DATABASE_PATH

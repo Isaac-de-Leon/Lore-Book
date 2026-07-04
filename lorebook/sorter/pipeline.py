@@ -13,11 +13,12 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
+import cv2
 import numpy as np
 
-from lorebook.core.csv_manager import _split_filename, update_cardlist_batch
+from lorebook.core.csv_manager import split_filename, update_cardlist_batch
 from lorebook.core.image_utils import is_probably_foil
-from lorebook.core.matching import find_best_matches
+from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import CameraSource
 from lorebook.hardware.transport import Transport
 from lorebook.sorter.rules import SortRules, decide_bin
@@ -87,8 +88,19 @@ class SortPipeline:
         self.dry_run = dry_run
         self.csv_flush_interval = max(1, csv_flush_interval)
         self._pending: Counter = Counter()  # (filename, is_foil) -> count
+        self._index = MatchIndex(feature_db)  # one matmul per card instead of a dict scan
+
+    # Cap for the foil-detection pass: specular/contrast stats survive
+    # downscaling, and the full-res Laplacian is a needless per-card cost on
+    # a Pi. Note the Laplacian score shifts slightly with resolution, so
+    # --foil-threshold may need retuning versus the GUI's full-res 0.08.
+    _FOIL_MAX_HEIGHT = 360
 
     def _is_foil(self, frame: np.ndarray) -> bool:
+        h = frame.shape[0] if frame is not None and frame.ndim >= 2 else 0
+        if h > self._FOIL_MAX_HEIGHT:
+            scale = self._FOIL_MAX_HEIGHT / h
+            frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         if self.foil_threshold is None:
             return is_probably_foil(frame)
         return is_probably_foil(frame, threshold=self.foil_threshold)
@@ -108,11 +120,11 @@ class SortPipeline:
         is_foil = self._is_foil(frame)
 
         feat = self.extractor.extract(frame)
-        matches = find_best_matches(feat, self.feature_db, threshold=self.threshold) if feat is not None else []
+        matches = self._index.find(feat, threshold=self.threshold) if feat is not None else []
 
         if matches:
             filename, confidence = matches[0]
-            set_code, card_code = _split_filename(filename)
+            set_code, card_code = split_filename(filename)
             matched = True
             bin_id = decide_bin(
                 set_code=set_code,

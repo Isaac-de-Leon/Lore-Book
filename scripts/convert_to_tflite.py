@@ -10,22 +10,22 @@ Run once on a desktop (where full TensorFlow is installed); copy the resulting
 import argparse
 import os
 
-# Mirror the feature model used by the keras extractor (1280-dim avg pooling).
-from lorebook.core.features import DEFAULT_TFLITE_MODEL
+from lorebook.core.features import _default_tflite_model_path, _get_models
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--output", default=DEFAULT_TFLITE_MODEL, help="Output .tflite path."
+        "--output", default=_default_tflite_model_path(), help="Output .tflite path."
     )
     args = parser.parse_args()
 
     import tensorflow as tf
-    from keras.applications import MobileNetV2
 
-    model = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    # Convert the exact model instance the keras extractor uses, so the
+    # exported .tflite can never diverge from it.
+    feat_model, _ = _get_models()
+    converter = tf.lite.TFLiteConverter.from_keras_model(feat_model)
     tflite_model = converter.convert()
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)

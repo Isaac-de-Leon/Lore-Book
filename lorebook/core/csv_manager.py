@@ -15,7 +15,7 @@ from lorebook.core.game_types import (
 )
 
 
-def _split_filename(matchedFilename: str) -> Tuple[str, str]:
+def split_filename(matchedFilename: str) -> Tuple[str, str]:
     """
     Split a card image filename into (set_code, card_code).
 
@@ -35,6 +35,10 @@ def _split_filename(matchedFilename: str) -> Tuple[str, str]:
         return "", matchedFilename
 
 
+# Backward-compat alias (was private; other packages legitimately need it).
+_split_filename = split_filename
+
+
 def get_available_sets(
     game_type: Optional[GameType] = None,
     db_path: Optional[str] = None,
@@ -50,7 +54,7 @@ def get_available_sets(
     resolved = db_path or databasePath
     sets = set()
     for fname in _list_image_files(resolved):
-        set_code, _ = _split_filename(fname)
+        set_code, _ = split_filename(fname)
         if set_code:
             sets.add(set_code)
     return sorted(sets)
@@ -130,7 +134,7 @@ def update_cardlist_batch(
         if count < 1:
             continue
         target_file = target or _csv_for_game_type(get_game_type(matchedFilename))
-        set_code, card_code = _split_filename(matchedFilename)
+        set_code, card_code = split_filename(matchedFilename)
         variant = "foil" if is_foil else "normal"
         by_file.setdefault(target_file, []).append((set_code, card_code, variant, count))
 

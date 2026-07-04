@@ -33,7 +33,7 @@ from lorebook.core.card_database import (
     load_cache,
     set_database_path,
 )
-from lorebook.core.csv_manager import _split_filename, update_cardlist
+from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_utils import is_probably_foil
@@ -95,7 +95,7 @@ class MainWindow(QWidget):
 
     @staticmethod
     def _split_filename(filename: str) -> Tuple[str, str]:
-        return _split_filename(filename)
+        return split_filename(filename)
 
     def show_error(self, message: str, title: str = "Error", details: Optional[str] = None) -> None:
         self.logger.error(message + (f": {details}" if details else ""))
@@ -686,7 +686,7 @@ class MainWindow(QWidget):
         self.current_match_idx = idx
         fname, score = self.last_matches[idx]
 
-        set_code, card_code = _split_filename(fname)
+        set_code, card_code = split_filename(fname)
         self.match_name_label.setText(f"{set_code}-{card_code}" if set_code else fname)
         self.match_detail_label.setText(
             f"Set {set_code}  ·  {score:.1%} match" if set_code else f"{score:.1%} match"
@@ -728,7 +728,7 @@ class MainWindow(QWidget):
         game_selected_sets = self.selected_sets.get(active_game, [])
         filtered = []
         for fname, score in matches:
-            set_code, _ = _split_filename(os.path.basename(fname))
+            set_code, _ = split_filename(os.path.basename(fname))
             if not game_selected_sets or set_code in game_selected_sets:
                 filtered.append((fname, score))
         return filtered

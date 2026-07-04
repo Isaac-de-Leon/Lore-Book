@@ -32,11 +32,17 @@ _base_model = None
 _feat_model = None   # 1280-dim pooled features
 _act_model = None    # last conv activations (for heatmaps)
 
-# Where the tflite feature model lives. Override with LOREBOOK_TFLITE_MODEL.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_TFLITE_MODEL = os.environ.get(
-    "LOREBOOK_TFLITE_MODEL", os.path.join(_REPO_ROOT, "mobilenetv2_features.tflite")
-)
+
+
+def _default_tflite_model_path() -> str:
+    """
+    Where the tflite feature model lives, resolved at call time (not import
+    time) so LOREBOOK_TFLITE_MODEL takes effect whenever it is set.
+    """
+    return os.environ.get(
+        "LOREBOOK_TFLITE_MODEL", os.path.join(_REPO_ROOT, "mobilenetv2_features.tflite")
+    )
 
 
 def _mobilenet_preprocess(batch: np.ndarray) -> np.ndarray:
@@ -144,10 +150,14 @@ class _TFLiteExtractor:
     """MobileNetV2 feature extractor backed by a .tflite Interpreter (lazy-loaded)."""
 
     def __init__(self, model_path: Optional[str] = None):
-        self.model_path = model_path or DEFAULT_TFLITE_MODEL
+        self._explicit_model_path = model_path
         self._interpreter = None
         self._in_index = None
         self._out_index = None
+
+    @property
+    def model_path(self) -> str:
+        return self._explicit_model_path or _default_tflite_model_path()
 
     def ensure_ready(self) -> None:
         """Load the interpreter now, raising on failure, so callers can fail fast."""

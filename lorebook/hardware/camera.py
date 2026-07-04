@@ -18,10 +18,9 @@ from typing import List, Optional, Sequence
 import cv2
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from lorebook.core.game_types import SUPPORTED_EXTS
 
-# Image extensions the mock feed will pick up from a folder.
-_IMAGE_EXTS = (".webp", ".jpg", ".jpeg", ".png", ".bmp")
+logger = logging.getLogger(__name__)
 
 
 def _backend_candidates() -> List[tuple]:
@@ -182,7 +181,7 @@ class MockCameraSource(CameraSource):
                 return sorted(
                     os.path.join(images, f)
                     for f in os.listdir(images)
-                    if f.lower().endswith(_IMAGE_EXTS)
+                    if f.lower().endswith(SUPPORTED_EXTS)
                 )
             return [images]
         return list(images)
