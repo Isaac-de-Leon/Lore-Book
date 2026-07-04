@@ -34,6 +34,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--threshold", type=float, default=0.70, help="Minimum cosine match score.")
     p.add_argument("--foil-threshold", type=float, default=None, help="Override foil-detection threshold.")
     p.add_argument("--max-cards", type=int, default=None, help="Stop after N cards.")
+    crop = p.add_mutually_exclusive_group()
+    crop.add_argument("--crop", dest="crop", action="store_true", default=None,
+                      help="Crop frames to the centered card box before matching "
+                           "(default with --source camera).")
+    crop.add_argument("--no-crop", dest="crop", action="store_false",
+                      help="Match the full frame (default when replaying image files).")
     dry = p.add_mutually_exclusive_group()
     dry.add_argument("--dry-run", dest="dry_run", action="store_true", default=True,
                      help="Do not write the CSV (default).")
@@ -85,6 +91,10 @@ def main(argv=None) -> int:
 
     transport = MockTransport()
 
+    # Live frames have the card centered against background — crop like the
+    # GUI does. Replayed reference images are already just the card.
+    crop_to_focus = args.crop if args.crop is not None else (args.source == "camera")
+
     pipeline = SortPipeline(
         camera=camera,
         transport=transport,
@@ -95,6 +105,7 @@ def main(argv=None) -> int:
         threshold=args.threshold,
         foil_threshold=args.foil_threshold,
         dry_run=args.dry_run,
+        crop_to_focus=crop_to_focus,
     )
 
     outcomes = pipeline.run(max_cards=args.max_cards)

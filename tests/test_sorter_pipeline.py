@@ -250,6 +250,48 @@ class TestPipelineCsv:
         assert ["001", "001", "normal", "1"] in rows
 
 
+class TestCropToFocus:
+    def test_crop_enabled_extractor_sees_focus_box(self):
+        from lorebook.core.image_utils import focus_rect
+
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        seen = []
+
+        class ShapeExtractor:
+            def extract(self, img):
+                seen.append(img.shape)
+                return _unit(0)
+
+        camera = ArrayCameraSource([frame])
+        pipeline = SortPipeline(
+            camera=camera, transport=MockTransport(), extractor=ShapeExtractor(),
+            feature_db=FEATURE_DB, rules=_multi_bin_rules(), game="Lorcana",
+            threshold=0.7, crop_to_focus=True,
+        )
+        pipeline.run()
+
+        _, _, fw, fh = focus_rect(720, 1280)
+        assert seen == [(fh, fw, 3)]
+
+    def test_crop_disabled_extractor_sees_full_frame(self):
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        seen = []
+
+        class ShapeExtractor:
+            def extract(self, img):
+                seen.append(img.shape)
+                return _unit(0)
+
+        camera = ArrayCameraSource([frame])
+        pipeline = SortPipeline(
+            camera=camera, transport=MockTransport(), extractor=ShapeExtractor(),
+            feature_db=FEATURE_DB, rules=_multi_bin_rules(), game="Lorcana",
+            threshold=0.7,
+        )
+        pipeline.run()
+        assert seen == [(720, 1280, 3)]
+
+
 class TestMockCameraSource:
     def test_reads_images_from_folder(self, tmp_path):
         import cv2

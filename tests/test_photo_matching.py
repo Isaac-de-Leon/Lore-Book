@@ -29,6 +29,7 @@ from PhotoMatching import (
 )
 from lorebook.core.card_database import _cache_path
 from lorebook.core.features import _check_tflite_input_dtype
+from lorebook.core.image_utils import CARD_ASPECT, crop_to_card, focus_rect
 
 
 # ===========================================================================
@@ -246,6 +247,34 @@ class TestEnsureValidImage:
 # ===========================================================================
 # foil_score / is_probably_foil
 # ===========================================================================
+
+class TestFocusRectAndCrop:
+    def test_focus_rect_geometry(self):
+        fx, fy, fw, fh = focus_rect(720, 1280)
+        assert fh == int(720 * 0.6)
+        assert fw == int(fh * CARD_ASPECT)
+        assert fx == (1280 - fw) // 2
+        assert fy == (720 - fh) // 2
+
+    def test_crop_to_card_matches_focus_rect(self):
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        _, _, fw, fh = focus_rect(720, 1280)
+        cropped = crop_to_card(frame)
+        assert cropped.shape == (fh, fw, 3)
+
+    def test_crop_returns_copy_not_view(self):
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        cropped = crop_to_card(frame)
+        cropped[:] = 255
+        assert frame.max() == 0
+
+    def test_tiny_frame_returned_unchanged(self):
+        tiny = np.zeros((8, 8, 3), np.uint8)
+        assert crop_to_card(tiny) is tiny
+
+    def test_none_passthrough(self):
+        assert crop_to_card(None) is None
+
 
 class TestFoilScore:
     def test_black_image_is_not_foil(self):

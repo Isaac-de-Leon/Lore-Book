@@ -35,7 +35,7 @@ from lorebook.core.card_database import (
 from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
-from lorebook.core.image_utils import is_probably_foil
+from lorebook.core.image_utils import crop_to_card, focus_rect, is_probably_foil
 from lorebook.core.matching import find_best_matches
 from lorebook.hardware.camera import open_capture
 from lorebook.ui.settings_window import SettingsWindow
@@ -545,12 +545,7 @@ class MainWindow(QWidget):
 
     def _focus_rect(self, h: int, w: int) -> Tuple[int, int, int, int]:
         """Return (fx, fy, fw, fh) for a 63:88 portrait focus box at ~60% of frame height."""
-        card_ratio = 63 / 88.0
-        fh = min(int(h * 0.6), h - 4)
-        fw = min(int(fh * card_ratio), w - 4)
-        fx = max((w - fw) // 2, 2)
-        fy = max((h - fh) // 2, 2)
-        return fx, fy, fw, fh
+        return focus_rect(h, w)
 
     def _grab_frame(self) -> None:
         """Grab a camera frame, draw the focus overlay, and update the preview label."""
@@ -605,12 +600,7 @@ class MainWindow(QWidget):
         img_bgr = self.last_frame.copy()
 
         if self.crop_to_focus:
-            h, w = img_bgr.shape[:2]
-            fx, fy, fw, fh = self._focus_rect(h, w)
-            fx, fy = max(fx, 0), max(fy, 0)
-            fw, fh = min(fw, w - fx), min(fh, h - fy)
-            if fw > 10 and fh > 10:
-                img_bgr = img_bgr[fy:fy + fh, fx:fx + fw].copy()
+            img_bgr = crop_to_card(img_bgr)
 
         self.foil_check.setChecked(self.keep_foil_checked or is_probably_foil(img_bgr, threshold=self.foil_threshold))
 

@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 from lorebook.core.csv_manager import split_filename, update_cardlist_batch
-from lorebook.core.image_utils import is_probably_foil
+from lorebook.core.image_utils import crop_to_card, is_probably_foil
 from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import CameraSource
 from lorebook.hardware.transport import Transport
@@ -61,6 +61,11 @@ class SortPipeline:
         foil_threshold: optional override for foil detection.
         dry_run:     when True (default), never write the CSV.
         csv_flush_interval: matched cards to accumulate between CSV writes.
+        crop_to_focus: crop each frame to the centered 63:88 card box before
+                     foil detection and matching — the same crop the GUI
+                     applies. Use for live-camera frames where the card sits
+                     centered against background; leave off when replaying
+                     already-cropped reference images.
     """
 
     def __init__(
@@ -76,6 +81,7 @@ class SortPipeline:
         foil_threshold: Optional[float] = None,
         dry_run: bool = True,
         csv_flush_interval: int = 25,
+        crop_to_focus: bool = False,
     ):
         self.camera = camera
         self.transport = transport
@@ -87,6 +93,7 @@ class SortPipeline:
         self.foil_threshold = foil_threshold
         self.dry_run = dry_run
         self.csv_flush_interval = max(1, csv_flush_interval)
+        self.crop_to_focus = crop_to_focus
         self._pending: Counter = Counter()  # (filename, is_foil) -> count
         self._index = MatchIndex(feature_db)  # one matmul per card instead of a dict scan
 
@@ -117,6 +124,9 @@ class SortPipeline:
 
     def process_one(self, frame: np.ndarray) -> SortOutcome:
         """Match a single frame, decide its bin, route it, and (optionally) queue it for CSV."""
+        if self.crop_to_focus:
+            frame = crop_to_card(frame)
+
         is_foil = self._is_foil(frame)
 
         feat = self.extractor.extract(frame)
