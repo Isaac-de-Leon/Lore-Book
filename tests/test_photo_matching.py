@@ -448,3 +448,21 @@ class TestWriteRows4Col:
 
         assert len(reader) == 1
         assert reader[0] == ["Set Number", "Card Number", "Variant", "Count"]
+
+    def test_leaves_no_temp_files_behind(self, tmp_path):
+        p = tmp_path / "out.csv"
+        _write_rows_4col(str(p), [["001", "001", "normal", "1"]])
+        assert sorted(os.listdir(tmp_path)) == ["out.csv"]
+
+    def test_failed_write_keeps_existing_file_and_cleans_temp(self, tmp_path):
+        p = tmp_path / "out.csv"
+        _write_rows_4col(str(p), [["001", "001", "normal", "1"]])
+
+        # A non-iterable row blows up mid-write; the original must survive.
+        with pytest.raises(TypeError):
+            _write_rows_4col(str(p), [None])
+
+        with open(p, newline="", encoding="utf-8") as f:
+            reader = list(csv.reader(f))
+        assert reader[1] == ["001", "001", "normal", "1"]
+        assert sorted(os.listdir(tmp_path)) == ["out.csv"]

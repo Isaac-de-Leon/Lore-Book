@@ -3,6 +3,7 @@
 import csv
 import logging
 import os
+import tempfile
 from typing import List, Optional, Tuple
 
 from lorebook.core.game_types import (
@@ -98,12 +99,29 @@ def _normalize_existing_rows(csv_path: str) -> List[List[str]]:
 
 
 def _write_rows_4col(csv_path: str, rows: List[List[str]]) -> None:
-    """Write rows to CSV with a 4-column header."""
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
-        for r in rows:
-            writer.writerow([r[0], r[1], r[2], r[3]])
+    """
+    Write rows to CSV with a 4-column header.
+
+    Writes to a temp file in the same directory and atomically replaces the
+    target, so a crash mid-write can't destroy the existing collection file.
+    """
+    directory = os.path.dirname(os.path.abspath(csv_path))
+    fd, tmp_path = tempfile.mkstemp(prefix=os.path.basename(csv_path) + ".", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
+            for r in rows:
+                writer.writerow([r[0], r[1], r[2], r[3]])
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, csv_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _csv_for_game_type(game_type: GameType) -> str:
