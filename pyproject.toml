@@ -18,6 +18,10 @@ dependencies = [
     "PySide6",
 ]
 
+[project.scripts]
+lorebook-ui = "lorebook.ui.app:main"
+lorebook-sort = "lorebook.sorter.__main__:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 # Raspberry Pi sorter runtime: lightweight tflite inference instead of full

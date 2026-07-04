@@ -1,19 +1,13 @@
-# UI.py — Application entry point.
+# UI.py — Application entry point (thin wrapper; also available as `lorebook-ui`).
 #
 # All UI logic lives in lorebook/ui/:
+#   app.py            — QApplication bootstrap (main())
 #   main_window.py    — MainWindow (camera, matching, CSV export)
 #   settings_window.py — SettingsWindow dialog
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+import sys
 
-from lorebook.ui.main_window import MainWindow, setup_logging
-
-setup_logging()
+from lorebook.ui.app import main
 
 if __name__ == "__main__":
-    app = QApplication([])
-    w = MainWindow()
-    w.show()
-    QTimer.singleShot(0, w.start_camera)
-    app.exec()
+    sys.exit(main())

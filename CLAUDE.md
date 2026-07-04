@@ -19,7 +19,7 @@ Lore-Book/
 ├── lorebook/              # Importable package
 │   ├── core/              # Game-agnostic logic (no Qt)
 │   │   ├── game_types.py      # GameType enum, get_game_type, csv_for_game, constants
-│   │   ├── image_utils.py     # ensure_valid_image, foil_score, is_probably_foil
+│   │   ├── image_utils.py     # ensure_valid_image, foil_score, focus_rect/crop_to_card
 │   │   ├── matching.py        # L2-normalize, cosine similarity, find_best_matches, MatchIndex
 │   │   ├── features.py        # get_extractor("keras"|"tflite"), extract_features, heatmap
 │   │   ├── card_database.py   # Feature cache build/load, set_database_path
@@ -32,10 +32,12 @@ Lore-Book/
 │   │   ├── pipeline.py        # SortPipeline: capture→match→decide→route→CSV
 │   │   └── __main__.py        # python -m lorebook.sorter CLI
 │   └── ui/                # PySide6 widgets
+│       ├── app.py             # main() — QApplication bootstrap (lorebook-ui script)
 │       ├── styles.py          # APP_STYLESHEET dark theme
 │       ├── settings_window.py # SettingsWindow dialog
 │       └── main_window.py     # MainWindow: camera, scan, match nav, CSV export
 │
+├── .github/workflows/tests.yml # CI: pytest on every push/PR (no TF needed)
 ├── configs/
 │   └── sort_rules.example.json # Example multi-bin sort rules
 ├── scripts/
@@ -50,12 +52,15 @@ Lore-Book/
 ├── DBCardCache_<Game>.db       # Cached feature vectors (SQLite, auto-generated)
 ├── <Game>List.csv              # Scanned collection per game (e.g. LorcanaList.csv)
 ├── mobilenetv2_features.tflite # tflite model (gitignored; generate via scripts/)
-├── ui_settings.json       # Persisted UI preferences
+├── ui_settings.json       # Persisted UI preferences (gitignored — per-user state)
+├── riot.txt               # Riot Games API domain-verification token (leave in place)
 ├── requirements.txt
 └── tests/                 # No camera / GPU / TF needed (stubbed in conftest.py)
     ├── conftest.py
     ├── test_photo_matching.py
     ├── test_matching_index.py
+    ├── test_card_database.py
+    ├── test_camera.py
     ├── test_sorter_rules.py
     └── test_sorter_pipeline.py
 ```
@@ -65,7 +70,7 @@ Lore-Book/
 | File | What it owns |
 |------|-------------|
 | `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, constants |
-| `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil` |
+| `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop) |
 | `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
 | `lorebook/core/features.py` | `get_extractor(backend)` (keras/tflite), `extract_features`, `visualize_activation_overlay` |
 | `lorebook/core/card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
@@ -78,7 +83,8 @@ Lore-Book/
 | `lorebook/ui/styles.py` | `APP_STYLESHEET` dark theme |
 | `lorebook/ui/settings_window.py` | `SettingsWindow` PySide6 dialog |
 | `lorebook/ui/main_window.py` | `MainWindow`, `setup_logging` |
-| `UI.py` | `QApplication` entry point |
+| `lorebook/ui/app.py` | `main()` — QApplication bootstrap (installed as `lorebook-ui`) |
+| `UI.py` | Thin wrapper around `lorebook.ui.app.main()` |
 | `PhotoMatching.py` | Re-exports all of the above for backward compatibility; also runnable as CLI |
 
 > Internal imports use absolute package paths (e.g. `from lorebook.core.matching import find_best_matches`). Tests and external callers can keep importing from the `PhotoMatching` shim unchanged.
@@ -97,7 +103,7 @@ Lore-Book/
 pip install -r requirements.txt
 ```
 
-> **Note:** `tensorflow_intel` in `requirements.txt` is Windows-specific. On Linux/macOS remove it and keep `tensorflow`.
+> **Note:** `tensorflow_intel` in `requirements.txt` carries a `sys_platform == "win32"` marker, so it installs only on Windows — no manual editing needed on Linux/macOS.
 
 ### Build the feature database (first run)
 ```bash
@@ -119,6 +125,8 @@ python -m lorebook.sorter --game Lorcana --source Card_Images/Lorcana \
 # Live camera + CSV logging:
 python -m lorebook.sorter --game Lorcana --source camera --no-dry-run
 ```
+Live-camera runs crop each frame to the centered card focus box (same crop as the GUI)
+before matching; folder replays don't. Override with `--crop` / `--no-crop`.
 `python PhotoMatching.py --sort …` is an equivalent alias. On a Raspberry Pi, install
 `pip install .[sorter]` (tflite-runtime instead of full TensorFlow), generate the model
 once on a desktop with `python scripts/convert_to_tflite.py`, copy it over, and run with
@@ -192,7 +200,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 - **Add a feature** — edit the relevant module under `lorebook/core/` for logic, `lorebook/ui/` for UI wiring, `lorebook/sorter/`/`lorebook/hardware/` for the headless sorter.
 - **Fix a CSV parsing bug** — see `_normalize_existing_rows()` and `_write_rows_4col()` in `lorebook/core/csv_manager.py`.
 - **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()` (`lorebook/core/image_utils.py`).
-- **Change match threshold** — default is `0.70` in `find_best_matches()` (`lorebook/core/matching.py`); UI exposes it as confidence %.
+- **Change match threshold** — core default is `0.70` in `find_best_matches()` / `MatchIndex.find()` (`lorebook/core/matching.py`); the GUI ships a stricter `0.90` default, exposed in Settings as confidence %.
 - **Change sort routing** — edit the rules JSON (see `configs/sort_rules.example.json`); the engine is `decide_bin()` in `lorebook/sorter/rules.py`. Unmatched cards always go to `reject_bin`.
 - **Implement the real transport** — subclass `Transport` (`lorebook/hardware/transport.py`); the pipeline needs `route_to_bin`, `advance`, `home`.
 - **Cache issues** — delete `DBCardCache_<game>.db` and rebuild with `--build` flag.
@@ -201,8 +209,9 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 
 ## Known Limitations / Gotchas
 
-- `tensorflow_intel` is only for Windows Intel CPUs — remove from `requirements.txt` on other platforms.
-- `Card_Images/` is git-ignored (images can be large); the SQLite/JSON caches are also git-ignored.
+- `tensorflow_intel` installs only on Windows (guarded by a `sys_platform == "win32"` marker in `requirements.txt`).
+- `Card_Images/` is git-ignored (images can be large); the SQLite/JSON caches and `ui_settings.json` are also git-ignored.
 - The feature model (MobileNetV2 weights) is downloaded from the internet on first run (~14 MB).
 - Camera index `0` may not be correct on machines with multiple cameras — adjust in Settings.
 - `foil_score` threshold (default `0.08`) was tuned empirically; may need adjustment per lighting setup.
+- `riot.txt` at the repo root is a Riot Games API domain-verification token — don't delete it.
