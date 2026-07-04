@@ -96,6 +96,32 @@ class TestLoadRules:
         with pytest.raises(ValueError):
             load_rules(str(p))
 
+    def _load(self, tmp_path, cfg):
+        p = tmp_path / "rules.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+        return load_rules(str(p))
+
+    def test_unknown_field_raises_with_key_name(self, tmp_path):
+        # Typo'd condition keys must fail loudly, not silently match everything.
+        with pytest.raises(ValueError, match="min_confidnce"):
+            self._load(tmp_path, {"rules": [{"bin": "b", "min_confidnce": 0.8}]})
+
+    def test_non_bool_foil_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="foil"):
+            self._load(tmp_path, {"rules": [{"bin": "b", "foil": "yes"}]})
+
+    def test_non_numeric_min_confidence_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="min_confidence"):
+            self._load(tmp_path, {"rules": [{"bin": "b", "min_confidence": "high"}]})
+
+    def test_non_string_set_code_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="set_code"):
+            self._load(tmp_path, {"rules": [{"bin": "b", "set_code": 1}]})
+
+    def test_invalid_reject_bin_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="reject_bin"):
+            self._load(tmp_path, {"reject_bin": "", "rules": []})
+
     def test_example_config_loads(self):
         import os
 
