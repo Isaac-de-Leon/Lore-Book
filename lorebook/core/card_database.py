@@ -59,6 +59,19 @@ def load_cache(db_path: Optional[str] = None) -> Dict[str, np.ndarray]:
         return {}
 
 
+def _remove_cache_entries(cache_file: str, filenames: List[str]) -> None:
+    """Delete cache rows whose source images no longer exist on disk."""
+    if not filenames or not os.path.exists(cache_file):
+        return
+    try:
+        with sqlite3.connect(cache_file) as conn:
+            conn.executemany(
+                "DELETE FROM features WHERE filename = ?", [(n,) for n in filenames]
+            )
+    except Exception as e:
+        logging.error(f"Error pruning stale cache entries from {cache_file}: {e}")
+
+
 def _list_image_files(folder: str) -> List[str]:
     """Return sorted list of supported image filenames in folder."""
     if not os.path.isdir(folder):
@@ -93,7 +106,18 @@ def build_feature_database(
         featureDB = load_cache(resolved)
         logging.info(f"Loaded {len(featureDB)} cached entries from {resolved}")
 
-        new_files = [f for f in _list_image_files(resolved) if f not in featureDB]
+        current_files = _list_image_files(resolved)
+
+        # Prune cache entries for deleted/renamed images so they can't keep
+        # matching against cards that no longer exist.
+        stale = sorted(set(featureDB) - set(current_files))
+        if stale:
+            for name in stale:
+                featureDB.pop(name, None)
+            _remove_cache_entries(_cache_path(resolved), stale)
+            logging.info(f"Pruned {len(stale)} stale cache entries from {resolved}")
+
+        new_files = [f for f in current_files if f not in featureDB]
         total = len(new_files)
         logging.info(f"Processing {total} new files in {resolved}")
 
