@@ -13,48 +13,68 @@ Lore-Book is a desktop trading-card scanner application. It uses a webcam to pho
 ```
 Lore-Book/
 ├── UI.py                  # Entry point — creates app, shows MainWindow
-├── PhotoMatching.py       # Backward-compat re-export shim + CLI entry point
-├── pyproject.toml         # Package metadata (pip install -e .)
+├── PhotoMatching.py       # Backward-compat re-export shim + CLI (--build/--match/--sort)
+├── pyproject.toml         # Package metadata (pip install -e .; [sorter] extra for the Pi)
 │
 ├── lorebook/              # Importable package
-│   ├── __init__.py
 │   ├── core/              # Game-agnostic logic (no Qt)
-│   │   ├── __init__.py
-│   │   ├── game_types.py      # GameType enum, get_game_type, shared constants
+│   │   ├── game_types.py      # GameType enum, get_game_type, csv_for_game, constants
 │   │   ├── image_utils.py     # ensure_valid_image, foil_score, is_probably_foil
-│   │   ├── matching.py        # L2-normalize, cosine similarity, find_best_matches
-│   │   ├── features.py        # MobileNetV2 feature extraction + heatmap overlay
+│   │   ├── matching.py        # L2-normalize, cosine similarity, find_best_matches, MatchIndex
+│   │   ├── features.py        # get_extractor("keras"|"tflite"), extract_features, heatmap
 │   │   ├── card_database.py   # Feature cache build/load, set_database_path
-│   │   └── csv_manager.py     # CSV read/write, update_cardlist, get_available_sets
+│   │   └── csv_manager.py     # CSV read/write, update_cardlist(_batch), split_filename
+│   ├── hardware/          # Hardware abstraction (no Qt; mocks run on any desktop)
+│   │   ├── camera.py          # open_capture, CameraSource, OpenCVCameraSource, MockCameraSource
+│   │   └── transport.py       # Transport interface + MockTransport (gantry TBD)
+│   ├── sorter/            # Headless card sorter (roadmap: docs/SORTER_ROADMAP.md)
+│   │   ├── rules.py           # Rule/SortRules, decide_bin — multi-bin rules engine
+│   │   ├── pipeline.py        # SortPipeline: capture→match→decide→route→CSV
+│   │   └── __main__.py        # python -m lorebook.sorter CLI
 │   └── ui/                # PySide6 widgets
-│       ├── __init__.py
 │       ├── styles.py          # APP_STYLESHEET dark theme
 │       ├── settings_window.py # SettingsWindow dialog
 │       └── main_window.py     # MainWindow: camera, scan, match nav, CSV export
 │
+├── configs/
+│   └── sort_rules.example.json # Example multi-bin sort rules
+├── scripts/
+│   ├── convert_to_tflite.py    # Export the feature model → mobilenetv2_features.tflite
+│   └── check_parity.py         # Verify keras vs tflite vectors agree
+├── docs/
+│   └── SORTER_ROADMAP.md       # Phased plan for the physical sorter
+│
 ├── Card_Images/
 │   ├── Lorcana/           # Reference card images (.webp / .jpg / .png)
 │   └── Riftbound/
-├── DBCardCache_Lorcana.db      # Cached feature vectors (SQLite, auto-generated)
-├── DBCardCache_Riftbound.db
-├── LorcanaList.csv        # Scanned Lorcana collection
-├── RiftboundList.csv      # Scanned Riftbound collection
+├── DBCardCache_<Game>.db       # Cached feature vectors (SQLite, auto-generated)
+├── <Game>List.csv              # Scanned collection per game (e.g. LorcanaList.csv)
+├── mobilenetv2_features.tflite # tflite model (gitignored; generate via scripts/)
 ├── ui_settings.json       # Persisted UI preferences
 ├── requirements.txt
-└── tests/
-    └── test_photo_matching.py  # Unit tests (no camera / no model weights needed)
+└── tests/                 # No camera / GPU / TF needed (stubbed in conftest.py)
+    ├── conftest.py
+    ├── test_photo_matching.py
+    ├── test_matching_index.py
+    ├── test_sorter_rules.py
+    └── test_sorter_pipeline.py
 ```
 
 ### Module responsibilities
 
 | File | What it owns |
 |------|-------------|
-| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, path/CSV constants |
+| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, constants |
 | `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil` |
-| `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches` |
-| `lorebook/core/features.py` | MobileNetV2 lazy-load, `extract_features`, `visualize_activation_overlay` |
+| `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
+| `lorebook/core/features.py` | `get_extractor(backend)` (keras/tflite), `extract_features`, `visualize_activation_overlay` |
 | `lorebook/core/card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
-| `lorebook/core/csv_manager.py` | `update_cardlist`, `get_available_sets`, CSV read/write helpers |
+| `lorebook/core/csv_manager.py` | `update_cardlist`, `update_cardlist_batch`, `split_filename`, `get_available_sets` |
+| `lorebook/hardware/camera.py` | `open_capture` (shared with GUI), `CameraSource` + OpenCV/Mock implementations |
+| `lorebook/hardware/transport.py` | `Transport` interface, `MockTransport` (real gantry driver comes later) |
+| `lorebook/sorter/rules.py` | `Rule`, `SortRules`, `load_rules`, `decide_bin` |
+| `lorebook/sorter/pipeline.py` | `SortPipeline`, `SortOutcome` — the headless sort loop |
+| `lorebook/sorter/__main__.py` | `python -m lorebook.sorter` argument parsing and wiring |
 | `lorebook/ui/styles.py` | `APP_STYLESHEET` dark theme |
 | `lorebook/ui/settings_window.py` | `SettingsWindow` PySide6 dialog |
 | `lorebook/ui/main_window.py` | `MainWindow`, `setup_logging` |
@@ -90,11 +110,25 @@ This scans all images in `Card_Images/Lorcana/` and writes `DBCardCache_Lorcana.
 python UI.py
 ```
 
+### Run the headless sorter (dry run — motion is mocked until the gantry exists)
+```bash
+# Replay a folder of images, log the chosen bin per card, no CSV writes:
+python -m lorebook.sorter --game Lorcana --source Card_Images/Lorcana \
+    --rules configs/sort_rules.example.json --dry-run
+
+# Live camera + CSV logging:
+python -m lorebook.sorter --game Lorcana --source camera --no-dry-run
+```
+`python PhotoMatching.py --sort …` is an equivalent alias. On a Raspberry Pi, install
+`pip install .[sorter]` (tflite-runtime instead of full TensorFlow), generate the model
+once on a desktop with `python scripts/convert_to_tflite.py`, copy it over, and run with
+`--backend tflite`.
+
 ---
 
 ## Running Tests
 
-Tests live in `tests/test_photo_matching.py`. They cover the pure utility functions in `PhotoMatching.py` and **do not** require a camera, a GPU, or pre-downloaded model weights (no TF model is loaded).
+Tests live in `tests/` (shared TF/Keras stubbing in `tests/conftest.py`). They cover the pure utility functions, the matching index, and the sorter rules/pipeline with mock hardware, and **do not** require a camera, a GPU, or pre-downloaded model weights (no TF model is loaded).
 
 ```bash
 python -m pytest tests/ -v
@@ -155,10 +189,12 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 
 ## Common Tasks for Claude
 
-- **Add a feature** — edit the relevant module under `lorebook/core/` for logic, `lorebook/ui/` for UI wiring.
+- **Add a feature** — edit the relevant module under `lorebook/core/` for logic, `lorebook/ui/` for UI wiring, `lorebook/sorter/`/`lorebook/hardware/` for the headless sorter.
 - **Fix a CSV parsing bug** — see `_normalize_existing_rows()` and `_write_rows_4col()` in `lorebook/core/csv_manager.py`.
 - **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()` (`lorebook/core/image_utils.py`).
 - **Change match threshold** — default is `0.70` in `find_best_matches()` (`lorebook/core/matching.py`); UI exposes it as confidence %.
+- **Change sort routing** — edit the rules JSON (see `configs/sort_rules.example.json`); the engine is `decide_bin()` in `lorebook/sorter/rules.py`. Unmatched cards always go to `reject_bin`.
+- **Implement the real transport** — subclass `Transport` (`lorebook/hardware/transport.py`); the pipeline needs `route_to_bin`, `advance`, `home`.
 - **Cache issues** — delete `DBCardCache_<game>.db` and rebuild with `--build` flag.
 
 ---
