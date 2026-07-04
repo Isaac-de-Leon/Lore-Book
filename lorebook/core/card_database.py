@@ -28,7 +28,9 @@ def get_database_path() -> str:
 
 
 def _cache_path(db_path: str) -> str:
-    game = os.path.basename(db_path) or "default"
+    # Strip trailing separators so "Card_Images/Lorcana/" (e.g. from shell
+    # tab-completion) resolves to "Lorcana", not "".
+    game = os.path.basename(db_path.rstrip("/\\")) or "default"
     return f"DBCardCache_{game}.db"
 
 

@@ -5,7 +5,6 @@ import json
 import logging
 import logging.handlers
 import os
-import platform
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -34,10 +33,12 @@ from lorebook.core.card_database import (
     load_cache,
     set_database_path,
 )
-from lorebook.core.csv_manager import _split_filename, update_cardlist
+from lorebook.core.csv_manager import split_filename, update_cardlist
+from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_utils import is_probably_foil
 from lorebook.core.matching import find_best_matches
+from lorebook.hardware.camera import open_capture
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import APP_STYLESHEET
 
@@ -94,7 +95,7 @@ class MainWindow(QWidget):
 
     @staticmethod
     def _split_filename(filename: str) -> Tuple[str, str]:
-        return _split_filename(filename)
+        return split_filename(filename)
 
     def show_error(self, message: str, title: str = "Error", details: Optional[str] = None) -> None:
         self.logger.error(message + (f": {details}" if details else ""))
@@ -522,91 +523,17 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ camera
 
     def start_camera(self) -> None:
-        """Open the camera, trying DirectShow → MSMF → generic backends in order."""
+        """Open the camera via the shared backend-probe helper, then start the preview."""
         self.stop_camera()
         cv2.destroyAllWindows()
 
-        system = platform.system()
-        if system == "Windows":
-            backends = [
-                (cv2.CAP_DSHOW, "DirectShow"),
-                (cv2.CAP_MSMF, "Media Foundation"),
-                (cv2.CAP_ANY, "Default"),
-            ]
-        elif system == "Linux":
-            backends = [
-                (cv2.CAP_V4L2, "V4L2"),
-                (cv2.CAP_ANY, "Default"),
-            ]
-        else:  # macOS and others
-            backends = [
-                (cv2.CAP_AVFOUNDATION, "AVFoundation"),
-                (cv2.CAP_ANY, "Default"),
-            ]
-
-        camera_opened = False
-        last_error = None
-
-        for backend_flag, backend_name in backends:
-            try:
-                self.logger.info(f"Trying camera {self.camera_index} with {backend_name}…")
-                self.cap = (
-                    cv2.VideoCapture(self.camera_index)
-                    if backend_flag == cv2.CAP_ANY
-                    else cv2.VideoCapture(self.camera_index + backend_flag)
-                )
-                if not self.cap.isOpened():
-                    raise RuntimeError(f"{backend_name} failed to open camera")
-
-                for prop, value, name in [
-                    (cv2.CAP_PROP_BUFFERSIZE, 1, "Buffer Size"),
-                    (cv2.CAP_PROP_FRAME_WIDTH, 1280, "Width"),
-                    (cv2.CAP_PROP_FRAME_HEIGHT, 720, "Height"),
-                    (cv2.CAP_PROP_FPS, 30, "FPS"),
-                    (cv2.CAP_PROP_AUTOFOCUS, 1, "Autofocus"),
-                    (cv2.CAP_PROP_AUTO_EXPOSURE, 1, "Auto Exposure"),
-                ]:
-                    try:
-                        self.cap.set(prop, value)
-                    except Exception:
-                        pass
-
-                ret, frame = self.cap.read()
-                if not ret or frame is None or frame.size == 0:
-                    raise RuntimeError("Camera not providing valid frames")
-
-                camera_opened = True
-                self.logger.info(f"Camera opened with {backend_name}")
-                break
-
-            except Exception as e:
-                last_error = str(e)
-                self.logger.warning(f"Failed with {backend_name}: {e}")
-                if self.cap is not None:
-                    self.cap.release()
-                    self.cap = None
-
-        if not camera_opened:
-            self._fail_and_stop(
-                f"Failed to open camera {self.camera_index} with any backend"
-                + (f"\nLast error: {last_error}" if last_error else "")
-            )
-            return
-
-        # Warm-up
-        ok = False
-        for _ in range(30):
-            try:
-                ret, frm = self.cap.read()
-                if ret and frm is not None and frm.size > 0:
-                    ok = True
-                    break
-            except Exception:
-                pass
-            time.sleep(0.1)
-
-        if not ok:
-            self._fail_and_stop("Camera opened but not delivering frames.")
+        # open_capture() (lorebook.hardware.camera) holds the platform backend
+        # probe + warm-up logic shared with the headless sorter.
+        try:
+            self.cap = open_capture(self.camera_index)
+        except Exception as e:
+            self.cap = None
+            self._fail_and_stop(str(e))
             return
 
         self.read_fail_count = 0
@@ -759,7 +686,7 @@ class MainWindow(QWidget):
         self.current_match_idx = idx
         fname, score = self.last_matches[idx]
 
-        set_code, card_code = _split_filename(fname)
+        set_code, card_code = split_filename(fname)
         self.match_name_label.setText(f"{set_code}-{card_code}" if set_code else fname)
         self.match_detail_label.setText(
             f"Set {set_code}  ·  {score:.1%} match" if set_code else f"{score:.1%} match"
@@ -801,7 +728,7 @@ class MainWindow(QWidget):
         game_selected_sets = self.selected_sets.get(active_game, [])
         filtered = []
         for fname, score in matches:
-            set_code, _ = _split_filename(os.path.basename(fname))
+            set_code, _ = split_filename(os.path.basename(fname))
             if not game_selected_sets or set_code in game_selected_sets:
                 filtered.append((fname, score))
         return filtered
@@ -825,10 +752,9 @@ class MainWindow(QWidget):
         is_foil = self.foil_check.isChecked()
 
         active_game = self.get_active_game() or "Lorcana"
-        full_path = os.path.join("Card_Images", active_game, fname)
-        target_file = "RiftboundList.csv" if active_game.lower() == "riftbound" else "LorcanaList.csv"
+        target_file = csv_for_game(active_game)
 
-        update_cardlist(full_path, is_foil, cnt)
+        update_cardlist(fname, is_foil, cnt, game=active_game)
         self.set_status(f"Added {cnt}× {fname} to {target_file}")
         self.add_csv_btn.setEnabled(False)
 

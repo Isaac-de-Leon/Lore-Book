@@ -58,3 +58,53 @@ def find_best_matches(
             scored.append((fname, score))
     scored.sort(key=lambda t: t[1], reverse=True)
     return scored
+
+
+class MatchIndex:
+    """
+    Vectorized matcher: the feature DB stacked into one (N, dim) matrix.
+
+    Build once from a {filename: vector} dict, then score each query with a
+    single matrix-vector product instead of a per-entry Python loop — the
+    per-card matching cost that matters on a Raspberry Pi. Results are
+    identical in contract to find_best_matches: [(filename, score), ...]
+    sorted descending, filtered by threshold.
+    """
+
+    def __init__(self, featureDB: Dict[str, np.ndarray]):
+        names: List[str] = []
+        vectors: List[np.ndarray] = []
+        dim: Optional[int] = None
+        for fname, vec in (featureDB or {}).items():
+            if vec is None or np.size(vec) == 0:
+                continue
+            v = np.asarray(vec, dtype=np.float32).ravel()
+            if dim is None:
+                dim = v.size
+            elif v.size != dim:
+                logging.warning(
+                    f"MatchIndex: skipping {fname} (dim {v.size} != {dim})"
+                )
+                continue
+            names.append(fname)
+            vectors.append(v)
+        self._names = names
+        self._matrix = np.vstack(vectors) if vectors else np.empty((0, dim or 0), np.float32)
+
+    def __len__(self) -> int:
+        return len(self._names)
+
+    def find(self, inputFeatures: np.ndarray, threshold: float = 0.70) -> List[Tuple[str, float]]:
+        """Return all entries with cosine similarity >= threshold, sorted descending."""
+        if inputFeatures is None or np.size(inputFeatures) == 0 or not self._names:
+            return []
+        q = _l2_normalize(np.asarray(inputFeatures, dtype=np.float32).ravel())
+        if q.size != self._matrix.shape[1]:
+            logging.error(
+                f"MatchIndex: query dim {q.size} != index dim {self._matrix.shape[1]}"
+            )
+            return []
+        scores = self._matrix @ q
+        hits = np.flatnonzero(scores >= threshold)
+        order = hits[np.argsort(scores[hits])[::-1]]
+        return [(self._names[i], float(scores[i])) for i in order]

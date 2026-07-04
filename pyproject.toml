@@ -20,11 +20,22 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Raspberry Pi sorter runtime: lightweight tflite inference instead of full
+# TensorFlow. Install with `pip install lorebook[sorter]` on the Pi.
+# A live USB camera works through opencv-python today; `picamera2` would be
+# added here when a CSI ribbon camera backend lands.
+sorter = ["tflite-runtime"]
 
 [tool.setuptools]
 # Root-level UI.py / PhotoMatching.py are runnable scripts, not part of the
 # installable package; only the lorebook package is packaged.
-packages = ["lorebook", "lorebook.core", "lorebook.ui"]
+packages = [
+    "lorebook",
+    "lorebook.core",
+    "lorebook.ui",
+    "lorebook.hardware",
+    "lorebook.sorter",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
