@@ -36,7 +36,7 @@ from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_utils import crop_to_card, focus_rect, is_probably_foil
-from lorebook.core.matching import find_best_matches
+from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import open_capture
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import APP_STYLESHEET
@@ -128,6 +128,7 @@ class MainWindow(QWidget):
 
         # State
         self.featureDB: Dict[str, np.ndarray] = load_cache()
+        self._match_index = MatchIndex(self.featureDB)  # vectorized matcher over featureDB
         self._loaded_game: Optional[str] = None  # game whose featureDB is in memory
         self.selected_games: Dict[str, bool] = {"lorcana": False, "riftbound": False}
         self.selected_sets: Dict[str, List[str]] = {"lorcana": [], "riftbound": []}
@@ -614,6 +615,7 @@ class MainWindow(QWidget):
         if self._loaded_game != active_game or not self.featureDB:
             set_database_path(active_game)
             self.featureDB = load_cache()
+            self._match_index = MatchIndex(self.featureDB)
             self._loaded_game = active_game if self.featureDB else None
             self.logger.info(f"Loaded {len(self.featureDB)} entries for {active_game}")
         if not self.featureDB:
@@ -627,7 +629,7 @@ class MainWindow(QWidget):
             self.add_csv_btn.setEnabled(False)
             return
 
-        matches = find_best_matches(features, self.featureDB, threshold=self.confidence_threshold)
+        matches = self._match_index.find(features, threshold=self.confidence_threshold)
         matches = self._filter_matches(matches)
         self.logger.info(f"Found {len(matches)} matches after filtering")
 
