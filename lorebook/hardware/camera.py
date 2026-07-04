@@ -85,11 +85,13 @@ def open_capture(camera_index: int = 0, warmup_frames: int = 30) -> cv2.VideoCap
                 raise RuntimeError("Camera not providing valid frames")
 
             # Warm-up: let auto-exposure/focus settle before the caller reads.
+            # Every warmup frame is read and discarded; sleep only after a
+            # failed read so a healthy camera settles at its native frame rate.
             for _ in range(max(0, warmup_frames)):
                 try:
                     ret, frm = cap.read()
                     if ret and frm is not None and frm.size > 0:
-                        break
+                        continue
                 except Exception:
                     pass
                 time.sleep(0.1)
