@@ -202,6 +202,15 @@ class TestFindBestMatches:
     def test_none_input(self):
         assert find_best_matches(None, {"x": np.ones(3)}, threshold=0.5) == []
 
+    def test_bad_db_vector_is_skipped_not_fatal(self):
+        db = self._make_db()
+        db["corrupt.jpg"] = np.array([5.0, 5.0, 5.0], dtype=np.float32)  # not unit-norm
+        query = db["card_a.jpg"].copy()
+        matches = find_best_matches(query, db, threshold=0.5)
+        names = [m[0] for m in matches]
+        assert "corrupt.jpg" not in names
+        assert "card_a.jpg" in names
+
 
 # ===========================================================================
 # ensure_valid_image

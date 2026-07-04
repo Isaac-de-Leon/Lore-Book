@@ -50,6 +50,19 @@ class TestMatchIndex:
         idx = MatchIndex(db)
         assert len(idx) == 5
 
+    def test_unnormalized_vectors_are_normalized(self):
+        base = _l2_normalize(np.ones(64, np.float32))
+        db = {"unit.webp": base, "scaled.webp": base * 10.0}
+        hits = MatchIndex(db).find(base, threshold=0.99)
+        # The scaled copy must score ~1.0, not ~10.0 or below-threshold.
+        assert {n for n, _ in hits} == {"unit.webp", "scaled.webp"}
+        assert all(abs(s - 1.0) < 1e-5 for _, s in hits)
+
+    def test_zero_norm_vector_skipped(self):
+        db = _random_db(n=4)
+        db["zero.webp"] = np.zeros(64, np.float32)
+        assert len(MatchIndex(db)) == 4
+
     def test_none_query_returns_empty(self):
         idx = MatchIndex(_random_db(n=3))
         assert idx.find(None) == []

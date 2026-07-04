@@ -53,7 +53,12 @@ def find_best_matches(
     for fname, vec in featureDB.items():
         if vec is None or np.size(vec) == 0:
             continue
-        score = _cosine_score(q, vec)
+        try:
+            score = _cosine_score(q, vec)
+        except ValueError:
+            # One corrupt/unnormalized cache vector must not kill the scan.
+            logging.warning(f"Skipping unnormalized/corrupt DB vector for {fname}")
+            continue
         if score >= threshold:
             scored.append((fname, score))
     scored.sort(key=lambda t: t[1], reverse=True)
@@ -86,8 +91,15 @@ class MatchIndex:
                     f"MatchIndex: skipping {fname} (dim {v.size} != {dim})"
                 )
                 continue
+            # Normalize defensively: cache vectors are normalized at
+            # extraction time, but a corrupt/legacy row must not distort
+            # every cosine score computed against the matrix.
+            norm = float(np.linalg.norm(v))
+            if norm == 0.0 or not np.isfinite(norm):
+                logging.warning(f"MatchIndex: skipping {fname} (zero/invalid norm)")
+                continue
             names.append(fname)
-            vectors.append(v)
+            vectors.append(v / norm)
         self._names = names
         self._matrix = np.vstack(vectors) if vectors else np.empty((0, dim or 0), np.float32)
 
