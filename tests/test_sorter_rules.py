@@ -90,37 +90,21 @@ class TestLoadRules:
         assert rules.rules[0].foil is True and rules.rules[0].bin == "foils"
         assert rules.rules[1].set_code == "001" and rules.rules[1].min_confidence == 0.7
 
-    def test_missing_bin_raises(self, tmp_path):
-        p = tmp_path / "bad.json"
-        p.write_text(json.dumps({"rules": [{"set_code": "001"}]}), encoding="utf-8")
-        with pytest.raises(ValueError):
-            load_rules(str(p))
-
-    def _load(self, tmp_path, cfg):
+    @pytest.mark.parametrize("cfg, match", [
+        ({"rules": [{"set_code": "001"}]}, "bin"),                        # missing bin
+        ({"rules": [{"bin": "b", "min_confidnce": 0.8}]}, "min_confidnce"),  # typo'd key
+        ({"rules": [{"bin": "b", "foil": "yes"}]}, "foil"),               # non-bool foil
+        ({"rules": [{"bin": "b", "min_confidence": "high"}]}, "min_confidence"),
+        ({"rules": [{"bin": "b", "set_code": 1}]}, "set_code"),           # non-string
+        ({"reject_bin": "", "rules": []}, "reject_bin"),                  # empty reject bin
+    ], ids=["missing-bin", "unknown-key", "bad-foil", "bad-confidence",
+            "bad-set-code", "bad-reject-bin"])
+    def test_invalid_config_raises_naming_the_field(self, tmp_path, cfg, match):
+        # Typo'd or wrong-typed fields must fail loudly, not silently match everything.
         p = tmp_path / "rules.json"
         p.write_text(json.dumps(cfg), encoding="utf-8")
-        return load_rules(str(p))
-
-    def test_unknown_field_raises_with_key_name(self, tmp_path):
-        # Typo'd condition keys must fail loudly, not silently match everything.
-        with pytest.raises(ValueError, match="min_confidnce"):
-            self._load(tmp_path, {"rules": [{"bin": "b", "min_confidnce": 0.8}]})
-
-    def test_non_bool_foil_raises(self, tmp_path):
-        with pytest.raises(ValueError, match="foil"):
-            self._load(tmp_path, {"rules": [{"bin": "b", "foil": "yes"}]})
-
-    def test_non_numeric_min_confidence_raises(self, tmp_path):
-        with pytest.raises(ValueError, match="min_confidence"):
-            self._load(tmp_path, {"rules": [{"bin": "b", "min_confidence": "high"}]})
-
-    def test_non_string_set_code_raises(self, tmp_path):
-        with pytest.raises(ValueError, match="set_code"):
-            self._load(tmp_path, {"rules": [{"bin": "b", "set_code": 1}]})
-
-    def test_invalid_reject_bin_raises(self, tmp_path):
-        with pytest.raises(ValueError, match="reject_bin"):
-            self._load(tmp_path, {"reject_bin": "", "rules": []})
+        with pytest.raises(ValueError, match=match):
+            load_rules(str(p))
 
     def test_example_config_loads(self):
         import os

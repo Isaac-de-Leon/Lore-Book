@@ -58,6 +58,22 @@ class SequenceExtractor:
         return v
 
 
+class ShapeExtractor:
+    """Records the shape of each frame it sees; always matches card 001-001."""
+
+    def __init__(self):
+        self.shapes = []
+
+    def extract(self, img):
+        self.shapes.append(img.shape)
+        return _unit(0)
+
+
+def _frames(n=1, shape=(2, 2, 3)):
+    """n blank BGR frames."""
+    return [np.zeros(shape, np.uint8) for _ in range(n)]
+
+
 @pytest.fixture(autouse=True)
 def _foil_off(monkeypatch):
     """Default foil detection to False so tests control it explicitly."""
@@ -74,14 +90,14 @@ def _multi_bin_rules():
     )
 
 
-def _make_pipeline(camera, extractor, transport, **kwargs):
+def _make_pipeline(camera, extractor, transport, *, rules=None, game="Lorcana", **kwargs):
     return SortPipeline(
         camera=camera,
         transport=transport,
         extractor=extractor,
         feature_db=FEATURE_DB,
-        rules=_multi_bin_rules(),
-        game="Lorcana",
+        rules=rules if rules is not None else _multi_bin_rules(),
+        game=game,
         threshold=0.7,
         **kwargs,
     )
@@ -89,8 +105,7 @@ def _make_pipeline(camera, extractor, transport, **kwargs):
 
 class TestPipelineRouting:
     def test_each_card_routed_to_expected_bin(self):
-        frames = [np.zeros((2, 2, 3), np.uint8), np.zeros((2, 2, 3), np.uint8)]
-        camera = ArrayCameraSource(frames)
+        camera = ArrayCameraSource(_frames(2))
         extractor = SequenceExtractor([_unit(0), _unit(1)])  # → 001-001, 008-002
         transport = MockTransport()
 
@@ -104,115 +119,74 @@ class TestPipelineRouting:
         assert transport.cards_advanced == 2
         assert transport.homed is True
 
-    def test_no_match_routes_to_reject(self):
-        camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8)])
-        extractor = SequenceExtractor([_unit(500)])  # orthogonal to all refs
-        transport = MockTransport()
+    @pytest.mark.parametrize("vector", [_unit(500), None],
+                             ids=["no-match", "extraction-failure"])
+    def test_unidentified_card_routes_to_reject(self, vector):
+        camera = ArrayCameraSource(_frames())
+        extractor = SequenceExtractor([vector])
 
-        outcomes = _make_pipeline(camera, extractor, transport).run()
+        outcomes = _make_pipeline(camera, extractor, MockTransport()).run()
 
         assert outcomes[0].bin == "reject"
         assert outcomes[0].matched is False
         assert outcomes[0].filename is None
 
-    def test_extraction_failure_routes_to_reject(self):
-        camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8)])
-        extractor = SequenceExtractor([None])
-        transport = MockTransport()
-
-        outcomes = _make_pipeline(camera, extractor, transport).run()
-
-        assert outcomes[0].bin == "reject"
-        assert outcomes[0].matched is False
-
-    def test_unmatched_card_not_captured_by_foil_rule(self, monkeypatch):
-        """An unidentified card must go to reject even if a foil-only rule would match it."""
-        monkeypatch.setattr("lorebook.sorter.pipeline.is_probably_foil", lambda *a, **k: True)
-        camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8)])
+    @pytest.mark.parametrize("rule, foil", [
+        (Rule(bin="foils", foil=True), True),      # foil-only rule
+        (Rule(bin="keep", game="Lorcana"), False),  # game-only catch-all
+    ], ids=["foil-rule", "game-rule"])
+    def test_unmatched_card_not_captured_by_rule(self, monkeypatch, rule, foil):
+        """An unidentified card must go to reject even when a broad rule would match it."""
+        monkeypatch.setattr("lorebook.sorter.pipeline.is_probably_foil", lambda *a, **k: foil)
+        camera = ArrayCameraSource(_frames())
         extractor = SequenceExtractor([_unit(500)])  # orthogonal to all refs → no match
-        transport = MockTransport()
-        rules = SortRules(rules=[Rule(bin="foils", foil=True)], reject_bin="reject")
+        rules = SortRules(rules=[rule], reject_bin="reject")
 
-        pipeline = SortPipeline(
-            camera=camera, transport=transport, extractor=extractor,
-            feature_db=FEATURE_DB, rules=rules, game="Lorcana", threshold=0.7,
-        )
-        outcomes = pipeline.run()
+        outcomes = _make_pipeline(camera, extractor, MockTransport(), rules=rules).run()
 
         assert outcomes[0].matched is False
-        assert outcomes[0].bin == "reject"  # not "foils"
-
-    def test_unmatched_card_not_captured_by_game_rule(self):
-        """A game-only catch-all rule must not swallow unidentified cards."""
-        camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8)])
-        extractor = SequenceExtractor([_unit(500)])
-        transport = MockTransport()
-        rules = SortRules(rules=[Rule(bin="keep", game="Lorcana")], reject_bin="reject")
-
-        pipeline = SortPipeline(
-            camera=camera, transport=transport, extractor=extractor,
-            feature_db=FEATURE_DB, rules=rules, game="Lorcana", threshold=0.7,
-        )
-        assert pipeline.run()[0].bin == "reject"
+        assert outcomes[0].bin == "reject"
 
     def test_foil_rule_applied(self, monkeypatch):
         monkeypatch.setattr("lorebook.sorter.pipeline.is_probably_foil", lambda *a, **k: True)
-        camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8)])
+        camera = ArrayCameraSource(_frames())
         extractor = SequenceExtractor([_unit(0)])
-        transport = MockTransport()
         rules = SortRules(rules=[Rule(bin="foils", foil=True)], reject_bin="reject")
 
-        pipeline = SortPipeline(
-            camera=camera, transport=transport, extractor=extractor,
-            feature_db=FEATURE_DB, rules=rules, game="Lorcana", threshold=0.7,
-        )
-        outcomes = pipeline.run()
+        outcomes = _make_pipeline(camera, extractor, MockTransport(), rules=rules).run()
         assert outcomes[0].bin == "foils"
         assert outcomes[0].is_foil is True
 
     def test_max_cards_limits_run(self):
-        frames = [np.zeros((2, 2, 3), np.uint8) for _ in range(5)]
-        camera = ArrayCameraSource(frames)
+        camera = ArrayCameraSource(_frames(5))
         extractor = SequenceExtractor([_unit(0)] * 5)
-        transport = MockTransport()
 
-        outcomes = _make_pipeline(camera, extractor, transport).run(max_cards=2)
+        outcomes = _make_pipeline(camera, extractor, MockTransport()).run(max_cards=2)
         assert len(outcomes) == 2
 
 
 class TestPipelineCsv:
-    def test_dry_run_does_not_write_csv(self, tmp_path, monkeypatch):
+    def _run(self, tmp_path, monkeypatch, vectors, **kwargs):
+        """Run a pipeline over len(vectors) frames in tmp_path; return outcomes."""
         monkeypatch.chdir(tmp_path)
-        camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8)])
-        extractor = SequenceExtractor([_unit(0)])
-        transport = MockTransport()
+        camera = ArrayCameraSource(_frames(len(vectors)))
+        extractor = SequenceExtractor(vectors)
+        return _make_pipeline(camera, extractor, MockTransport(), **kwargs).run()
 
-        _make_pipeline(camera, extractor, transport, dry_run=True).run()
+    def test_dry_run_does_not_write_csv(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch, [_unit(0)], dry_run=True)
         assert not os.path.exists(tmp_path / "LorcanaList.csv")
 
     def test_no_dry_run_writes_csv(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8)])
-        extractor = SequenceExtractor([_unit(0)])  # → 001-001.webp
-        transport = MockTransport()
+        self._run(tmp_path, monkeypatch, [_unit(0)], dry_run=False)  # → 001-001.webp
 
-        _make_pipeline(camera, extractor, transport, dry_run=False).run()
-
-        csv_path = tmp_path / "LorcanaList.csv"
-        assert csv_path.exists()
-        rows = list(csv.reader(csv_path.open(encoding="utf-8")))
+        rows = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
         assert rows[0] == ["Set Number", "Card Number", "Variant", "Count"]
         assert ["001", "001", "normal", "1"] in rows
 
     def test_repeat_cards_accumulate_in_one_row(self, tmp_path, monkeypatch):
         """Batched CSV writes still record every card, merged into one row."""
-        monkeypatch.chdir(tmp_path)
-        frames = [np.zeros((2, 2, 3), np.uint8) for _ in range(3)]
-        camera = ArrayCameraSource(frames)
-        extractor = SequenceExtractor([_unit(0)] * 3)  # same card three times
-        transport = MockTransport()
-
-        _make_pipeline(camera, extractor, transport, dry_run=False).run()
+        self._run(tmp_path, monkeypatch, [_unit(0)] * 3, dry_run=False)
 
         rows = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
         assert ["001", "001", "normal", "3"] in rows
@@ -220,11 +194,10 @@ class TestPipelineCsv:
     def test_flush_interval_writes_mid_run(self, tmp_path, monkeypatch):
         """The CSV is flushed every csv_flush_interval cards, not only at the end."""
         monkeypatch.chdir(tmp_path)
-        camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8) for _ in range(2)])
+        camera = ArrayCameraSource(_frames(2))
         extractor = SequenceExtractor([_unit(0), _unit(1)])
-        transport = MockTransport()
         pipeline = _make_pipeline(
-            camera, extractor, transport, dry_run=False, csv_flush_interval=1
+            camera, extractor, MockTransport(), dry_run=False, csv_flush_interval=1
         )
 
         pipeline.process_one(camera.read())
@@ -232,17 +205,7 @@ class TestPipelineCsv:
 
     def test_new_game_gets_its_own_csv(self, tmp_path, monkeypatch):
         """A game beyond Lorcana/Riftbound writes <Game>List.csv, not LorcanaList.csv."""
-        monkeypatch.chdir(tmp_path)
-        camera = ArrayCameraSource([np.zeros((2, 2, 3), np.uint8)])
-        extractor = SequenceExtractor([_unit(0)])
-        transport = MockTransport()
-
-        pipeline = SortPipeline(
-            camera=camera, transport=transport, extractor=extractor,
-            feature_db=FEATURE_DB, rules=_multi_bin_rules(), game="Pokemon",
-            threshold=0.7, dry_run=False,
-        )
-        outcomes = pipeline.run()
+        outcomes = self._run(tmp_path, monkeypatch, [_unit(0)], game="Pokemon", dry_run=False)
 
         assert outcomes[0].bin == "bin-1"
         assert not os.path.exists(tmp_path / "LorcanaList.csv")
@@ -251,45 +214,16 @@ class TestPipelineCsv:
 
 
 class TestCropToFocus:
-    def test_crop_enabled_extractor_sees_focus_box(self):
+    @pytest.mark.parametrize("crop", [True, False], ids=["cropped", "full-frame"])
+    def test_extractor_sees_expected_frame(self, crop):
         from lorebook.core.image_utils import focus_rect
 
-        frame = np.zeros((720, 1280, 3), np.uint8)
-        seen = []
-
-        class ShapeExtractor:
-            def extract(self, img):
-                seen.append(img.shape)
-                return _unit(0)
-
-        camera = ArrayCameraSource([frame])
-        pipeline = SortPipeline(
-            camera=camera, transport=MockTransport(), extractor=ShapeExtractor(),
-            feature_db=FEATURE_DB, rules=_multi_bin_rules(), game="Lorcana",
-            threshold=0.7, crop_to_focus=True,
-        )
-        pipeline.run()
+        camera = ArrayCameraSource(_frames(shape=(720, 1280, 3)))
+        extractor = ShapeExtractor()
+        _make_pipeline(camera, extractor, MockTransport(), crop_to_focus=crop).run()
 
         _, _, fw, fh = focus_rect(720, 1280)
-        assert seen == [(fh, fw, 3)]
-
-    def test_crop_disabled_extractor_sees_full_frame(self):
-        frame = np.zeros((720, 1280, 3), np.uint8)
-        seen = []
-
-        class ShapeExtractor:
-            def extract(self, img):
-                seen.append(img.shape)
-                return _unit(0)
-
-        camera = ArrayCameraSource([frame])
-        pipeline = SortPipeline(
-            camera=camera, transport=MockTransport(), extractor=ShapeExtractor(),
-            feature_db=FEATURE_DB, rules=_multi_bin_rules(), game="Lorcana",
-            threshold=0.7,
-        )
-        pipeline.run()
-        assert seen == [(720, 1280, 3)]
+        assert extractor.shapes == [(fh, fw, 3) if crop else (720, 1280, 3)]
 
 
 class TestMockCameraSource:
