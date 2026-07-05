@@ -487,6 +487,14 @@ class TestWriteRows4Col:
         assert len(reader) == 1
         assert reader[0] == ["Set Number", "Card Number", "Variant", "Count"]
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+    def test_preserves_existing_file_mode(self, tmp_path):
+        p = tmp_path / "out.csv"
+        _write_rows_4col(str(p), [["001", "001", "normal", "1"]])
+        os.chmod(p, 0o640)
+        _write_rows_4col(str(p), [["001", "001", "normal", "2"]])
+        assert (os.stat(p).st_mode & 0o777) == 0o640
+
     def test_leaves_no_temp_files_behind(self, tmp_path):
         p = tmp_path / "out.csv"
         _write_rows_4col(str(p), [["001", "001", "normal", "1"]])

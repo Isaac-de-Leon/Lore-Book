@@ -118,6 +118,20 @@ class MainWindow(QWidget):
             self.logger.error(f"Error getting active game: {e}")
         return None
 
+    def load_game_database(self, game_name: str) -> bool:
+        """
+        Make game_name the active database: load its feature cache and rebuild
+        the match index. The single place that owns the featureDB/_match_index/
+        _loaded_game invariant — every game switch must go through here.
+        Returns True if the loaded cache has entries.
+        """
+        set_database_path(game_name)
+        self.featureDB = load_cache()
+        self._match_index = MatchIndex(self.featureDB)
+        self._loaded_game = game_name if self.featureDB else None
+        self.logger.info(f"Loaded {len(self.featureDB)} entries for {game_name}")
+        return bool(self.featureDB)
+
     # ------------------------------------------------------------------ init
 
     def __init__(self):
@@ -613,11 +627,7 @@ class MainWindow(QWidget):
 
         # Reload featureDB only when the active game changed (or after a rebuild)
         if self._loaded_game != active_game or not self.featureDB:
-            set_database_path(active_game)
-            self.featureDB = load_cache()
-            self._match_index = MatchIndex(self.featureDB)
-            self._loaded_game = active_game if self.featureDB else None
-            self.logger.info(f"Loaded {len(self.featureDB)} entries for {active_game}")
+            self.load_game_database(active_game)
         if not self.featureDB:
             self.match_label.setText("No feature database found. Build the DB first.")
             self.add_csv_btn.setEnabled(False)

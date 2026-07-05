@@ -3,6 +3,7 @@
 import csv
 import logging
 import os
+import stat
 import tempfile
 from typing import List, Optional, Tuple
 
@@ -106,8 +107,18 @@ def _write_rows_4col(csv_path: str, rows: List[List[str]]) -> None:
     target, so a crash mid-write can't destroy the existing collection file.
     """
     directory = os.path.dirname(os.path.abspath(csv_path))
+    # mkstemp creates the file 0600; carry over the target's existing mode (or
+    # a normal umask-honoring mode for new files) so os.replace doesn't
+    # silently tighten the CSV's permissions.
+    try:
+        mode = stat.S_IMODE(os.stat(csv_path).st_mode)
+    except OSError:
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
     fd, tmp_path = tempfile.mkstemp(prefix=os.path.basename(csv_path) + ".", suffix=".tmp", dir=directory)
     try:
+        os.chmod(tmp_path, mode)
         with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["Set Number", "Card Number", "Variant", "Count"])

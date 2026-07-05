@@ -109,8 +109,10 @@ def build_feature_database(
         current_files = _list_image_files(resolved)
 
         # Prune cache entries for deleted/renamed images so they can't keep
-        # matching against cards that no longer exist.
-        stale = sorted(set(featureDB) - set(current_files))
+        # matching against cards that no longer exist. Only when the folder
+        # itself exists — a missing folder (typo'd path, unmounted drive)
+        # must not be read as "every image was deleted" and wipe the cache.
+        stale = sorted(set(featureDB) - set(current_files)) if os.path.isdir(resolved) else []
         if stale:
             for name in stale:
                 featureDB.pop(name, None)

@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from lorebook.core.card_database import load_cache, set_database_path
 from lorebook.core.csv_manager import get_available_sets
 from lorebook.core.game_types import BASE_DATABASE_PATH
 from lorebook.ui.styles import APP_STYLESHEET
@@ -184,14 +183,11 @@ class SettingsWindow(QDialog):
         parent.selected_games = selected_games
         parent.selected_sets = selected_sets
 
-        # Load the first selected game's database
+        # Load the first selected game's database (rebuilds the match index
+        # and keeps MainWindow's cache tracker in sync)
         for game_name, is_selected in selected_games.items():
             if is_selected:
-                game_folder = game_name.capitalize()
-                set_database_path(game_folder)
-                parent.featureDB = load_cache()
-                # Keep MainWindow's per-game cache tracker in sync
-                parent._loaded_game = game_folder if parent.featureDB else None
+                parent.load_game_database(game_name.capitalize())
                 break
 
         parent.save_settings()

@@ -38,6 +38,18 @@ class TestStaleCachePruning:
         reloaded = load_cache(str(images))
         assert set(reloaded) == {"001-001.webp"}  # and from the SQLite cache
 
+    def test_missing_folder_does_not_wipe_cache(self, tmp_path, monkeypatch):
+        # A typo'd/unmounted db_path must be a no-op, not "all images deleted".
+        monkeypatch.chdir(tmp_path)
+        missing = tmp_path / "Lorcana"  # never created
+        cache_file = _cache_path(str(missing))
+        _seed_cache(cache_file, ["001-001.webp", "001-002.webp"])
+
+        db = build_feature_database(db_path=str(missing))
+
+        assert set(db) == {"001-001.webp", "001-002.webp"}
+        assert set(load_cache(str(missing))) == {"001-001.webp", "001-002.webp"}
+
     def test_build_without_stale_entries_is_unchanged(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         images = tmp_path / "Lorcana"
