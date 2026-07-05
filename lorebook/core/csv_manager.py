@@ -8,7 +8,6 @@ import tempfile
 from typing import List, Optional, Tuple
 
 from lorebook.core.game_types import (
-    BASE_DATABASE_PATH,
     LORCANA_CSV,
     RIFTBOUND_CSV,
     GameType,

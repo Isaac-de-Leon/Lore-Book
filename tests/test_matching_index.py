@@ -2,7 +2,6 @@
 # MatchIndex must agree with the reference find_best_matches implementation.
 
 import numpy as np
-import pytest
 
 from lorebook.core.matching import MatchIndex, _l2_normalize, find_best_matches
 
