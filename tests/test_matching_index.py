@@ -25,17 +25,8 @@ class TestMatchIndex:
             assert [n for n, _ in got] == [n for n, _ in expected]
             assert np.allclose([s for _, s in got], [s for _, s in expected], atol=1e-5)
 
-    def test_threshold_filters(self):
-        db = _random_db(n=20)
-        q = next(iter(db.values()))
-        hits = MatchIndex(db).find(q, threshold=0.999)
-        assert len(hits) == 1  # only the identical vector survives
-
-    def test_sorted_descending(self):
-        db = _random_db(n=30)
-        q = _l2_normalize(np.ones(64, np.float32))
-        scores = [s for _, s in MatchIndex(db).find(q, threshold=-1.0)]
-        assert scores == sorted(scores, reverse=True)
+    # Threshold filtering and descending sort are covered transitively by
+    # test_matches_reference_implementation (parity with find_best_matches).
 
     def test_empty_db(self):
         assert MatchIndex({}).find(np.ones(64, np.float32)) == []

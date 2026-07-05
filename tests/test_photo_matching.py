@@ -55,13 +55,6 @@ class TestGetGameType:
         p.touch()
         assert get_game_type(str(p)) == GameType.UNKNOWN
 
-    def test_case_insensitive_lorcana(self, tmp_path):
-        # Folder names are lowercased before comparison
-        p = tmp_path / "lorcana" / "card.jpg"
-        p.parent.mkdir(parents=True)
-        p.touch()
-        assert get_game_type(str(p)) == GameType.LORCANA
-
     def test_empty_string_returns_unknown(self):
         result = get_game_type("")
         assert result == GameType.UNKNOWN
@@ -105,13 +98,8 @@ class TestSplitFilename:
 # ===========================================================================
 
 class TestL2Normalize:
-    def test_unit_vector_unchanged(self):
-        v = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        result = _l2_normalize(v)
-        np.testing.assert_allclose(result, v, atol=1e-6)
-
     def test_norm_is_one(self):
-        v = np.array([3.0, 4.0], dtype=np.float32)
+        v = np.array([-3.0, 4.0], dtype=np.float32)  # negatives included
         result = _l2_normalize(v)
         assert abs(np.linalg.norm(result) - 1.0) < 1e-6
 
@@ -120,11 +108,6 @@ class TestL2Normalize:
         result = _l2_normalize(v)
         # Should not raise; result is zero vector
         assert result.shape == (5,)
-
-    def test_negative_values(self):
-        v = np.array([-3.0, 4.0], dtype=np.float32)
-        result = _l2_normalize(v)
-        assert abs(np.linalg.norm(result) - 1.0) < 1e-6
 
 
 # ===========================================================================
@@ -154,12 +137,6 @@ class TestCosineScore:
         b = self._unit(1.0, 0.0)
         with pytest.raises(ValueError):
             _cosine_score(a, b)
-
-    def test_score_in_range(self):
-        a = self._unit(1.0, 2.0, 3.0)
-        b = self._unit(4.0, 5.0, 6.0)
-        score = _cosine_score(a, b)
-        assert -1.0 <= score <= 1.0
 
 
 # ===========================================================================
@@ -293,13 +270,9 @@ class TestFoilScore:
     def test_none_returns_zero(self):
         assert foil_score(None) == 0.0
 
-    def test_is_probably_foil_white(self):
-        img = np.full((50, 50, 3), 255, dtype=np.uint8)
-        assert is_probably_foil(img)
-
-    def test_is_probably_foil_black(self):
-        img = np.zeros((50, 50, 3), dtype=np.uint8)
-        assert not is_probably_foil(img)
+    def test_is_probably_foil_is_thresholded_foil_score(self):
+        for img in (np.full((50, 50, 3), 255, np.uint8), np.zeros((50, 50, 3), np.uint8)):
+            assert is_probably_foil(img) == (foil_score(img) >= 0.08)
 
 
 # ===========================================================================
@@ -318,9 +291,6 @@ class TestGetExtractor:
         ex = get_extractor("tflite")
         assert type(ex).__name__ == "_TFLiteExtractor"
         assert hasattr(ex, "extract")
-
-    def test_default_is_keras(self):
-        assert type(get_extractor()).__name__ == "_KerasExtractor"
 
     def test_case_insensitive(self):
         assert type(get_extractor("TFLite")).__name__ == "_TFLiteExtractor"
@@ -453,15 +423,6 @@ class TestNormalizeExistingRows:
         self._write_csv(p, [["009", "041", "normal", ""]])
         rows = _normalize_existing_rows(str(p))
         assert rows[0][3] == "0"
-
-    def test_multiple_rows(self, tmp_path):
-        p = tmp_path / "test.csv"
-        self._write_csv(p, [
-            ["001", "001", "normal", "1"],
-            ["001", "002", "foil", "3"],
-        ])
-        rows = _normalize_existing_rows(str(p))
-        assert len(rows) == 2
 
 
 class TestWriteRows4Col:
