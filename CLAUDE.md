@@ -177,6 +177,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 | `keep_foil_checked` | bool | Pre-check the Foil checkbox after each scan |
 | `rotate_display` | bool | Rotate camera preview 180° |
 | `crop_to_focus` | bool | Crop the capture to the on-screen focus box before matching |
+| `auto_scan` | bool | Scan automatically when a card settles in the focus box (`MotionGate`) |
 | `debug_mode` | bool | Overlay activation heatmap on the matched card image |
 | `selected_games` | object | Which games are active (`{"lorcana": true, "riftbound": false}`) |
 | `selected_sets` | object | Which set codes to search within each game |

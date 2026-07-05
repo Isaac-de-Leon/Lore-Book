@@ -41,6 +41,60 @@ def crop_to_card(img_bgr: Optional[np.ndarray], height_frac: float = 0.6) -> Opt
     return img_bgr
 
 
+class MotionGate:
+    """
+    Fires once per card placed under the camera.
+
+    Feed one small grayscale frame per tick; update() returns True exactly
+    once when the scene has changed (motion: a card being placed) and then
+    stayed steady for steady_frames consecutive ticks. It re-arms only after
+    motion is seen again, so a card left in place never re-triggers.
+
+    min_std (0 = disabled) suppresses triggers on near-uniform frames, so
+    removing a card from a plain background doesn't fire a wasted scan of the
+    empty scene; a textured background degrades gracefully to firing anyway.
+
+    Pure numpy — used by the GUI's auto-scan mode and reusable by the sorter
+    for card-presence detection later.
+    """
+
+    def __init__(self, steady_frames: int = 10, diff_threshold: float = 4.0,
+                 min_std: float = 0.0):
+        self.steady_frames = max(1, steady_frames)
+        self.diff_threshold = diff_threshold
+        self.min_std = min_std
+        self._prev: Optional[np.ndarray] = None
+        self._steady = 0
+        self._armed = False  # motion must be seen before a trigger
+
+    def reset(self) -> None:
+        self._prev, self._steady, self._armed = None, 0, False
+
+    def update(self, gray: Optional[np.ndarray]) -> bool:
+        """Feed the next frame; True exactly when a fresh card has settled."""
+        if gray is None or np.size(gray) == 0:
+            return False
+        gray = np.asarray(gray, dtype=np.float32)
+        if self._prev is None or self._prev.shape != gray.shape:
+            self._prev = gray
+            return False
+        diff = float(np.mean(np.abs(gray - self._prev)))
+        self._prev = gray
+
+        if diff >= self.diff_threshold:
+            self._armed = True
+            self._steady = 0
+            return False
+        if not self._armed:
+            return False
+        self._steady += 1
+        if self._steady < self.steady_frames:
+            return False
+        self._armed = False
+        self._steady = 0
+        return float(np.std(gray)) >= self.min_std
+
+
 def ensure_valid_image(img_bgr: Optional[np.ndarray]) -> Optional[np.ndarray]:
     """Validate and normalize an input image to 3-channel BGR format."""
     if img_bgr is None or img_bgr.size == 0:

@@ -29,7 +29,7 @@ from PhotoMatching import (
 )
 from lorebook.core.card_database import _cache_path
 from lorebook.core.features import _check_tflite_input_dtype
-from lorebook.core.image_utils import CARD_ASPECT, crop_to_card, focus_rect
+from lorebook.core.image_utils import CARD_ASPECT, MotionGate, crop_to_card, focus_rect
 
 
 # ===========================================================================
@@ -251,6 +251,48 @@ class TestFocusRectAndCrop:
 
     def test_none_passthrough(self):
         assert crop_to_card(None) is None
+
+
+class TestMotionGate:
+    # High-variance "card" frame vs uniform "empty mat" frame.
+    _card = (np.arange(64, dtype=np.float32).reshape(8, 8) * 3)
+    _empty = np.zeros((8, 8), np.float32)
+
+    def _settle(self, gate, frame, n):
+        return [gate.update(frame) for _ in range(n)]
+
+    def test_fires_exactly_once_when_card_settles(self):
+        gate = MotionGate(steady_frames=3, diff_threshold=5.0)
+        self._settle(gate, self._empty, 2)              # prime; steady but unarmed
+        assert gate.update(self._card) is False        # motion (card placed) arms
+        assert self._settle(gate, self._card, 3) == [False, False, True]
+        assert not any(self._settle(gate, self._card, 10))  # sitting card never re-fires
+
+    def test_rearms_for_the_next_card(self):
+        gate = MotionGate(steady_frames=2, diff_threshold=5.0)
+        gate.update(self._empty)
+        gate.update(self._card)                         # place card 1
+        assert self._settle(gate, self._card, 2)[-1] is True
+        gate.update(self._empty)                        # remove (motion re-arms)
+        gate.update(self._card)                         # place card 2
+        assert self._settle(gate, self._card, 2)[-1] is True
+
+    def test_min_std_suppresses_empty_scene_trigger(self):
+        gate = MotionGate(steady_frames=2, diff_threshold=5.0, min_std=10.0)
+        gate.update(self._card)
+        gate.update(self._empty)                        # card removed → motion arms
+        assert not any(self._settle(gate, self._empty, 6))  # empty mat: no trigger
+
+    def test_constant_motion_never_fires(self):
+        gate = MotionGate(steady_frames=2, diff_threshold=5.0)
+        frames = [np.full((8, 8), v, np.float32) for v in (0, 50, 100, 150, 200)]
+        assert not any(gate.update(f) for f in frames)
+
+    def test_shape_change_and_none_are_safe(self):
+        gate = MotionGate(steady_frames=1, diff_threshold=5.0)
+        assert gate.update(None) is False
+        gate.update(self._empty)
+        assert gate.update(np.zeros((4, 4), np.float32)) is False  # re-primes
 
 
 class TestFoilScore:

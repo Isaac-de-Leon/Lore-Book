@@ -65,6 +65,10 @@ class SettingsWindow(QDialog):
         self.crop_checkbox.setChecked(getattr(parent, "crop_to_focus", True))
         layout.addRow(self.crop_checkbox)
 
+        self.auto_scan_checkbox = QCheckBox("Auto-scan when a card settles in the focus box")
+        self.auto_scan_checkbox.setChecked(getattr(parent, "auto_scan", False))
+        layout.addRow(self.auto_scan_checkbox)
+
         self.confidence_input = QLineEdit(
             str(int(100 * getattr(parent, "confidence_threshold", 0.90)))
         )
@@ -147,6 +151,7 @@ class SettingsWindow(QDialog):
         parent.keep_foil_checked = self.keep_foil_checked.isChecked()
         parent.rotate_display = self.rotate_checkbox.isChecked()
         parent.crop_to_focus = self.crop_checkbox.isChecked()
+        parent.auto_scan = self.auto_scan_checkbox.isChecked()
         parent.debug_mode = self.debug_mode_checkbox.isChecked()
         parent.camera_index = self.camera_combo.currentData()
 

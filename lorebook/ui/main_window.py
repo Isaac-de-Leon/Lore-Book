@@ -36,7 +36,7 @@ from lorebook.core.card_names import name_for
 from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
-from lorebook.core.image_utils import crop_to_card, focus_rect, is_probably_foil
+from lorebook.core.image_utils import MotionGate, crop_to_card, focus_rect, is_probably_foil
 from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import open_capture
 from lorebook.ui.settings_window import SettingsWindow
@@ -158,6 +158,9 @@ class MainWindow(QWidget):
         self.camera_index = 0
         self.rotate_display = False
         self.crop_to_focus = True
+        self.auto_scan = False
+        # min_std suppresses triggers on an empty (near-uniform) focus box
+        self._motion_gate = MotionGate(min_std=12.0)
 
         self.cap: Optional[cv2.VideoCapture] = None
         self.last_frame: Optional[np.ndarray] = None
@@ -356,6 +359,7 @@ class MainWindow(QWidget):
             "selected_sets": {"lorcana": [], "riftbound": []},
             "rotate_display": False,
             "crop_to_focus": True,
+            "auto_scan": False,
         }
 
         def apply_defaults():
@@ -407,6 +411,7 @@ class MainWindow(QWidget):
             "selected_sets": getattr(self, "selected_sets", {}),
             "rotate_display": self.rotate_display,
             "crop_to_focus": self.crop_to_focus,
+            "auto_scan": self.auto_scan,
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -586,6 +591,11 @@ class MainWindow(QWidget):
             if self.rotate_display:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
             self.last_frame = frame.copy()
+
+            if self.auto_scan:
+                small = cv2.resize(crop_to_card(frame), (64, 64), interpolation=cv2.INTER_AREA)
+                if self._motion_gate.update(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)):
+                    self.capture_and_match()
 
             overlay = frame.copy()
             h, w = overlay.shape[:2]
