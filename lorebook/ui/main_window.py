@@ -32,6 +32,7 @@ from lorebook.core.card_database import (
     load_cache,
     set_database_path,
 )
+from lorebook.core.card_names import name_for
 from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
@@ -674,14 +675,16 @@ class MainWindow(QWidget):
         fname, score = self.last_matches[idx]
 
         set_code, card_code = split_filename(fname)
-        self.match_name_label.setText(f"{set_code}-{card_code}" if set_code else fname)
+        active_game = self.get_active_game()
+        code = f"{set_code}-{card_code}" if set_code else fname
+        card_name = name_for(set_code, card_code, active_game) if active_game else None
+        self.match_name_label.setText(f"{card_name}  ·  {code}" if card_name else code)
         self.match_detail_label.setText(
             f"Set {set_code}  ·  {score:.1%} match" if set_code else f"{score:.1%} match"
         )
         self.match_pos_label.setText(f"{idx + 1} / {len(self.last_matches)}")
         self.match_label.setText(f"{score:.3f}  {fname}")
 
-        active_game = self.get_active_game()
         if active_game:
             match_path = os.path.join("Card_Images", active_game, fname)
             img = cv2.imread(match_path, cv2.IMREAD_COLOR)
