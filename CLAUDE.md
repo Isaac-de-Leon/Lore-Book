@@ -19,10 +19,11 @@ Lore-Book/
 ├── lorebook/              # Importable package
 │   ├── core/              # Game-agnostic logic (no Qt)
 │   │   ├── game_types.py      # GameType enum, get_game_type, csv_for_game, constants
-│   │   ├── image_utils.py     # ensure_valid_image, foil_score, focus_rect/crop_to_card
+│   │   ├── image_utils.py     # ensure_valid_image, foil_score, focus_rect/crop_to_card, MotionGate
 │   │   ├── matching.py        # L2-normalize, cosine similarity, find_best_matches, MatchIndex
-│   │   ├── features.py        # get_extractor("keras"|"tflite"), extract_features, heatmap
+│   │   ├── features.py        # get_extractor("keras"|"tflite"), extract_features(+_batch), heatmap
 │   │   ├── card_database.py   # Feature cache build/load, set_database_path
+│   │   ├── card_names.py      # Optional card-name lookup (card_names_<Game>.json)
 │   │   └── csv_manager.py     # CSV read/write, update_cardlist(_batch), split_filename
 │   ├── hardware/          # Hardware abstraction (no Qt; mocks run on any desktop)
 │   │   ├── camera.py          # open_capture, CameraSource, OpenCVCameraSource, MockCameraSource
@@ -42,8 +43,10 @@ Lore-Book/
 │   └── sort_rules.example.json # Example multi-bin sort rules
 ├── scripts/
 │   ├── convert_to_tflite.py    # Export the feature model → mobilenetv2_features.tflite
-│   └── check_parity.py         # Verify keras vs tflite vectors agree
+│   ├── check_parity.py         # Verify keras vs tflite vectors agree
+│   └── fetch_card_names.py     # Download card names → card_names_<Game>.json (gitignored)
 ├── docs/
+│   ├── MATCHING.md             # How recognition works (pipeline, thresholds)
 │   └── SORTER_ROADMAP.md       # Phased plan for the physical sorter
 │
 ├── Card_Images/
@@ -60,6 +63,7 @@ Lore-Book/
     ├── test_photo_matching.py
     ├── test_matching_index.py
     ├── test_card_database.py
+    ├── test_card_names.py
     ├── test_camera.py
     ├── test_sorter_rules.py
     └── test_sorter_pipeline.py
@@ -70,7 +74,8 @@ Lore-Book/
 | File | What it owns |
 |------|-------------|
 | `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, constants |
-| `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop) |
+| `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` (auto-scan) |
+| `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
 | `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
 | `lorebook/core/features.py` | `get_extractor(backend)` (keras/tflite), `extract_features`, `visualize_activation_overlay` |
 | `lorebook/core/card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
@@ -201,7 +206,8 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 - **Add a feature** — edit the relevant module under `lorebook/core/` for logic, `lorebook/ui/` for UI wiring, `lorebook/sorter/`/`lorebook/hardware/` for the headless sorter.
 - **Fix a CSV parsing bug** — see `_normalize_existing_rows()` and `_write_rows_4col()` in `lorebook/core/csv_manager.py`.
 - **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()` (`lorebook/core/image_utils.py`).
-- **Change match threshold** — core default is `0.70` in `find_best_matches()` / `MatchIndex.find()` (`lorebook/core/matching.py`); the GUI ships a stricter `0.90` default, exposed in Settings as confidence %.
+- **Change match threshold** — core default is `0.70` in `find_best_matches()` / `MatchIndex.find()` (`lorebook/core/matching.py`); the GUI ships a stricter `0.90` default, exposed in Settings as confidence %. See `docs/MATCHING.md` for how the whole pipeline fits together.
+- **Show card names** — run `python scripts/fetch_card_names.py --game <Game>` once; the GUI/sorter pick up `card_names_<Game>.json` automatically (display-only, never written to the CSV).
 - **Change sort routing** — edit the rules JSON (see `configs/sort_rules.example.json`); the engine is `decide_bin()` in `lorebook/sorter/rules.py`. Unmatched cards always go to `reject_bin`.
 - **Implement the real transport** — subclass `Transport` (`lorebook/hardware/transport.py`); the pipeline needs `route_to_bin`, `advance`, `home`.
 - **Cache issues** — delete `DBCardCache_<game>.db` and rebuild with `--build` flag.

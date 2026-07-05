@@ -77,12 +77,23 @@ class MainWindow(QWidget):
     Main application window.
 
     Responsibilities:
-    - Live camera preview with focus-box overlay
+    - Live camera preview with focus-box overlay (optional auto-scan)
     - On-demand card scan: feature extraction → DB match → display results
     - Previous / Next navigation across top matches
-    - One-click "Add to card list" writing to the appropriate CSV
+    - One-click "Add to card list" writing to the appropriate CSV (with Undo)
     - Background DB build with progress bar
     - Settings persistence via ui_settings.json
+
+    Threading rules
+    ---------------
+    The DB build runs in one background daemon thread
+    (_build_all_games_worker). From any non-main thread, the ONLY permitted
+    interactions with this object are:
+      - writing the plain attribute ``_db_progress_pct`` (polled by a QTimer)
+      - emitting the ``build_status`` / ``build_done`` signals (Qt delivers
+        them on the main thread)
+    Everything else — widgets, featureDB/_match_index, settings, the
+    set_database_path global — is main-thread-only.
     """
 
     logger = logging.getLogger("MainWindow")

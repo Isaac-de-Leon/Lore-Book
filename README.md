@@ -62,4 +62,4 @@ python -m pytest tests/ -v
 
 ## More
 
-Architecture, settings reference, and contributor guidance live in [CLAUDE.md](CLAUDE.md); the physical-sorter plan is in [docs/SORTER_ROADMAP.md](docs/SORTER_ROADMAP.md).
+Architecture, settings reference, and contributor guidance live in [CLAUDE.md](CLAUDE.md); how recognition works is explained in [docs/MATCHING.md](docs/MATCHING.md); the physical-sorter plan is in [docs/SORTER_ROADMAP.md](docs/SORTER_ROADMAP.md).
