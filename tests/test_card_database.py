@@ -2,14 +2,29 @@
 
 import sqlite3
 
+import cv2
 import numpy as np
 
+import lorebook.core.card_database as card_database
 from lorebook.core.card_database import (
     _cache_path,
     _init_db,
     build_feature_database,
     load_cache,
 )
+
+
+class RecordingExtractor:
+    """Stub extract_batch: records chunk sizes, returns a unit vector per image."""
+
+    def __init__(self):
+        self.batch_sizes = []
+
+    def extract_batch(self, images):
+        self.batch_sizes.append(len(images))
+        vec = np.zeros(4, np.float32)
+        vec[0] = 1.0
+        return [vec.copy() for _ in images]
 
 
 def _seed_cache(cache_file, names, dim=4):
@@ -19,6 +34,43 @@ def _seed_cache(cache_file, names, dim=4):
             "INSERT OR REPLACE INTO features (filename, vector) VALUES (?, ?)",
             [(n, np.ones(dim, dtype=np.float32).tobytes()) for n in names],
         )
+
+
+class TestBatchedBuild:
+    def _make_images(self, folder, n):
+        folder.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            cv2.imwrite(str(folder / f"001-{i:03d}.png"), np.zeros((4, 4, 3), np.uint8))
+
+    def test_build_extracts_in_chunks_and_caches(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(card_database, "_BATCH_SIZE", 2)
+        images = tmp_path / "Lorcana"
+        self._make_images(images, 5)
+
+        extractor = RecordingExtractor()
+        progress = []
+        db = build_feature_database(
+            progress_callback=lambda pct, fname: progress.append(pct),
+            db_path=str(images),
+            extractor=extractor,
+        )
+
+        assert len(db) == 5
+        assert extractor.batch_sizes == [2, 2, 1]
+        assert progress[-1] == 100
+        assert set(load_cache(str(images))) == set(db)
+
+    def test_unreadable_image_skipped_not_fatal(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        images = tmp_path / "Lorcana"
+        self._make_images(images, 1)
+        (images / "001-999.png").write_text("not an image")
+
+        db = build_feature_database(db_path=str(images), extractor=RecordingExtractor())
+
+        assert "001-000.webp" not in db  # sanity: names come from real files
+        assert set(db) == {"001-000.png"}
 
 
 class TestStaleCachePruning:

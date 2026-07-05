@@ -15,7 +15,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 import logging
 import warnings
-from typing import Optional, Union
+from typing import List, Optional, Sequence, Union
 
 import cv2
 import numpy as np
@@ -129,6 +129,34 @@ class _KerasExtractor:
             logging.error(f"Error extracting features (keras): {e}")
             return None
 
+    def extract_batch(self, images: Sequence) -> List[Optional[np.ndarray]]:
+        """
+        Extract features for many images with a single predict call.
+
+        Returns one vector (or None for unreadable/invalid inputs) per input,
+        in order. This is the DB-build fast path: Keras predict overhead is
+        paid once per batch instead of once per card, and inference stays on
+        one thread (concurrent predicts on a shared model are not guaranteed
+        thread-safe).
+        """
+        results: List[Optional[np.ndarray]] = [None] * len(images)
+        rows, positions = [], []
+        for i, img in enumerate(images):
+            batch = _preprocess_to_batch(img)
+            if batch is not None:
+                rows.append(batch[0])
+                positions.append(i)
+        if not rows:
+            return results
+        try:
+            feat_model, _ = _get_models()
+            features = feat_model.predict(np.stack(rows), verbose=0)
+            for pos, row in zip(positions, features):
+                results[pos] = _finalize(row)
+        except Exception as e:
+            logging.error(f"Error extracting batch features (keras): {e}")
+        return results
+
 
 def _check_tflite_input_dtype(dtype, model_path: str) -> None:
     """
@@ -202,6 +230,11 @@ class _TFLiteExtractor:
         except Exception as e:
             logging.error(f"Error extracting features (tflite): {e}")
             return None
+
+    def extract_batch(self, images: Sequence) -> List[Optional[np.ndarray]]:
+        """API parity with the keras extractor; the tflite interpreter is
+        fixed at batch size 1, so this is a plain loop (no speedup)."""
+        return [self.extract(img) for img in images]
 
 
 _extractors: dict = {}
