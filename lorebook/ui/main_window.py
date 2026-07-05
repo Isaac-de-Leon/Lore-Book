@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QIntValidator, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -85,6 +85,10 @@ class MainWindow(QWidget):
     """
 
     logger = logging.getLogger("MainWindow")
+
+    # Top-2 score gap below which a match is flagged as ambiguous (foil
+    # variants, reprints, and alt arts often score within a couple percent).
+    AMBIGUOUS_GAP = 0.02
 
     # Signals for marshalling background-thread updates onto the main thread.
     build_status = Signal(str)      # status text for the status label
@@ -240,6 +244,7 @@ class MainWindow(QWidget):
 
         self.count_edit = QLineEdit("1")
         self.count_edit.setFixedWidth(48)
+        self.count_edit.setValidator(QIntValidator(1, 999, self))
 
         self.add_csv_btn = QPushButton("+ Add to Collection")
         self.add_csv_btn.setObjectName("addBtn")
@@ -653,6 +658,13 @@ class MainWindow(QWidget):
         self._show_match_at(0)
         self.add_csv_btn.setEnabled(True)
 
+        # After _show_match_at so the warning isn't overwritten by its label text.
+        if len(matches) >= 2 and (matches[0][1] - matches[1][1]) < self.AMBIGUOUS_GAP:
+            self.match_label.setText(
+                f"⚠ Close match ({matches[0][1]:.1%} vs {matches[1][1]:.1%}) — "
+                "check alternatives with A/D before adding."
+            )
+
     def _show_match_at(self, idx: int) -> None:
         """Display the match at position idx in the result panel."""
         if not self.last_matches:
@@ -722,8 +734,13 @@ class MainWindow(QWidget):
         fname = self.last_matches[self.current_match_idx][0]
         try:
             cnt = int(self.count_edit.text())
-        except Exception:
-            cnt = 1
+        except ValueError:
+            cnt = 0
+        if cnt < 1:
+            # Refuse rather than silently adding 1 — a typo'd count ("1o",
+            # empty field) must not corrupt the collection.
+            self.set_status("Invalid count — enter a number from 1 to 999.", is_error=True)
+            return
         is_foil = self.foil_check.isChecked()
 
         active_game = self.get_active_game() or "Lorcana"

@@ -157,7 +157,8 @@ def update_cardlist_batch(
     for matchedFilename, is_foil, count in cards:
         try:
             count = int(count)
-        except Exception:
+        except (TypeError, ValueError):
+            logging.warning(f"Non-numeric count {count!r} for {matchedFilename}; recording 1")
             count = 1
         if count < 1:
             continue
