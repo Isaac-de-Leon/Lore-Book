@@ -170,6 +170,7 @@ class MainWindow(QWidget):
 
         self.last_matches: List[Tuple[str, float]] = []
         self.current_match_idx: int = 0
+        self._last_add: Optional[Tuple[str, bool, int, str]] = None  # (fname, foil, count, game)
 
         self.load_settings()
 
@@ -255,6 +256,10 @@ class MainWindow(QWidget):
         self.add_csv_btn.clicked.connect(self.add_to_csv)
         self.add_csv_btn.setEnabled(False)
 
+        self.undo_btn = QPushButton("Undo")
+        self.undo_btn.clicked.connect(self.undo_last_add)
+        self.undo_btn.setEnabled(False)
+
         self.csv_status = QLabel("")
         self.csv_status.setObjectName("statusLabel")
 
@@ -265,6 +270,7 @@ class MainWindow(QWidget):
         actions_row.addWidget(QLabel("×"))
         actions_row.addWidget(self.count_edit)
         actions_row.addWidget(self.add_csv_btn)
+        actions_row.addWidget(self.undo_btn)
         actions_row.addStretch()
         actions_row.addWidget(self.csv_status)
 
@@ -337,8 +343,8 @@ class MainWindow(QWidget):
         self._setup_tooltips()
         for widget in [
             self.capture_btn, self.start_btn, self.stop_btn,
-            self.settings_btn, self.add_csv_btn, self.prev_btn,
-            self.next_btn, self.foil_check,
+            self.settings_btn, self.add_csv_btn, self.undo_btn,
+            self.prev_btn, self.next_btn, self.foil_check,
         ]:
             widget.setFocusPolicy(Qt.NoFocus)
         self.count_edit.setFocusPolicy(Qt.StrongFocus)
@@ -760,8 +766,20 @@ class MainWindow(QWidget):
         target_file = csv_for_game(active_game)
 
         update_cardlist(fname, is_foil, cnt, game=active_game)
+        self._last_add = (fname, is_foil, cnt, active_game)
+        self.undo_btn.setEnabled(True)
         self.set_status(f"Added {cnt}× {fname} to {target_file}")
         self.add_csv_btn.setEnabled(False)
+
+    def undo_last_add(self) -> None:
+        """Reverse the most recent Add (single-level undo)."""
+        if not self._last_add:
+            return
+        fname, is_foil, cnt, game = self._last_add
+        update_cardlist(fname, is_foil, -cnt, game=game, allow_negative=True)
+        self._last_add = None
+        self.undo_btn.setEnabled(False)
+        self.set_status(f"Removed {cnt}× {fname}")
 
     # ------------------------------------------------------------------ display helpers
 
@@ -818,6 +836,8 @@ class MainWindow(QWidget):
         elif key == Qt.Key_S and (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
             if self.add_csv_btn.isEnabled():
                 self.add_to_csv()
+        elif key == Qt.Key_Z and (event.modifiers() & Qt.ControlModifier):
+            self.undo_last_add()
         elif key == Qt.Key_A:
             self.prev_match()
         elif key == Qt.Key_D:
@@ -830,6 +850,7 @@ class MainWindow(QWidget):
     def _setup_tooltips(self):
         self.capture_btn.setToolTip("Scan Card (C)")
         self.add_csv_btn.setToolTip("Add to Collection (Ctrl+S or Alt+S)")
+        self.undo_btn.setToolTip("Undo last add (Ctrl+Z)")
         self.prev_btn.setToolTip("Previous match (A)")
         self.next_btn.setToolTip("Next match (D)")
         self.foil_check.setToolTip("Toggle Foil (F)")

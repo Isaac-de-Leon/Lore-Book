@@ -397,6 +397,36 @@ class TestUpdateCardlistGameRouting:
         assert ["001", "042", "foil", "1"] in rows
 
 
+class TestNegativeCounts:
+    def _rows(self, tmp_path):
+        return list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
+
+    def test_negative_decrements_with_allow_negative(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, count=3, game="Lorcana")
+        update_cardlist("001-042.webp", is_foil=False, count=-2, game="Lorcana", allow_negative=True)
+        assert ["001", "042", "normal", "1"] in self._rows(tmp_path)
+
+    def test_decrement_clamps_at_zero(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, count=1, game="Lorcana")
+        update_cardlist("001-042.webp", is_foil=False, count=-5, game="Lorcana", allow_negative=True)
+        assert ["001", "042", "normal", "0"] in self._rows(tmp_path)
+
+    def test_negative_skipped_without_allow_negative(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, count=2, game="Lorcana")
+        update_cardlist("001-042.webp", is_foil=False, count=-1, game="Lorcana")  # default: ignored
+        assert ["001", "042", "normal", "2"] in self._rows(tmp_path)
+
+    def test_decrement_of_absent_card_is_noop(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-001.webp", is_foil=False, count=1, game="Lorcana")
+        update_cardlist("009-999.webp", is_foil=False, count=-1, game="Lorcana", allow_negative=True)
+        rows = self._rows(tmp_path)
+        assert not any(r[0] == "009" for r in rows)  # no phantom row created
+
+
 class TestCachePath:
     def test_normal_path(self):
         assert _cache_path(os.path.join("Card_Images", "Lorcana")) == "DBCardCache_Lorcana.db"

@@ -142,6 +142,7 @@ def _csv_for_game_type(game_type: GameType) -> str:
 def update_cardlist_batch(
     cards,
     game: Optional[str] = None,
+    allow_negative: bool = False,
 ) -> None:
     """
     Increment (or insert) rows for many cards with one read+write per CSV file.
@@ -151,6 +152,10 @@ def update_cardlist_batch(
     so any game gets its own <Game>List.csv. When None (legacy behavior),
     each card's game is inferred from its filename path: Riftbound paths →
     RiftboundList.csv, everything else → LorcanaList.csv.
+    allow_negative: permit negative counts, which decrement the matching row
+    (clamped at 0; a decrement of a card not in the list is a no-op). Off by
+    default so scan paths can never accidentally remove cards — only explicit
+    corrections (the GUI's Undo) pass True.
     """
     target = csv_for_game(game) if game is not None else None
     by_file: dict = {}
@@ -160,7 +165,7 @@ def update_cardlist_batch(
         except (TypeError, ValueError):
             logging.warning(f"Non-numeric count {count!r} for {matchedFilename}; recording 1")
             count = 1
-        if count < 1:
+        if count == 0 or (count < 0 and not allow_negative):
             continue
         target_file = target or _csv_for_game_type(get_game_type(matchedFilename))
         set_code, card_code = split_filename(matchedFilename)
@@ -169,17 +174,23 @@ def update_cardlist_batch(
 
     for target_file, updates in by_file.items():
         existing = _normalize_existing_rows(target_file)
+        changed = False
         for set_code, card_code, variant, count in updates:
             for r in existing:
                 if r[0] == set_code and r[1] == card_code and r[2] == variant:
                     try:
-                        r[3] = str(int(r[3]) + count)
-                    except Exception:
-                        r[3] = str(count)
+                        new_count = int(r[3]) + count
+                    except (TypeError, ValueError):
+                        new_count = count
+                    r[3] = str(max(new_count, 0))
+                    changed = True
                     break
             else:
-                existing.append([set_code, card_code, variant, str(count)])
-        _write_rows_4col(target_file, existing)
+                if count > 0:  # a decrement of an absent card stays a no-op
+                    existing.append([set_code, card_code, variant, str(count)])
+                    changed = True
+        if changed or not os.path.exists(target_file):
+            _write_rows_4col(target_file, existing)
 
 
 def update_cardlist(
@@ -187,6 +198,7 @@ def update_cardlist(
     is_foil: bool,
     count: int = 1,
     game: Optional[str] = None,
+    allow_negative: bool = False,
 ) -> None:
     """
     Increment (or insert) a row in the game-appropriate CSV.
@@ -194,6 +206,9 @@ def update_cardlist(
     When game is None the target file is chosen by inspecting the path of
     matchedFilename: Riftbound paths → RiftboundList.csv, everything else →
     LorcanaList.csv. Pass the game folder name explicitly to skip the path
-    inference and write to csv_for_game(game).
+    inference and write to csv_for_game(game). allow_negative permits a
+    decrement (see update_cardlist_batch).
     """
-    update_cardlist_batch([(matchedFilename, is_foil, count)], game=game)
+    update_cardlist_batch(
+        [(matchedFilename, is_foil, count)], game=game, allow_negative=allow_negative
+    )
