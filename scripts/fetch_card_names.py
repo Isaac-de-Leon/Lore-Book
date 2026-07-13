@@ -26,6 +26,31 @@ def _fetch_json(url: str):
         return json.load(resp)
 
 
+def _fetch_riftbound(url: str):
+    """
+    Fetch all RiftScribe cards. The API returns fixed-size pages (48 cards)
+    and pages with an `offset` query param, so keep requesting until a page
+    comes back short or repeats.
+    """
+    cards, offset, last_first_id = [], 0, None
+    for _ in range(200):  # hard cap: never loop forever on a misbehaving API
+        sep = "&" if "?" in url else "?"
+        page = _fetch_json(f"{url}{sep}offset={offset}" if offset else url)
+        if isinstance(page, dict):
+            page = page.get("cards", [])
+        if not page:
+            break
+        first_id = page[0].get("id") if isinstance(page[0], dict) else None
+        if first_id is not None and first_id == last_first_id:
+            break  # API ignored the offset; stop rather than duplicate
+        last_first_id = first_id
+        cards.extend(page)
+        if len(page) < 48:
+            break
+        offset += len(page)
+    return cards
+
+
 def lorcana_names(data) -> dict:
     """Map LorcanaJSON allCards.json → {"<setCode>-<number>": fullName}."""
     names = {}
@@ -51,7 +76,8 @@ def riftbound_names(data) -> dict:
         if not isinstance(card, dict):
             continue
         set_code = str(
-            card.get("set") or card.get("setCode") or card.get("set_code") or ""
+            card.get("set") or card.get("setCode") or card.get("set_code")
+            or card.get("set_id") or ""
         ).strip()
         number = str(
             card.get("number") or card.get("collectorNumber") or card.get("collector_number") or ""
@@ -63,8 +89,8 @@ def riftbound_names(data) -> dict:
 
 
 GAMES = {
-    "lorcana": (LORCANA_URL, lorcana_names),
-    "riftbound": (RIFTBOUND_URL, riftbound_names),
+    "lorcana": (LORCANA_URL, _fetch_json, lorcana_names),
+    "riftbound": (RIFTBOUND_URL, _fetch_riftbound, riftbound_names),
 }
 
 
@@ -81,11 +107,11 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 1
 
-    default_url, mapper = GAMES[key]
+    default_url, fetcher, mapper = GAMES[key]
     url = args.url or default_url
     print(f"Fetching {url} …")
     try:
-        data = _fetch_json(url)
+        data = fetcher(url)
     except Exception as e:
         print(f"Download failed: {e}", file=sys.stderr)
         return 1
