@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from lorebook.core.card_database import load_cache, set_database_path
 from lorebook.core.csv_manager import get_available_sets
 from lorebook.core.game_types import BASE_DATABASE_PATH
 from lorebook.ui.styles import APP_STYLESHEET
@@ -65,6 +64,10 @@ class SettingsWindow(QDialog):
         self.crop_checkbox = QCheckBox("Scan only inside focus box")
         self.crop_checkbox.setChecked(getattr(parent, "crop_to_focus", True))
         layout.addRow(self.crop_checkbox)
+
+        self.auto_scan_checkbox = QCheckBox("Auto-scan when a card settles in the focus box")
+        self.auto_scan_checkbox.setChecked(getattr(parent, "auto_scan", False))
+        layout.addRow(self.auto_scan_checkbox)
 
         self.confidence_input = QLineEdit(
             str(int(100 * getattr(parent, "confidence_threshold", 0.90)))
@@ -148,6 +151,7 @@ class SettingsWindow(QDialog):
         parent.keep_foil_checked = self.keep_foil_checked.isChecked()
         parent.rotate_display = self.rotate_checkbox.isChecked()
         parent.crop_to_focus = self.crop_checkbox.isChecked()
+        parent.auto_scan = self.auto_scan_checkbox.isChecked()
         parent.debug_mode = self.debug_mode_checkbox.isChecked()
         parent.camera_index = self.camera_combo.currentData()
 
@@ -184,14 +188,11 @@ class SettingsWindow(QDialog):
         parent.selected_games = selected_games
         parent.selected_sets = selected_sets
 
-        # Load the first selected game's database
+        # Load the first selected game's database (rebuilds the match index
+        # and keeps MainWindow's cache tracker in sync)
         for game_name, is_selected in selected_games.items():
             if is_selected:
-                game_folder = game_name.capitalize()
-                set_database_path(game_folder)
-                parent.featureDB = load_cache()
-                # Keep MainWindow's per-game cache tracker in sync
-                parent._loaded_game = game_folder if parent.featureDB else None
+                parent.load_game_database(game_name.capitalize())
                 break
 
         parent.save_settings()

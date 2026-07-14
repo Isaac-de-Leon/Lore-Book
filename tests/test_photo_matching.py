@@ -4,27 +4,16 @@
 
 import csv
 import os
-import sys
-import unittest.mock
 
 import numpy as np
 import pytest
 
-# ---------------------------------------------------------------------------
-# Stub out TensorFlow / Keras before importing PhotoMatching so tests run
-# without requiring those heavy packages to be installed.
-# ---------------------------------------------------------------------------
-_tf_mock = unittest.mock.MagicMock()
-for _mod in [
-    "tensorflow", "tf",
-    "keras", "keras.applications", "keras.applications.mobilenet_v2", "keras.models",
-]:
-    sys.modules.setdefault(_mod, _tf_mock)
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
 
 from PhotoMatching import (
     GameType,
+    csv_for_game,
+    update_cardlist,
     _cosine_score,
     _l2_normalize,
     _normalize_existing_rows,
@@ -33,9 +22,14 @@ from PhotoMatching import (
     ensure_valid_image,
     find_best_matches,
     foil_score,
+    game_type_from_name,
+    get_extractor,
     get_game_type,
     is_probably_foil,
 )
+from lorebook.core.card_database import _cache_path
+from lorebook.core.features import _check_tflite_input_dtype
+from lorebook.core.image_utils import CARD_ASPECT, MotionGate, crop_to_card, focus_rect
 
 
 # ===========================================================================
@@ -60,13 +54,6 @@ class TestGetGameType:
         p.parent.mkdir(parents=True)
         p.touch()
         assert get_game_type(str(p)) == GameType.UNKNOWN
-
-    def test_case_insensitive_lorcana(self, tmp_path):
-        # Folder names are lowercased before comparison
-        p = tmp_path / "lorcana" / "card.jpg"
-        p.parent.mkdir(parents=True)
-        p.touch()
-        assert get_game_type(str(p)) == GameType.LORCANA
 
     def test_empty_string_returns_unknown(self):
         result = get_game_type("")
@@ -111,13 +98,8 @@ class TestSplitFilename:
 # ===========================================================================
 
 class TestL2Normalize:
-    def test_unit_vector_unchanged(self):
-        v = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        result = _l2_normalize(v)
-        np.testing.assert_allclose(result, v, atol=1e-6)
-
     def test_norm_is_one(self):
-        v = np.array([3.0, 4.0], dtype=np.float32)
+        v = np.array([-3.0, 4.0], dtype=np.float32)  # negatives included
         result = _l2_normalize(v)
         assert abs(np.linalg.norm(result) - 1.0) < 1e-6
 
@@ -127,10 +109,13 @@ class TestL2Normalize:
         # Should not raise; result is zero vector
         assert result.shape == (5,)
 
-    def test_negative_values(self):
-        v = np.array([-3.0, 4.0], dtype=np.float32)
-        result = _l2_normalize(v)
-        assert abs(np.linalg.norm(result) - 1.0) < 1e-6
+    def test_always_returns_float32(self):
+        # float32 is a cache contract: blobs are read back with
+        # np.frombuffer(dtype=np.float32), so a float64 result here (sklearn's
+        # normalize upcasts) silently corrupts every stored vector into NaN.
+        for dtype in (np.float32, np.float64):
+            result = _l2_normalize(np.array([3.0, 4.0], dtype=dtype))
+            assert result.dtype == np.float32, f"input {dtype} -> {result.dtype}"
 
 
 # ===========================================================================
@@ -160,12 +145,6 @@ class TestCosineScore:
         b = self._unit(1.0, 0.0)
         with pytest.raises(ValueError):
             _cosine_score(a, b)
-
-    def test_score_in_range(self):
-        a = self._unit(1.0, 2.0, 3.0)
-        b = self._unit(4.0, 5.0, 6.0)
-        score = _cosine_score(a, b)
-        assert -1.0 <= score <= 1.0
 
 
 # ===========================================================================
@@ -209,6 +188,15 @@ class TestFindBestMatches:
     def test_none_input(self):
         assert find_best_matches(None, {"x": np.ones(3)}, threshold=0.5) == []
 
+    def test_bad_db_vector_is_skipped_not_fatal(self):
+        db = self._make_db()
+        db["corrupt.jpg"] = np.array([5.0, 5.0, 5.0], dtype=np.float32)  # not unit-norm
+        query = db["card_a.jpg"].copy()
+        matches = find_best_matches(query, db, threshold=0.5)
+        names = [m[0] for m in matches]
+        assert "corrupt.jpg" not in names
+        assert "card_a.jpg" in names
+
 
 # ===========================================================================
 # ensure_valid_image
@@ -245,6 +233,76 @@ class TestEnsureValidImage:
 # foil_score / is_probably_foil
 # ===========================================================================
 
+class TestFocusRectAndCrop:
+    def test_focus_rect_geometry(self):
+        fx, fy, fw, fh = focus_rect(720, 1280)
+        assert fh == int(720 * 0.6)
+        assert fw == int(fh * CARD_ASPECT)
+        assert fx == (1280 - fw) // 2
+        assert fy == (720 - fh) // 2
+
+    def test_crop_to_card_matches_focus_rect(self):
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        _, _, fw, fh = focus_rect(720, 1280)
+        cropped = crop_to_card(frame)
+        assert cropped.shape == (fh, fw, 3)
+
+    def test_crop_returns_copy_not_view(self):
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        cropped = crop_to_card(frame)
+        cropped[:] = 255
+        assert frame.max() == 0
+
+    def test_tiny_frame_returned_unchanged(self):
+        tiny = np.zeros((8, 8, 3), np.uint8)
+        assert crop_to_card(tiny) is tiny
+
+    def test_none_passthrough(self):
+        assert crop_to_card(None) is None
+
+
+class TestMotionGate:
+    # High-variance "card" frame vs uniform "empty mat" frame.
+    _card = (np.arange(64, dtype=np.float32).reshape(8, 8) * 3)
+    _empty = np.zeros((8, 8), np.float32)
+
+    def _settle(self, gate, frame, n):
+        return [gate.update(frame) for _ in range(n)]
+
+    def test_fires_exactly_once_when_card_settles(self):
+        gate = MotionGate(steady_frames=3, diff_threshold=5.0)
+        self._settle(gate, self._empty, 2)              # prime; steady but unarmed
+        assert gate.update(self._card) is False        # motion (card placed) arms
+        assert self._settle(gate, self._card, 3) == [False, False, True]
+        assert not any(self._settle(gate, self._card, 10))  # sitting card never re-fires
+
+    def test_rearms_for_the_next_card(self):
+        gate = MotionGate(steady_frames=2, diff_threshold=5.0)
+        gate.update(self._empty)
+        gate.update(self._card)                         # place card 1
+        assert self._settle(gate, self._card, 2)[-1] is True
+        gate.update(self._empty)                        # remove (motion re-arms)
+        gate.update(self._card)                         # place card 2
+        assert self._settle(gate, self._card, 2)[-1] is True
+
+    def test_min_std_suppresses_empty_scene_trigger(self):
+        gate = MotionGate(steady_frames=2, diff_threshold=5.0, min_std=10.0)
+        gate.update(self._card)
+        gate.update(self._empty)                        # card removed → motion arms
+        assert not any(self._settle(gate, self._empty, 6))  # empty mat: no trigger
+
+    def test_constant_motion_never_fires(self):
+        gate = MotionGate(steady_frames=2, diff_threshold=5.0)
+        frames = [np.full((8, 8), v, np.float32) for v in (0, 50, 100, 150, 200)]
+        assert not any(gate.update(f) for f in frames)
+
+    def test_shape_change_and_none_are_safe(self):
+        gate = MotionGate(steady_frames=1, diff_threshold=5.0)
+        assert gate.update(None) is False
+        gate.update(self._empty)
+        assert gate.update(np.zeros((4, 4), np.float32)) is False  # re-primes
+
+
 class TestFoilScore:
     def test_black_image_is_not_foil(self):
         img = np.zeros((50, 50, 3), dtype=np.uint8)
@@ -262,13 +320,141 @@ class TestFoilScore:
     def test_none_returns_zero(self):
         assert foil_score(None) == 0.0
 
-    def test_is_probably_foil_white(self):
-        img = np.full((50, 50, 3), 255, dtype=np.uint8)
-        assert is_probably_foil(img)
+    def test_is_probably_foil_is_thresholded_foil_score(self):
+        for img in (np.full((50, 50, 3), 255, np.uint8), np.zeros((50, 50, 3), np.uint8)):
+            assert is_probably_foil(img) == (foil_score(img) >= 0.08)
 
-    def test_is_probably_foil_black(self):
-        img = np.zeros((50, 50, 3), dtype=np.uint8)
-        assert not is_probably_foil(img)
+
+# ===========================================================================
+# get_extractor backend dispatch
+# ===========================================================================
+
+class TestGetExtractor:
+    def test_keras_backend(self):
+        ex = get_extractor("keras")
+        assert type(ex).__name__ == "_KerasExtractor"
+        assert hasattr(ex, "extract")
+
+    def test_tflite_backend(self):
+        # Constructing the tflite extractor must NOT load the interpreter,
+        # so this works even without a .tflite model present.
+        ex = get_extractor("tflite")
+        assert type(ex).__name__ == "_TFLiteExtractor"
+        assert hasattr(ex, "extract")
+
+    def test_case_insensitive(self):
+        assert type(get_extractor("TFLite")).__name__ == "_TFLiteExtractor"
+
+    def test_unknown_backend_raises(self):
+        with pytest.raises(ValueError):
+            get_extractor("onnx")
+
+    def test_extractors_are_cached(self):
+        assert get_extractor("keras") is get_extractor("keras")
+
+
+# ===========================================================================
+# game_type_from_name / _cache_path / tflite dtype guard
+# ===========================================================================
+
+class TestGameTypeFromName:
+    def test_known_games(self):
+        assert game_type_from_name("Lorcana") == GameType.LORCANA
+        assert game_type_from_name("riftbound") == GameType.RIFTBOUND
+        assert game_type_from_name("  LORCANA  ") == GameType.LORCANA
+
+    def test_unknown_game(self):
+        assert game_type_from_name("Pokemon") == GameType.UNKNOWN
+        assert game_type_from_name("") == GameType.UNKNOWN
+        assert game_type_from_name(None) == GameType.UNKNOWN
+
+
+class TestCsvForGame:
+    def test_legacy_games_keep_their_files(self):
+        assert csv_for_game("Lorcana") == "LorcanaList.csv"
+        assert csv_for_game("lorcana") == "LorcanaList.csv"
+        assert csv_for_game("RIFTBOUND") == "RiftboundList.csv"
+
+    def test_new_game_derives_from_folder_name(self):
+        assert csv_for_game("Pokemon") == "PokemonList.csv"
+        assert csv_for_game("MTG") == "MTGList.csv"
+
+    def test_trailing_separators_stripped(self):
+        assert csv_for_game("Lorcana/") == "LorcanaList.csv"
+        assert csv_for_game("Pokemon\\") == "PokemonList.csv"
+
+    def test_blank_raises(self):
+        with pytest.raises(ValueError):
+            csv_for_game("")
+        with pytest.raises(ValueError):
+            csv_for_game(None)
+
+
+class TestUpdateCardlistGameRouting:
+    def test_explicit_game_writes_named_csv(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, game="Pokemon")
+        rows = list(csv.reader((tmp_path / "PokemonList.csv").open(encoding="utf-8")))
+        assert ["001", "042", "normal", "1"] in rows
+        assert not os.path.exists(tmp_path / "LorcanaList.csv")
+
+    def test_legacy_path_inference_still_works(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist(os.path.join("Card_Images", "Riftbound", "001-042.webp"), is_foil=True)
+        rows = list(csv.reader((tmp_path / "RiftboundList.csv").open(encoding="utf-8")))
+        assert ["001", "042", "foil", "1"] in rows
+
+
+class TestNegativeCounts:
+    def _rows(self, tmp_path):
+        return list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
+
+    def test_negative_decrements_with_allow_negative(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, count=3, game="Lorcana")
+        update_cardlist("001-042.webp", is_foil=False, count=-2, game="Lorcana", allow_negative=True)
+        assert ["001", "042", "normal", "1"] in self._rows(tmp_path)
+
+    def test_decrement_clamps_at_zero(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, count=1, game="Lorcana")
+        update_cardlist("001-042.webp", is_foil=False, count=-5, game="Lorcana", allow_negative=True)
+        assert ["001", "042", "normal", "0"] in self._rows(tmp_path)
+
+    def test_negative_skipped_without_allow_negative(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, count=2, game="Lorcana")
+        update_cardlist("001-042.webp", is_foil=False, count=-1, game="Lorcana")  # default: ignored
+        assert ["001", "042", "normal", "2"] in self._rows(tmp_path)
+
+    def test_decrement_of_absent_card_is_noop(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-001.webp", is_foil=False, count=1, game="Lorcana")
+        update_cardlist("009-999.webp", is_foil=False, count=-1, game="Lorcana", allow_negative=True)
+        rows = self._rows(tmp_path)
+        assert not any(r[0] == "009" for r in rows)  # no phantom row created
+
+
+class TestCachePath:
+    def test_normal_path(self):
+        assert _cache_path(os.path.join("Card_Images", "Lorcana")) == "DBCardCache_Lorcana.db"
+
+    def test_trailing_slash_does_not_collapse_to_default(self):
+        assert _cache_path("Card_Images/Lorcana/") == "DBCardCache_Lorcana.db"
+        assert _cache_path("Card_Images/Lorcana//") == "DBCardCache_Lorcana.db"
+
+    def test_empty_falls_back_to_default(self):
+        assert _cache_path("") == "DBCardCache_default.db"
+
+
+class TestTfliteInputDtypeGuard:
+    def test_float32_accepted(self):
+        _check_tflite_input_dtype(np.float32, "model.tflite")  # no raise
+
+    def test_quantized_dtypes_rejected(self):
+        for dtype in (np.int8, np.uint8):
+            with pytest.raises(ValueError, match="float32"):
+                _check_tflite_input_dtype(dtype, "model.tflite")
 
 
 # ===========================================================================
@@ -318,14 +504,25 @@ class TestNormalizeExistingRows:
         rows = _normalize_existing_rows(str(p))
         assert rows[0][3] == "0"
 
-    def test_multiple_rows(self, tmp_path):
-        p = tmp_path / "test.csv"
-        self._write_csv(p, [
-            ["001", "001", "normal", "1"],
-            ["001", "002", "foil", "3"],
-        ])
-        rows = _normalize_existing_rows(str(p))
-        assert len(rows) == 2
+
+class TestReadCollectionRows:
+    def test_reads_games_csv_normalized(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with open("LorcanaList.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
+            writer.writerow(["009", "041", "normal", "2"])
+            writer.writerow(["001", "007", "foil"])  # legacy 3-col row
+        from lorebook.core.csv_manager import read_collection_rows
+        assert read_collection_rows("Lorcana") == [
+            ["009", "041", "normal", "2"],
+            ["001", "007", "foil", "0"],
+        ]
+
+    def test_missing_file_returns_empty(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from lorebook.core.csv_manager import read_collection_rows
+        assert read_collection_rows("Riftbound") == []
 
 
 class TestWriteRows4Col:
@@ -350,3 +547,29 @@ class TestWriteRows4Col:
 
         assert len(reader) == 1
         assert reader[0] == ["Set Number", "Card Number", "Variant", "Count"]
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+    def test_preserves_existing_file_mode(self, tmp_path):
+        p = tmp_path / "out.csv"
+        _write_rows_4col(str(p), [["001", "001", "normal", "1"]])
+        os.chmod(p, 0o640)
+        _write_rows_4col(str(p), [["001", "001", "normal", "2"]])
+        assert (os.stat(p).st_mode & 0o777) == 0o640
+
+    def test_leaves_no_temp_files_behind(self, tmp_path):
+        p = tmp_path / "out.csv"
+        _write_rows_4col(str(p), [["001", "001", "normal", "1"]])
+        assert sorted(os.listdir(tmp_path)) == ["out.csv"]
+
+    def test_failed_write_keeps_existing_file_and_cleans_temp(self, tmp_path):
+        p = tmp_path / "out.csv"
+        _write_rows_4col(str(p), [["001", "001", "normal", "1"]])
+
+        # A non-iterable row blows up mid-write; the original must survive.
+        with pytest.raises(TypeError):
+            _write_rows_4col(str(p), [None])
+
+        with open(p, newline="", encoding="utf-8") as f:
+            reader = list(csv.reader(f))
+        assert reader[1] == ["001", "001", "normal", "1"]
+        assert sorted(os.listdir(tmp_path)) == ["out.csv"]

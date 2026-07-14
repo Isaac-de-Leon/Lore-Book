@@ -28,7 +28,9 @@ def get_database_path() -> str:
 
 
 def _cache_path(db_path: str) -> str:
-    game = os.path.basename(db_path) or "default"
+    # Strip trailing separators so "Card_Images/Lorcana/" (e.g. from shell
+    # tab-completion) resolves to "Lorcana", not "".
+    game = os.path.basename(db_path.rstrip("/\\")) or "default"
     return f"DBCardCache_{game}.db"
 
 
@@ -57,6 +59,19 @@ def load_cache(db_path: Optional[str] = None) -> Dict[str, np.ndarray]:
         return {}
 
 
+def _remove_cache_entries(cache_file: str, filenames: List[str]) -> None:
+    """Delete cache rows whose source images no longer exist on disk."""
+    if not filenames or not os.path.exists(cache_file):
+        return
+    try:
+        with sqlite3.connect(cache_file) as conn:
+            conn.executemany(
+                "DELETE FROM features WHERE filename = ?", [(n,) for n in filenames]
+            )
+    except Exception as e:
+        logging.error(f"Error pruning stale cache entries from {cache_file}: {e}")
+
+
 def _list_image_files(folder: str) -> List[str]:
     """Return sorted list of supported image filenames in folder."""
     if not os.path.isdir(folder):
@@ -64,26 +79,30 @@ def _list_image_files(folder: str) -> List[str]:
     return sorted(n for n in os.listdir(folder) if n.lower().endswith(SUPPORTED_EXTS))
 
 
-def _process_image(filename: str, db_path: str) -> Tuple[str, Optional[np.ndarray]]:
-    """
-    Extract features for a single image. db_path is passed explicitly so this
-    function is safe to call from multiple threads without relying on the global.
-    """
-    from lorebook.core.features import extract_features  # lazy: avoids importing TF at module level
-    img = cv2.imread(os.path.join(db_path, filename), cv2.IMREAD_COLOR)
-    return (filename, extract_features(img)) if img is not None else (filename, None)
+# Images per inference batch during builds. Reads are parallelized within a
+# chunk; inference runs once per chunk on the calling thread (Keras predict is
+# not guaranteed thread-safe, and its per-call overhead dominates per-image).
+_BATCH_SIZE = 32
+
+
+def _read_image(filename: str, db_path: str) -> Tuple[str, Optional[np.ndarray]]:
+    """Load one image for the build pipeline (thread-safe: no globals, no TF)."""
+    return filename, cv2.imread(os.path.join(db_path, filename), cv2.IMREAD_COLOR)
 
 
 def build_feature_database(
     progress_callback: Optional[Callable[[int, Optional[str]], None]] = None,
     max_workers: Optional[int] = None,
     db_path: Optional[str] = None,
+    extractor=None,
 ) -> Dict[str, np.ndarray]:
     """
     Build or update the feature database for db_path (defaults to databasePath).
 
     Processes only images not already in the cache, updates the cache file, and
-    returns the full feature dict. Uses a thread pool for parallel extraction.
+    returns the full feature dict. Image reads run in a thread pool; feature
+    extraction runs in batches through extractor.extract_batch (defaults to the
+    keras backend, resolved lazily so importing this module never pulls in TF).
     """
     resolved = db_path or databasePath
     featureDB: Dict[str, np.ndarray] = {}
@@ -91,7 +110,20 @@ def build_feature_database(
         featureDB = load_cache(resolved)
         logging.info(f"Loaded {len(featureDB)} cached entries from {resolved}")
 
-        new_files = [f for f in _list_image_files(resolved) if f not in featureDB]
+        current_files = _list_image_files(resolved)
+
+        # Prune cache entries for deleted/renamed images so they can't keep
+        # matching against cards that no longer exist. Only when the folder
+        # itself exists — a missing folder (typo'd path, unmounted drive)
+        # must not be read as "every image was deleted" and wipe the cache.
+        stale = sorted(set(featureDB) - set(current_files)) if os.path.isdir(resolved) else []
+        if stale:
+            for name in stale:
+                featureDB.pop(name, None)
+            _remove_cache_entries(_cache_path(resolved), stale)
+            logging.info(f"Pruned {len(stale)} stale cache entries from {resolved}")
+
+        new_files = [f for f in current_files if f not in featureDB]
         total = len(new_files)
         logging.info(f"Processing {total} new files in {resolved}")
 
@@ -100,32 +132,49 @@ def build_feature_database(
                 progress_callback(100, None)
             return featureDB
 
-        successful = failed = 0
+        if extractor is None:
+            from lorebook.core.features import get_extractor  # lazy TF import
+            extractor = get_extractor("keras")
+
+        successful = failed = done = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_process_image, f, resolved): f for f in new_files}
-            for idx, future in enumerate(concurrent.futures.as_completed(futures), 1):
-                fname = futures[future]
-                try:
-                    k, v = future.result()
-                    if v is not None:
-                        featureDB[k] = v
+            for start in range(0, total, _BATCH_SIZE):
+                chunk = new_files[start:start + _BATCH_SIZE]
+                loaded = list(pool.map(lambda f: _read_image(f, resolved), chunk))
+
+                readable = []
+                for fname, img in loaded:
+                    if img is None:
+                        failed += 1
+                        logging.warning(f"Could not read image {fname}")
+                    else:
+                        readable.append((fname, img))
+
+                vectors = extractor.extract_batch([img for _, img in readable]) if readable else []
+                for (fname, _), vec in zip(readable, vectors):
+                    if vec is not None:
+                        featureDB[fname] = vec
                         successful += 1
                     else:
                         failed += 1
                         logging.warning(f"Feature extraction failed for {fname}")
-                except Exception as e:
-                    failed += 1
-                    logging.error(f"Error processing {fname}: {e}")
+
+                done += len(chunk)
                 if progress_callback:
-                    progress_callback(int(idx / total * 100), fname)
+                    progress_callback(int(done / total * 100), chunk[-1])
 
         cache_file = _cache_path(resolved)
         try:
             _init_db(cache_file)
             with sqlite3.connect(cache_file) as conn:
+                # Cast defensively: load_cache reads blobs as float32, so any
+                # other dtype here would corrupt the round-trip.
                 conn.executemany(
                     "INSERT OR REPLACE INTO features (filename, vector) VALUES (?, ?)",
-                    [(k, v.tobytes()) for k, v in featureDB.items()],
+                    [
+                        (k, np.asarray(v, dtype=np.float32).tobytes())
+                        for k, v in featureDB.items()
+                    ],
                 )
             logging.info(f"Saved {len(featureDB)} entries to {cache_file}")
         except Exception as e:

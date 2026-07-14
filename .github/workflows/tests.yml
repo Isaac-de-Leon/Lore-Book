@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The suite stubs TensorFlow/Keras (tests/conftest.py) and sklearn is
+      # optional in lorebook.core.matching, so only the light deps are needed.
+      - name: Install test dependencies
+        run: pip install pytest numpy opencv-python-headless ruff
+
+      # The Qt UI can't run headless in CI, so the linter is the only
+      # automated check over lorebook/ui/.
+      - name: Lint
+        run: ruff check .
+
+      - name: Run tests
+        run: python -m pytest tests/ -v

@@ -22,18 +22,14 @@ QPushButton:hover  { background-color: #30363D; border-color: #8B949E; }
 QPushButton:pressed { background-color: #161B22; }
 QPushButton:disabled { color: #484F58; border-color: #21262D; }
 
-/* Scan FAB */
+/* Scan FAB — size, radius, font and padding are set dynamically by
+   MainWindow._apply_scale() so the button scales with the window. */
 QPushButton#scanBtn {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 #D97706, stop:1 #F97316);
     color: #fff;
     border: none;
-    border-radius: 28px;
-    font-size: 16px;
     font-weight: bold;
-    min-height: 56px;
-    min-width: 220px;
-    padding: 0 32px;
 }
 QPushButton#scanBtn:hover {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
@@ -143,6 +139,48 @@ QProgressBar::chunk {
         stop:0 #D97706, stop:1 #F97316);
     border-radius: 2px;
 }
+
+/* ── Tabs (Scanner / Collection) ───────────────────────── */
+QTabWidget::pane {
+    border: 1px solid #21262D;
+    border-radius: 6px;
+    top: -1px;
+}
+QTabBar::tab {
+    background: transparent;
+    color: #8B949E;
+    padding: 7px 18px;
+    border: none;
+    border-bottom: 2px solid transparent;
+}
+QTabBar::tab:hover    { color: #E6EDF3; }
+QTabBar::tab:selected {
+    color: #F97316;
+    font-weight: bold;
+    border-bottom: 2px solid #F97316;
+}
+
+/* ── Collection table ──────────────────────────────────── */
+QTableWidget {
+    background-color: #0D1117;
+    alternate-background-color: #11161D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    gridline-color: #21262D;
+    outline: none;
+}
+QTableWidget::item { padding: 2px 8px; }
+QTableWidget::item:selected { background-color: #1F3A5F; color: #E6EDF3; }
+QHeaderView::section {
+    background-color: #161B22;
+    color: #8B949E;
+    border: none;
+    border-bottom: 1px solid #30363D;
+    padding: 5px 8px;
+    font-weight: bold;
+}
+QTableCornerButton::section { background-color: #161B22; border: none; }
 
 /* ── Tree widget (Settings) ────────────────────────────── */
 QTreeWidget {

@@ -21,32 +21,55 @@ from lorebook.core.card_database import (
 from lorebook.core.csv_manager import (
     _normalize_existing_rows,
     _split_filename,
+    split_filename,
     _write_rows_4col,
     get_available_sets,
+    read_collection_rows,
     update_cardlist,
+    update_cardlist_batch,
 )
-from lorebook.core.features import extract_features, visualize_activation_overlay
+from lorebook.core.features import (
+    extract_features,
+    get_extractor,
+    visualize_activation_overlay,
+)
 from lorebook.core.game_types import (
     BASE_DATABASE_PATH,
     LORCANA_CSV,
     RIFTBOUND_CSV,
     SUPPORTED_EXTS,
     GameType,
+    csv_for_game,
+    game_type_from_name,
     get_game_type,
 )
 from lorebook.core.image_utils import ensure_valid_image, foil_score, is_probably_foil
-from lorebook.core.matching import _cosine_score, _l2_normalize, find_best_matches
+from lorebook.core.matching import MatchIndex, _cosine_score, _l2_normalize, find_best_matches
 
 # Legacy name aliases
 baseDatabasePath = BASE_DATABASE_PATH
 LORCANA_FILE = LORCANA_CSV
 RIFTBOUND_FILE = RIFTBOUND_CSV
 
-# ---- CLI (python PhotoMatching.py --build / --match) -----------------------
+# ---- CLI (python PhotoMatching.py --build / --match / --sort) --------------
 if __name__ == "__main__":
     import argparse
+    import sys
 
-    parser = argparse.ArgumentParser(description="Build feature DB and/or match an image.")
+    # --sort delegates everything after it to the headless sorter, which has
+    # its own argument set (it does not compose with --build/--match).
+    if "--sort" in sys.argv[1:]:
+        from lorebook.sorter.__main__ import main as sorter_main
+
+        rest = [a for a in sys.argv[1:] if a != "--sort"]
+        raise SystemExit(sorter_main(rest))
+
+    parser = argparse.ArgumentParser(
+        description="Build feature DB and/or match an image.",
+        epilog="For the headless sorter run `python PhotoMatching.py --sort [sorter options]` "
+               "(equivalent to `python -m lorebook.sorter`; --sort does not combine with the "
+               "flags above — see `python -m lorebook.sorter --help`).",
+    )
     parser.add_argument("--game", default="Lorcana", help="Game folder inside Card_Images/")
     parser.add_argument("--build", action="store_true", help="Build/update feature DB.")
     parser.add_argument("--match", help="Path to an input image to match.")

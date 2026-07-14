@@ -5,7 +5,6 @@ import json
 import logging
 import logging.handlers
 import os
-import platform
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QIntValidator, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
     QProgressBar,
@@ -30,14 +30,18 @@ from PySide6.QtWidgets import (
 
 from lorebook.core.card_database import (
     build_feature_database,
-    get_database_path,
     load_cache,
     set_database_path,
 )
-from lorebook.core.csv_manager import _split_filename, update_cardlist
+from lorebook.core.card_names import name_for
+from lorebook.core.csv_manager import split_filename, update_cardlist
+from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
-from lorebook.core.image_utils import is_probably_foil
-from lorebook.core.matching import find_best_matches
+from lorebook.core.image_fetcher import download_new_images
+from lorebook.core.image_utils import MotionGate, crop_to_card, focus_rect, is_probably_foil
+from lorebook.core.matching import MatchIndex
+from lorebook.hardware.camera import open_capture
+from lorebook.ui.collection_view import CollectionView
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import APP_STYLESHEET
 
@@ -76,15 +80,30 @@ class MainWindow(QWidget):
     Main application window.
 
     Responsibilities:
-    - Live camera preview with focus-box overlay
+    - Live camera preview with focus-box overlay (optional auto-scan)
     - On-demand card scan: feature extraction → DB match → display results
     - Previous / Next navigation across top matches
-    - One-click "Add to card list" writing to the appropriate CSV
+    - One-click "Add to card list" writing to the appropriate CSV (with Undo)
     - Background DB build with progress bar
     - Settings persistence via ui_settings.json
+
+    Threading rules
+    ---------------
+    The DB build runs in one background daemon thread
+    (_build_all_games_worker). From any non-main thread, the ONLY permitted
+    interactions with this object are:
+      - writing the plain attribute ``_db_progress_pct`` (polled by a QTimer)
+      - emitting the ``build_status`` / ``build_done`` signals (Qt delivers
+        them on the main thread)
+    Everything else — widgets, featureDB/_match_index, settings, the
+    set_database_path global — is main-thread-only.
     """
 
     logger = logging.getLogger("MainWindow")
+
+    # Top-2 score gap below which a match is flagged as ambiguous (foil
+    # variants, reprints, and alt arts often score within a couple percent).
+    AMBIGUOUS_GAP = 0.02
 
     # Signals for marshalling background-thread updates onto the main thread.
     build_status = Signal(str)      # status text for the status label
@@ -94,7 +113,7 @@ class MainWindow(QWidget):
 
     @staticmethod
     def _split_filename(filename: str) -> Tuple[str, str]:
-        return _split_filename(filename)
+        return split_filename(filename)
 
     def show_error(self, message: str, title: str = "Error", details: Optional[str] = None) -> None:
         self.logger.error(message + (f": {details}" if details else ""))
@@ -118,6 +137,20 @@ class MainWindow(QWidget):
             self.logger.error(f"Error getting active game: {e}")
         return None
 
+    def load_game_database(self, game_name: str) -> bool:
+        """
+        Make game_name the active database: load its feature cache and rebuild
+        the match index. The single place that owns the featureDB/_match_index/
+        _loaded_game invariant — every game switch must go through here.
+        Returns True if the loaded cache has entries.
+        """
+        set_database_path(game_name)
+        self.featureDB = load_cache()
+        self._match_index = MatchIndex(self.featureDB)
+        self._loaded_game = game_name if self.featureDB else None
+        self.logger.info(f"Loaded {len(self.featureDB)} entries for {game_name}")
+        return bool(self.featureDB)
+
     # ------------------------------------------------------------------ init
 
     def __init__(self):
@@ -128,6 +161,7 @@ class MainWindow(QWidget):
 
         # State
         self.featureDB: Dict[str, np.ndarray] = load_cache()
+        self._match_index = MatchIndex(self.featureDB)  # vectorized matcher over featureDB
         self._loaded_game: Optional[str] = None  # game whose featureDB is in memory
         self.selected_games: Dict[str, bool] = {"lorcana": False, "riftbound": False}
         self.selected_sets: Dict[str, List[str]] = {"lorcana": [], "riftbound": []}
@@ -138,6 +172,9 @@ class MainWindow(QWidget):
         self.camera_index = 0
         self.rotate_display = False
         self.crop_to_focus = True
+        self.auto_scan = False
+        # min_std suppresses triggers on an empty (near-uniform) focus box
+        self._motion_gate = MotionGate(min_std=12.0)
 
         self.cap: Optional[cv2.VideoCapture] = None
         self.last_frame: Optional[np.ndarray] = None
@@ -147,6 +184,7 @@ class MainWindow(QWidget):
 
         self.last_matches: List[Tuple[str, float]] = []
         self.current_match_idx: int = 0
+        self._last_add: Optional[Tuple[str, bool, int, str]] = None  # (fname, foil, count, game)
 
         self.load_settings()
 
@@ -184,7 +222,8 @@ class MainWindow(QWidget):
         # ── Result panel ─────────────────────────────────────────────────────
         result_panel = QFrame()
         result_panel.setObjectName("resultPanel")
-        result_panel.setFixedHeight(152)
+        # Height is set by _apply_scale (scales with the window, 140-200px).
+        self.result_panel = result_panel
 
         # Thumbnail (card image)
         self.image_label = QLabel()
@@ -225,11 +264,16 @@ class MainWindow(QWidget):
 
         self.count_edit = QLineEdit("1")
         self.count_edit.setFixedWidth(48)
+        self.count_edit.setValidator(QIntValidator(1, 999, self))
 
         self.add_csv_btn = QPushButton("+ Add to Collection")
         self.add_csv_btn.setObjectName("addBtn")
         self.add_csv_btn.clicked.connect(self.add_to_csv)
         self.add_csv_btn.setEnabled(False)
+
+        self.undo_btn = QPushButton("Undo")
+        self.undo_btn.clicked.connect(self.undo_last_add)
+        self.undo_btn.setEnabled(False)
 
         self.csv_status = QLabel("")
         self.csv_status.setObjectName("statusLabel")
@@ -241,6 +285,7 @@ class MainWindow(QWidget):
         actions_row.addWidget(QLabel("×"))
         actions_row.addWidget(self.count_edit)
         actions_row.addWidget(self.add_csv_btn)
+        actions_row.addWidget(self.undo_btn)
         actions_row.addStretch()
         actions_row.addWidget(self.csv_status)
 
@@ -279,16 +324,33 @@ class MainWindow(QWidget):
         top.addWidget(self.stop_btn)
         top.addWidget(self.settings_btn)
 
+        # ── Tabs: Scanner / Collection ────────────────────────────────────────
+        scanner_tab = QWidget()
+        scanner_layout = QVBoxLayout()
+        scanner_layout.setContentsMargins(0, 8, 0, 0)
+        scanner_layout.setSpacing(8)
+        scanner_layout.addWidget(self.preview_label, stretch=1)
+        scanner_layout.addWidget(self.match_label)
+        scanner_layout.addWidget(result_panel)
+        scanner_layout.addLayout(scan_row)
+        scanner_tab.setLayout(scanner_layout)
+
+        self.collection_view = CollectionView(initial_game=self.get_active_game())
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(scanner_tab, "Scanner")
+        self.tabs.addTab(self.collection_view, "Collection")
+        self._scanner_tab_index = 0
+        # Pick up CSV changes made while the tab was hidden (scans, undo, edits)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
         # ── Root layout ───────────────────────────────────────────────────────
         root = QVBoxLayout()
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
         root.addLayout(top)
         root.addWidget(self.progress)
-        root.addWidget(self.preview_label, stretch=1)
-        root.addWidget(self.match_label)
-        root.addWidget(result_panel)
-        root.addLayout(scan_row)
+        root.addWidget(self.tabs, stretch=1)
         self.setLayout(root)
 
         # Signals from background build threads → main-thread slots
@@ -313,12 +375,13 @@ class MainWindow(QWidget):
         self._setup_tooltips()
         for widget in [
             self.capture_btn, self.start_btn, self.stop_btn,
-            self.settings_btn, self.add_csv_btn, self.prev_btn,
-            self.next_btn, self.foil_check,
+            self.settings_btn, self.add_csv_btn, self.undo_btn,
+            self.prev_btn, self.next_btn, self.foil_check,
         ]:
             widget.setFocusPolicy(Qt.NoFocus)
         self.count_edit.setFocusPolicy(Qt.StrongFocus)
 
+        self._apply_scale()
         self.start_db_build_in_background()
 
     # ------------------------------------------------------------------ settings
@@ -335,6 +398,7 @@ class MainWindow(QWidget):
             "selected_sets": {"lorcana": [], "riftbound": []},
             "rotate_display": False,
             "crop_to_focus": True,
+            "auto_scan": False,
         }
 
         def apply_defaults():
@@ -386,6 +450,7 @@ class MainWindow(QWidget):
             "selected_sets": getattr(self, "selected_sets", {}),
             "rotate_display": self.rotate_display,
             "crop_to_focus": self.crop_to_focus,
+            "auto_scan": self.auto_scan,
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -400,7 +465,7 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ DB build
 
     def start_db_build_in_background(self) -> None:
-        """Discover game folders and kick off a background feature-DB build for each."""
+        """Discover game folders and kick off one background build thread for all of them."""
         card_images_dir = "Card_Images"
         try:
             os.makedirs(card_images_dir, exist_ok=True)
@@ -418,195 +483,117 @@ class MainWindow(QWidget):
             self.match_label.setText("No game folders found in Card_Images directory")
             return
 
-        self.game_folders = game_folders
-        self.current_game_index = 0
-        self.current_game = game_folders[0]
-        self._db_build_state = {
-            "running": True,
-            "completed": 0,
-            "failed": [],
-            "retry_count": {},
-            "start_time": time.time(),
-        }
-
-        set_database_path(self.current_game)
+        self._db_progress_pct = 0
         self.progress.setValue(0)
         self.progress.show()
-        self.match_label.setText(f"Building {self.current_game} database, please wait…")
+        self.match_label.setText(f"Building {game_folders[0]} database, please wait…")
 
-        self._start_current_game_build()
+        threading.Thread(
+            target=self._build_all_games_worker, args=(game_folders,), daemon=True
+        ).start()
         self._db_progress_timer.start()
 
-    def _start_current_game_build(self) -> None:
-        """Start the background build thread for self.current_game.
+    def _build_all_games_worker(self, game_folders: List[str]) -> None:
+        """Build every game's feature DB sequentially in one background thread.
 
-        The worker runs in a daemon thread and must NOT touch Qt widgets
-        directly — all UI updates are emitted via signals (build_status,
-        build_done) which Qt delivers on the main thread.
+        Runs off the main thread and must NOT touch Qt widgets directly — all
+        UI updates go through signals (build_status, build_done) which Qt
+        delivers on the main thread. The active database path global is left
+        alone; each build gets its db_path explicitly.
         """
-        game_name = self.current_game
-        game_path = os.path.join("Card_Images", game_name)
+        start_time = time.time()
+        failed: List[str] = []
 
         def progress_callback(pct: int, current_file: Optional[str]) -> None:
             self._db_progress_pct = pct
             if current_file:
                 self.build_status.emit(f"Processing {current_file}…")
 
-        def build_worker() -> None:
+        for game_name in game_folders:
+            game_path = os.path.join("Card_Images", game_name)
+            self._db_progress_pct = 0
+
+            # Download any newly released card images first (no-op for games
+            # without a registered fetcher). A fetch failure — offline, source
+            # down, format change — must never block the build itself.
             try:
-                self.logger.info(f"Building DB for {game_name} at {game_path}")
-                if not os.path.exists(game_path):
-                    raise RuntimeError(f"Game folder not found: {game_path}")
-
-                db = build_feature_database(
-                    progress_callback=progress_callback,
-                    db_path=game_path,
+                self.build_status.emit(f"Checking for new {game_name} card images…")
+                stats = download_new_images(
+                    game_name,
+                    out_dir=game_path,
+                    progress_callback=self.build_status.emit,
                 )
-                if not db:
-                    raise RuntimeError("Database build returned no entries")
-
-                self.logger.info(f"DB ready for {game_name}: {len(db)} entries")
-                setattr(self, f"{game_name.lower()}_db", db)
-                self._db_build_state["completed"] += 1
-
-                # Move to next game
-                self.current_game_index += 1
-                if self.current_game_index < len(self.game_folders):
-                    self.current_game = self.game_folders[self.current_game_index]
-                    set_database_path(self.current_game)
-                    self._db_progress_pct = 0
-                    self.build_status.emit(f"Building {self.current_game} database…")
-                    self._start_current_game_build()
-                else:
-                    elapsed = time.time() - self._db_build_state["start_time"]
-                    self.logger.info(f"All DBs built in {elapsed:.1f}s")
-                    self._db_build_state["running"] = False
-                    self.build_done.emit(True)
-
+                if stats and stats.downloaded:
+                    self.logger.info(
+                        f"Downloaded {stats.downloaded} new {game_name} images "
+                        f"({stats.failed} failed)"
+                    )
+                    self.build_status.emit(
+                        f"Downloaded {stats.downloaded} new {game_name} card images"
+                    )
             except Exception as e:
-                self.logger.error(f"Error building DB for {game_name}: {e}")
-                self._db_build_state["failed"].append(game_name)
-                retries = self._db_build_state["retry_count"].get(game_name, 0)
-                if retries < 2:
-                    self._db_build_state["retry_count"][game_name] = retries + 1
-                    self.logger.info(f"Retrying {game_name} (attempt {retries + 1})")
-                    threading.Thread(target=build_worker, daemon=True).start()
-                else:
-                    self.build_status.emit(f"Error building {game_name} database")
-                    self.build_done.emit(False)
+                self.logger.warning(f"Image fetch for {game_name} failed (continuing build): {e}")
 
-        threading.Thread(target=build_worker, daemon=True).start()
+            self.build_status.emit(f"Building {game_name} database…")
+
+            for attempt in range(1, 4):  # initial try + 2 retries
+                try:
+                    self.logger.info(
+                        f"Building DB for {game_name} at {game_path} (attempt {attempt})"
+                    )
+                    if not os.path.exists(game_path):
+                        raise RuntimeError(f"Game folder not found: {game_path}")
+                    db = build_feature_database(
+                        progress_callback=progress_callback,
+                        db_path=game_path,
+                    )
+                    if not db:
+                        raise RuntimeError("Database build returned no entries")
+                    self.logger.info(f"DB ready for {game_name}: {len(db)} entries")
+                    break
+                except Exception as e:
+                    self.logger.error(f"Error building DB for {game_name}: {e}")
+            else:
+                failed.append(game_name)
+                self.build_status.emit(f"Error building {game_name} database")
+
+        elapsed = time.time() - start_time
+        self.logger.info(f"DB builds finished in {elapsed:.1f}s ({len(failed)} failed)")
+        self.build_done.emit(not failed)
 
     def _on_build_done(self, success: bool) -> None:
         """Main-thread slot: finalize UI after the background build finishes."""
-        self.progress.hide()
         self._db_progress_timer.stop()
+        self.progress.hide()
         if success:
-            self.match_label.setText("All databases ready.")
+            self.match_label.setText("All databases ready. Scan a card to begin.")
         # The in-memory featureDB may be stale after a rebuild — force reload on next scan
         self._loaded_game = None
 
     def _tick_db_progress(self) -> None:
-        """Poll _db_progress_pct and update the progress bar."""
+        """Poll _db_progress_pct and update the progress bar.
+
+        The timer keeps running until _on_build_done — a single game hitting
+        100% must not kill progress display for the games after it.
+        """
         progress = int(getattr(self, "_db_progress_pct", 0))
         if progress != self.progress.value():
             self.progress.setValue(progress)
-            self.progress.show()
-        if progress >= 100:
-            self._db_progress_timer.stop()
-            self.progress.hide()
-            if self.match_label.text().startswith(("Building", "Processing")):
-                current_game = os.path.basename(get_database_path())
-                self.match_label.setText(f"{current_game} database ready. Scan a card to begin.")
 
     # ------------------------------------------------------------------ camera
 
     def start_camera(self) -> None:
-        """Open the camera, trying DirectShow → MSMF → generic backends in order."""
+        """Open the camera via the shared backend-probe helper, then start the preview."""
         self.stop_camera()
         cv2.destroyAllWindows()
 
-        system = platform.system()
-        if system == "Windows":
-            backends = [
-                (cv2.CAP_DSHOW, "DirectShow"),
-                (cv2.CAP_MSMF, "Media Foundation"),
-                (cv2.CAP_ANY, "Default"),
-            ]
-        elif system == "Linux":
-            backends = [
-                (cv2.CAP_V4L2, "V4L2"),
-                (cv2.CAP_ANY, "Default"),
-            ]
-        else:  # macOS and others
-            backends = [
-                (cv2.CAP_AVFOUNDATION, "AVFoundation"),
-                (cv2.CAP_ANY, "Default"),
-            ]
-
-        camera_opened = False
-        last_error = None
-
-        for backend_flag, backend_name in backends:
-            try:
-                self.logger.info(f"Trying camera {self.camera_index} with {backend_name}…")
-                self.cap = (
-                    cv2.VideoCapture(self.camera_index)
-                    if backend_flag == cv2.CAP_ANY
-                    else cv2.VideoCapture(self.camera_index + backend_flag)
-                )
-                if not self.cap.isOpened():
-                    raise RuntimeError(f"{backend_name} failed to open camera")
-
-                for prop, value, name in [
-                    (cv2.CAP_PROP_BUFFERSIZE, 1, "Buffer Size"),
-                    (cv2.CAP_PROP_FRAME_WIDTH, 1280, "Width"),
-                    (cv2.CAP_PROP_FRAME_HEIGHT, 720, "Height"),
-                    (cv2.CAP_PROP_FPS, 30, "FPS"),
-                    (cv2.CAP_PROP_AUTOFOCUS, 1, "Autofocus"),
-                    (cv2.CAP_PROP_AUTO_EXPOSURE, 1, "Auto Exposure"),
-                ]:
-                    try:
-                        self.cap.set(prop, value)
-                    except Exception:
-                        pass
-
-                ret, frame = self.cap.read()
-                if not ret or frame is None or frame.size == 0:
-                    raise RuntimeError("Camera not providing valid frames")
-
-                camera_opened = True
-                self.logger.info(f"Camera opened with {backend_name}")
-                break
-
-            except Exception as e:
-                last_error = str(e)
-                self.logger.warning(f"Failed with {backend_name}: {e}")
-                if self.cap is not None:
-                    self.cap.release()
-                    self.cap = None
-
-        if not camera_opened:
-            self._fail_and_stop(
-                f"Failed to open camera {self.camera_index} with any backend"
-                + (f"\nLast error: {last_error}" if last_error else "")
-            )
-            return
-
-        # Warm-up
-        ok = False
-        for _ in range(30):
-            try:
-                ret, frm = self.cap.read()
-                if ret and frm is not None and frm.size > 0:
-                    ok = True
-                    break
-            except Exception:
-                pass
-            time.sleep(0.1)
-
-        if not ok:
-            self._fail_and_stop("Camera opened but not delivering frames.")
+        # open_capture() (lorebook.hardware.camera) holds the platform backend
+        # probe + warm-up logic shared with the headless sorter.
+        try:
+            self.cap = open_capture(self.camera_index)
+        except Exception as e:
+            self.cap = None
+            self._fail_and_stop(str(e))
             return
 
         self.read_fail_count = 0
@@ -645,12 +632,7 @@ class MainWindow(QWidget):
 
     def _focus_rect(self, h: int, w: int) -> Tuple[int, int, int, int]:
         """Return (fx, fy, fw, fh) for a 63:88 portrait focus box at ~60% of frame height."""
-        card_ratio = 63 / 88.0
-        fh = min(int(h * 0.6), h - 4)
-        fw = min(int(fh * card_ratio), w - 4)
-        fx = max((w - fw) // 2, 2)
-        fy = max((h - fh) // 2, 2)
-        return fx, fy, fw, fh
+        return focus_rect(h, w)
 
     def _grab_frame(self) -> None:
         """Grab a camera frame, draw the focus overlay, and update the preview label."""
@@ -670,6 +652,11 @@ class MainWindow(QWidget):
             if self.rotate_display:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
             self.last_frame = frame.copy()
+
+            if self.auto_scan:
+                small = cv2.resize(crop_to_card(frame), (64, 64), interpolation=cv2.INTER_AREA)
+                if self._motion_gate.update(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)):
+                    self.capture_and_match()
 
             overlay = frame.copy()
             h, w = overlay.shape[:2]
@@ -705,12 +692,7 @@ class MainWindow(QWidget):
         img_bgr = self.last_frame.copy()
 
         if self.crop_to_focus:
-            h, w = img_bgr.shape[:2]
-            fx, fy, fw, fh = self._focus_rect(h, w)
-            fx, fy = max(fx, 0), max(fy, 0)
-            fw, fh = min(fw, w - fx), min(fh, h - fy)
-            if fw > 10 and fh > 10:
-                img_bgr = img_bgr[fy:fy + fh, fx:fx + fw].copy()
+            img_bgr = crop_to_card(img_bgr)
 
         self.foil_check.setChecked(self.keep_foil_checked or is_probably_foil(img_bgr, threshold=self.foil_threshold))
 
@@ -722,10 +704,7 @@ class MainWindow(QWidget):
 
         # Reload featureDB only when the active game changed (or after a rebuild)
         if self._loaded_game != active_game or not self.featureDB:
-            set_database_path(active_game)
-            self.featureDB = load_cache()
-            self._loaded_game = active_game if self.featureDB else None
-            self.logger.info(f"Loaded {len(self.featureDB)} entries for {active_game}")
+            self.load_game_database(active_game)
         if not self.featureDB:
             self.match_label.setText("No feature database found. Build the DB first.")
             self.add_csv_btn.setEnabled(False)
@@ -737,7 +716,7 @@ class MainWindow(QWidget):
             self.add_csv_btn.setEnabled(False)
             return
 
-        matches = find_best_matches(features, self.featureDB, threshold=self.confidence_threshold)
+        matches = self._match_index.find(features, threshold=self.confidence_threshold)
         matches = self._filter_matches(matches)
         self.logger.info(f"Found {len(matches)} matches after filtering")
 
@@ -751,6 +730,13 @@ class MainWindow(QWidget):
         self._show_match_at(0)
         self.add_csv_btn.setEnabled(True)
 
+        # After _show_match_at so the warning isn't overwritten by its label text.
+        if len(matches) >= 2 and (matches[0][1] - matches[1][1]) < self.AMBIGUOUS_GAP:
+            self.match_label.setText(
+                f"⚠ Close match ({matches[0][1]:.1%} vs {matches[1][1]:.1%}) — "
+                "check alternatives with A/D before adding."
+            )
+
     def _show_match_at(self, idx: int) -> None:
         """Display the match at position idx in the result panel."""
         if not self.last_matches:
@@ -759,15 +745,17 @@ class MainWindow(QWidget):
         self.current_match_idx = idx
         fname, score = self.last_matches[idx]
 
-        set_code, card_code = _split_filename(fname)
-        self.match_name_label.setText(f"{set_code}-{card_code}" if set_code else fname)
+        set_code, card_code = split_filename(fname)
+        active_game = self.get_active_game()
+        code = f"{set_code}-{card_code}" if set_code else fname
+        card_name = name_for(set_code, card_code, active_game) if active_game else None
+        self.match_name_label.setText(f"{card_name}  ·  {code}" if card_name else code)
         self.match_detail_label.setText(
             f"Set {set_code}  ·  {score:.1%} match" if set_code else f"{score:.1%} match"
         )
         self.match_pos_label.setText(f"{idx + 1} / {len(self.last_matches)}")
         self.match_label.setText(f"{score:.3f}  {fname}")
 
-        active_game = self.get_active_game()
         if active_game:
             match_path = os.path.join("Card_Images", active_game, fname)
             img = cv2.imread(match_path, cv2.IMREAD_COLOR)
@@ -801,7 +789,7 @@ class MainWindow(QWidget):
         game_selected_sets = self.selected_sets.get(active_game, [])
         filtered = []
         for fname, score in matches:
-            set_code, _ = _split_filename(os.path.basename(fname))
+            set_code, _ = split_filename(os.path.basename(fname))
             if not game_selected_sets or set_code in game_selected_sets:
                 filtered.append((fname, score))
         return filtered
@@ -820,17 +808,35 @@ class MainWindow(QWidget):
         fname = self.last_matches[self.current_match_idx][0]
         try:
             cnt = int(self.count_edit.text())
-        except Exception:
-            cnt = 1
+        except ValueError:
+            cnt = 0
+        if cnt < 1:
+            # Refuse rather than silently adding 1 — a typo'd count ("1o",
+            # empty field) must not corrupt the collection.
+            self.set_status("Invalid count — enter a number from 1 to 999.", is_error=True)
+            return
         is_foil = self.foil_check.isChecked()
 
         active_game = self.get_active_game() or "Lorcana"
-        full_path = os.path.join("Card_Images", active_game, fname)
-        target_file = "RiftboundList.csv" if active_game.lower() == "riftbound" else "LorcanaList.csv"
+        target_file = csv_for_game(active_game)
 
-        update_cardlist(full_path, is_foil, cnt)
+        update_cardlist(fname, is_foil, cnt, game=active_game)
+        self._last_add = (fname, is_foil, cnt, active_game)
+        self.undo_btn.setEnabled(True)
         self.set_status(f"Added {cnt}× {fname} to {target_file}")
         self.add_csv_btn.setEnabled(False)
+        self.collection_view.refresh()
+
+    def undo_last_add(self) -> None:
+        """Reverse the most recent Add (single-level undo)."""
+        if not self._last_add:
+            return
+        fname, is_foil, cnt, game = self._last_add
+        update_cardlist(fname, is_foil, -cnt, game=game, allow_negative=True)
+        self._last_add = None
+        self.undo_btn.setEnabled(False)
+        self.set_status(f"Removed {cnt}× {fname}")
+        self.collection_view.refresh()
 
     # ------------------------------------------------------------------ display helpers
 
@@ -873,13 +879,57 @@ class MainWindow(QWidget):
             )
         )
 
+    # ------------------------------------------------------------------ scaling
+
+    def _apply_scale(self) -> None:
+        """
+        Scale the fixed-size chrome — scan FAB, Add/Undo buttons, result panel,
+        thumbnail — with the window height, so the layout works maximized and
+        small alike. Clamps keep everything usable at the extremes.
+        """
+        h = max(self.height(), 1)
+
+        # Scan FAB: ~7% of window height; pill radius and font follow.
+        fab_h = int(min(max(h * 0.07, 48), 76))
+        fab_font = int(min(max(fab_h * 0.29, 14), 19))
+        self.capture_btn.setMinimumSize(int(fab_h * 3.6), fab_h)
+        self.capture_btn.setStyleSheet(
+            f"QPushButton#scanBtn {{ border-radius: {fab_h // 2}px; "
+            f"font-size: {fab_font}px; padding: 0 {fab_h // 2}px; }}"
+        )
+
+        # Add to Collection / Undo: modestly taller on big windows.
+        btn_h = int(min(max(h * 0.035, 28), 40))
+        self.add_csv_btn.setMinimumHeight(btn_h)
+        self.undo_btn.setMinimumHeight(btn_h)
+
+        # Result panel and its card thumbnail grow together (92x128 aspect).
+        panel_h = int(min(max(h * 0.20, 140), 200))
+        self.result_panel.setFixedHeight(panel_h)
+        thumb_h = panel_h - 24
+        self.image_label.setFixedSize(int(thumb_h * 92 / 128), thumb_h)
+
+    def resizeEvent(self, event):
+        self._apply_scale()
+        super().resizeEvent(event)
+
     # ------------------------------------------------------------------ keyboard
 
     def focusInEvent(self, event):
         self.setFocus()
         super().focusInEvent(event)
 
+    def _on_tab_changed(self, index: int) -> None:
+        """Refresh the collection table whenever its tab becomes visible."""
+        if self.tabs.widget(index) is self.collection_view:
+            self.collection_view.refresh()
+
     def keyPressEvent(self, event):
+        # Scan shortcuts are Scanner-tab-only: browsing the collection table
+        # must not trigger captures or foil toggles.
+        if self.tabs.currentIndex() != self._scanner_tab_index:
+            super().keyPressEvent(event)
+            return
         key = event.key()
         if key == Qt.Key_C:
             event.accept()
@@ -887,6 +937,8 @@ class MainWindow(QWidget):
         elif key == Qt.Key_S and (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
             if self.add_csv_btn.isEnabled():
                 self.add_to_csv()
+        elif key == Qt.Key_Z and (event.modifiers() & Qt.ControlModifier):
+            self.undo_last_add()
         elif key == Qt.Key_A:
             self.prev_match()
         elif key == Qt.Key_D:
@@ -899,6 +951,7 @@ class MainWindow(QWidget):
     def _setup_tooltips(self):
         self.capture_btn.setToolTip("Scan Card (C)")
         self.add_csv_btn.setToolTip("Add to Collection (Ctrl+S or Alt+S)")
+        self.undo_btn.setToolTip("Undo last add (Ctrl+Z)")
         self.prev_btn.setToolTip("Previous match (A)")
         self.next_btn.setToolTip("Next match (D)")
         self.foil_check.setToolTip("Toggle Foil (F)")
