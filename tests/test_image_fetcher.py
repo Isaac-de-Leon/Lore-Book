@@ -112,6 +112,7 @@ class TestRiftboundTargets:
             {"collectorNumber": 2, "image_url": "u"},                    # no set
             {"set": "OGN", "image_url": "u"},                            # no number
             {"set": "OGN", "collectorNumber": 3, "image": {"x": "y"}},   # non-string url
+            {"set": {"id": "OGN"}, "number": 4, "image_url": "u"},       # nested set object
             "not-a-dict",
         ]
         assert list(riftbound_targets(data)) == []

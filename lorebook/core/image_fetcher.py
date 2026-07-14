@@ -160,9 +160,11 @@ def _fetch_riftbound(url: str):
 
 
 def _first_field(card: dict, *names):
+    """First non-empty scalar among the named fields (nested objects don't
+    stringify into usable codes/URLs, so they count as missing)."""
     for name in names:
         value = card.get(name)
-        if value not in (None, ""):
+        if isinstance(value, (str, int)) and str(value).strip():
             return value
     return None
 
