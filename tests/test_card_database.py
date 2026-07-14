@@ -61,6 +61,29 @@ class TestBatchedBuild:
         assert progress[-1] == 100
         assert set(load_cache(str(images))) == set(db)
 
+    def test_float64_vectors_round_trip_as_float32(self, tmp_path, monkeypatch):
+        # Regression: an extractor yielding float64 (e.g. sklearn-normalized)
+        # used to be saved as float64 bytes but re-read as float32, turning
+        # every cached vector into 2x-length NaN garbage.
+        monkeypatch.chdir(tmp_path)
+        images = tmp_path / "Lorcana"
+        self._make_images(images, 1)
+
+        class Float64Extractor:
+            def extract_batch(self, imgs):
+                v = np.zeros(4, np.float64)
+                v[0] = 1.0
+                return [v.copy() for _ in imgs]
+
+        build_feature_database(db_path=str(images), extractor=Float64Extractor())
+        reloaded = load_cache(str(images))
+
+        (vec,) = reloaded.values()
+        assert vec.dtype == np.float32
+        assert vec.shape == (4,)
+        assert np.isfinite(vec).all()
+        np.testing.assert_allclose(vec, [1.0, 0.0, 0.0, 0.0])
+
     def test_unreadable_image_skipped_not_fatal(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         images = tmp_path / "Lorcana"

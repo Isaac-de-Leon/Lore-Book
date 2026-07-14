@@ -167,9 +167,14 @@ def build_feature_database(
         try:
             _init_db(cache_file)
             with sqlite3.connect(cache_file) as conn:
+                # Cast defensively: load_cache reads blobs as float32, so any
+                # other dtype here would corrupt the round-trip.
                 conn.executemany(
                     "INSERT OR REPLACE INTO features (filename, vector) VALUES (?, ?)",
-                    [(k, v.tobytes()) for k, v in featureDB.items()],
+                    [
+                        (k, np.asarray(v, dtype=np.float32).tobytes())
+                        for k, v in featureDB.items()
+                    ],
                 )
             logging.info(f"Saved {len(featureDB)} entries to {cache_file}")
         except Exception as e:

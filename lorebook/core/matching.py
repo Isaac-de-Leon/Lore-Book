@@ -17,9 +17,15 @@ except Exception:
 
 
 def _l2_normalize(vec: np.ndarray) -> np.ndarray:
-    """L2-normalize a vector, using sklearn if available."""
+    """L2-normalize a vector, always returning float32.
+
+    float32 is a contract, not an optimization: cache blobs are written with
+    .tobytes() and read back with np.frombuffer(dtype=np.float32), so a
+    float64 vector here (e.g. sklearn's normalize upcasts list input) would
+    round-trip into 2x-length NaN garbage.
+    """
     if sk_normalize is not None:
-        return sk_normalize([vec])[0]
+        return np.asarray(sk_normalize([vec])[0], dtype=np.float32)
     v = np.asarray(vec, dtype=np.float32)
     n = float(np.linalg.norm(v))
     return v / n if n else v
