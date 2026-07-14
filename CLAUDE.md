@@ -24,7 +24,7 @@ Lore-Book/
 │   │   ├── features.py        # get_extractor("keras"|"tflite"), extract_features(+_batch), heatmap
 │   │   ├── card_database.py   # Feature cache build/load, set_database_path
 │   │   ├── card_names.py      # Optional card-name lookup (card_names_<Game>.json)
-│   │   ├── image_fetcher.py   # download_new_images — card art from LorcanaJSON
+│   │   ├── image_fetcher.py   # download_new_images — card art from LorcanaJSON / Riot API (Riftcodex fallback)
 │   │   └── csv_manager.py     # CSV read/write, update_cardlist(_batch), split_filename
 │   ├── hardware/          # Hardware abstraction (no Qt; mocks run on any desktop)
 │   │   ├── camera.py          # open_capture, CameraSource, OpenCVCameraSource, MockCameraSource
@@ -80,7 +80,7 @@ Lore-Book/
 | `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, constants |
 | `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` (auto-scan) |
 | `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
-| `lorebook/core/image_fetcher.py` | `download_new_images()` — fetch missing card art from LorcanaJSON into `Card_Images/<Game>/` (auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py`) |
+| `lorebook/core/image_fetcher.py` | `download_new_images()` — fetch missing card art into `Card_Images/<Game>/` (Lorcana: LorcanaJSON; Riftbound: Riot content API when `RIOT_API_KEY` is set, else Riftcodex). Auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py` |
 | `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
 | `lorebook/core/features.py` | `get_extractor(backend)` (keras/tflite), `extract_features`, `visualize_activation_overlay` |
 | `lorebook/core/card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
@@ -214,7 +214,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 - **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()` (`lorebook/core/image_utils.py`).
 - **Change match threshold** — core default is `0.70` in `find_best_matches()` / `MatchIndex.find()` (`lorebook/core/matching.py`); the GUI ships a stricter `0.90` default, exposed in Settings as confidence %. See `docs/MATCHING.md` for how the whole pipeline fits together.
 - **Show card names** — run `python scripts/fetch_card_names.py --game <Game>` once; the GUI/sorter pick up `card_names_<Game>.json` automatically (display-only, never written to the CSV).
-- **Get a new set's images** — the GUI's Rebuild Database button auto-downloads missing Lorcana card art from LorcanaJSON before rebuilding (offline → warning logged, build continues). CLI: `python scripts/fetch_card_images.py --game Lorcana [--set <N>] [--dry-run]`. Only Lorcana has a registered fetcher (`GAMES` in `lorebook/core/image_fetcher.py`); other games are skipped silently.
+- **Get a new set's images** — the GUI's Rebuild Database button auto-downloads missing card art before rebuilding (offline → warning logged, build continues). Lorcana pulls from LorcanaJSON; Riftbound uses the official Riot content API when the `RIOT_API_KEY` env var is set and falls back to the open Riftcodex API otherwise. CLI: `python scripts/fetch_card_images.py --game <Game> [--set <N>] [--dry-run]`. Registered fetchers live in `GAMES` (`lorebook/core/image_fetcher.py`); unregistered games are skipped silently.
 - **Change sort routing** — edit the rules JSON (see `configs/sort_rules.example.json`); the engine is `decide_bin()` in `lorebook/sorter/rules.py`. Unmatched cards always go to `reject_bin`.
 - **Implement the real transport** — subclass `Transport` (`lorebook/hardware/transport.py`); the pipeline needs `route_to_bin`, `advance`, `home`.
 - **Cache issues** — delete `DBCardCache_<game>.db` and rebuild with `--build` flag.
@@ -229,4 +229,5 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 - Camera index `0` may not be correct on machines with multiple cameras — adjust in Settings.
 - `foil_score` threshold (default `0.08`) was tuned empirically; may need adjustment per lighting setup.
 - `riot.txt` at the repo root is a Riot Games API domain-verification token — don't delete it.
+- Riftbound image fetching prefers the official Riot API (`RIOT_API_KEY` env var; dev keys from developer.riotgames.com expire every 24 h) and silently falls back to Riftcodex without one, so keyless runs still work. The two sources' JSON shapes are both handled by `riftbound_targets()`.
 - `PySide6` is pinned to the 6.8 LTS line for NumPy 2 compatibility (6.6's shiboken predates NumPy 2; 6.11.1 fails to bootstrap on Windows/Py3.12) — see the comment in `requirements.txt` before bumping.
