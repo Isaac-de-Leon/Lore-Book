@@ -6,10 +6,12 @@ A desktop trading-card scanner. Point a webcam at a physical card, and Lore-Book
 
 ## Features
 
-- Live camera preview with a card-shaped focus box; scan on demand (or press `C`)
-- Cosine-similarity matching against cached MobileNetV2 features (SQLite cache, built automatically)
+- Live camera preview with a card-shaped focus box; scan on demand (`C`) or **auto-scan** — a scan fires by itself when a card settles in the focus box (toggle in Settings)
+- Cosine-similarity matching against cached MobileNetV2 features (SQLite cache, built automatically), with a **close-match warning** when the top two candidates are nearly tied
+- **Card names** ("Elsa — Spirit of Winter · 009-041") from a locally cached names file, and **auto-download of reference card art** from LorcanaJSON (Rebuild Database fetches new sets by itself)
 - Foil detection (specular-highlight + contrast heuristic) with a manual override checkbox
-- Per-game collection CSVs (`LorcanaList.csv`, `RiftboundList.csv`, …) in Dreamborn's 4-column format
+- Per-game collection CSVs (`LorcanaList.csv`, `RiftboundList.csv`, …) in Dreamborn's 4-column format, with count validation and single-level **Undo** (`Ctrl+Z`)
+- A **Collection tab** to browse the current collection (sortable, per-game) and export a CSV copy
 - A headless multi-bin **card sorter** pipeline (`python -m lorebook.sorter`) with a JSON rules engine — motion hardware is mocked until the gantry exists (see `docs/SORTER_ROADMAP.md`)
 
 ## Setup
@@ -20,7 +22,15 @@ Requires Python 3.11+ and a webcam (only at runtime).
 pip install -r requirements.txt
 ```
 
-Place reference card images under `Card_Images/<Game>/`, named `<SetCode>-<CardCode>.<ext>` (e.g. `001-042.webp`). Then build the feature database once:
+Get reference card images into `Card_Images/<Game>/`, named `<SetCode>-<CardCode>.<ext>` (e.g. `001-042.webp`) — for Lorcana they can be downloaded automatically:
+
+```bash
+python scripts/fetch_card_images.py --game Lorcana   # card art (also auto-runs on Rebuild Database)
+python scripts/fetch_card_names.py --game Lorcana    # display names (optional, once per game)
+python scripts/fetch_card_names.py --game Riftbound
+```
+
+Then build the feature database once:
 
 ```bash
 python PhotoMatching.py --game Lorcana --build
@@ -34,7 +44,7 @@ Run the GUI:
 python UI.py
 ```
 
-Scan a card, review the match (navigate alternatives with `A`/`D`), toggle Foil with `F`, and add it to your collection with **+ Add to Collection** (`Ctrl+S`). The collection lives in `<Game>List.csv`.
+Scan a card, review the match (navigate alternatives with `A`/`D`), toggle Foil with `F`, and add it to your collection with **+ Add to Collection** (`Ctrl+S`); undo a mistaken add with `Ctrl+Z`. The collection lives in `<Game>List.csv` and is browsable in the **Collection** tab.
 
 Run the headless sorter (dry run over a folder of images, no CSV writes):
 

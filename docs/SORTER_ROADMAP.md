@@ -1,10 +1,11 @@
 # Lore-Book Card Sorter — Roadmap
 
-> Status: planning. This document sequences the work to turn Lore-Book from a desktop
-> webcam scanner into an automated physical **card sorter**. No sorter code exists yet;
-> this roadmap defines the phases, the reuse seams in the current codebase, and the key
-> technical decisions so the pure-software pieces can land and be tested on a desktop
-> **before** any hardware is built.
+> **Status: Phases 1–3 complete (merged to `main`); next up is Phase 4, hardware
+> bring-up, on the `sorter-dev` branch.** The tflite extractor backend, the headless
+> capture→match→decide→route pipeline (`python -m lorebook.sorter`, mock transport),
+> and the JSON rules engine are all implemented and covered by the test suite. This
+> document keeps the original phase plan for reference — completed phases are marked
+> with what actually landed — and remains the plan of record for Phases 4–5.
 
 ---
 
@@ -34,20 +35,24 @@ data source), and any production enclosure/mechanical design.
 
 ## 2. Architecture & module layout
 
-Two new packages, both kept importable on a laptop (hardware libraries imported lazily):
+Two packages, both importable on a laptop (hardware libraries imported lazily).
+**As built** (the planned `motion.py`/`pickup.py` pair was folded into a single
+`Transport` interface — `route_to_bin`/`advance`/`home` — until real hardware forces
+a split; example rules live in the repo-root `configs/`):
 
 ```
 lorebook/
 ├── core/            # EXISTING — game-agnostic, Qt-free. Reused as-is.
 ├── ui/              # EXISTING — PySide6 GUI. Untouched by the sorter.
-├── sorter/          # NEW — headless orchestration, no Qt, no top-level hardware imports
-│   ├── pipeline.py      # capture → extract → match → decide_bin → place → CSV
-│   ├── rules.py         # decide_bin() + rules-file loading (pure, unit-tested)
-│   └── config/          # example rules files (by-set, foil, matched-vs-reject)
-└── hardware/        # NEW — hardware abstraction: interface + real + mock impls
-    ├── camera.py        # CameraSource  (USB/OpenCV today, picamera2 later)
-    ├── motion.py        # MotionController (gantry X/Y/Z)
-    └── pickup.py        # CardPickup (vacuum / gripper)
+├── sorter/          # ✅ headless orchestration, no Qt, no top-level hardware imports
+│   ├── pipeline.py      # SortPipeline: capture → crop → match → decide_bin → route → CSV
+│   ├── rules.py         # Rule/SortRules, decide_bin() + JSON loading (pure, validated)
+│   └── __main__.py      # python -m lorebook.sorter CLI (also PhotoMatching.py --sort)
+└── hardware/        # ✅ hardware abstraction: interface + real + mock impls
+    ├── camera.py        # open_capture + CameraSource (OpenCV real, Mock replay)
+    └── transport.py     # Transport interface + MockTransport (real gantry driver = Phase 4)
+
+configs/sort_rules.example.json   # example multi-bin rules file
 ```
 
 **Data flow**
@@ -71,21 +76,27 @@ lorebook/
             └─▶ update_cardlist(filename, is_foil, count)  # lorebook/core/csv_manager.py
 ```
 
-### Reuse seams (already exist, Qt-free)
+### Reuse seams (all Qt-free, all in use by the pipeline today)
 
 | Capability | Symbol | File |
 |---|---|---|
-| Feature extraction | `extract_features()` | `lorebook/core/features.py:41` |
-| Lazy model load (to be wrapped by `get_extractor`) | `_get_models()` | `lorebook/core/features.py:31` |
-| Matching | `find_best_matches(feat, db, threshold=0.70)` | `lorebook/core/matching.py:43` |
+| Feature extraction (pluggable backend) | `get_extractor("keras"\|"tflite").extract(_batch)` | `lorebook/core/features.py` |
+| Matching (vectorized) | `MatchIndex.find()` / `find_best_matches()` | `lorebook/core/matching.py` |
 | Feature cache load / build / select game | `load_cache()`, `build_feature_database()`, `set_database_path()` | `lorebook/core/card_database.py` |
 | Foil detection | `is_probably_foil()` | `lorebook/core/image_utils.py` |
-| CSV write | `update_cardlist(filename, is_foil, count)` | `lorebook/core/csv_manager.py:104` |
-| Camera open/grab logic (currently Qt-bound — to factor out) | `start_camera()`, `_grab_frame()`, `capture_and_match()` | `lorebook/ui/main_window.py:524 / 655 / 699` |
+| Card-area crop (shared with the GUI) | `focus_rect()` / `crop_to_card()` | `lorebook/core/image_utils.py` |
+| Card-presence detection (for feed sequencing) | `MotionGate` | `lorebook/core/image_utils.py` |
+| CSV write (batched) | `update_cardlist_batch(cards, game=...)` | `lorebook/core/csv_manager.py` |
+| Camera open (shared with the GUI) | `open_capture()`, `CameraSource` | `lorebook/hardware/camera.py` |
 
 ---
 
-## 3. Phase 1 — tflite extractor seam *(pure software, no hardware)*
+## 3. Phase 1 — tflite extractor seam *(pure software, no hardware)* — ✅ DONE
+
+> Landed as designed: `get_extractor("keras"|"tflite")` in `lorebook/core/features.py`
+> (plus a batched `extract_batch` for fast DB builds), `scripts/convert_to_tflite.py`,
+> `scripts/check_parity.py`, and the `[sorter]` extra (`tflite-runtime`) in
+> `pyproject.toml`. Quantized models are rejected at load (float32-only guard).
 
 The current extractor hard-codes Keras MobileNetV2 (`lorebook/core/features.py`). Full TensorFlow
 is too heavy for a Pi, so the first step decouples inference behind a backend.
@@ -111,7 +122,13 @@ the GUI is unaffected.
 
 ---
 
-## 4. Phase 2 — headless capture→match loop *(dry run, still no motion)*
+## 4. Phase 2 — headless capture→match loop *(dry run, still no motion)* — ✅ DONE
+
+> Landed as `lorebook/hardware/camera.py` (shared `open_capture` + Mock replay source),
+> `lorebook/hardware/transport.py` (Mock), and `SortPipeline` in
+> `lorebook/sorter/pipeline.py`, run via `python -m lorebook.sorter` /
+> `PhotoMatching.py --sort`. Live-camera runs crop to the focus box (`--crop/--no-crop`);
+> CSV writes are batched and dry-run is the default.
 
 Prove the full software path end-to-end with motion stubbed.
 
@@ -128,7 +145,12 @@ logged bin decisions on a laptop, with zero hardware present.
 
 ---
 
-## 5. Phase 3 — configurable rules engine *(pure software)*
+## 5. Phase 3 — configurable rules engine *(pure software)* — ✅ DONE
+
+> Landed as `Rule`/`SortRules`/`decide_bin()` in `lorebook/sorter/rules.py` with strict
+> JSON validation (unknown/wrong-typed fields fail loudly), an example config at
+> `configs/sort_rules.example.json`, and full unit coverage. Unmatched cards always
+> route to `reject_bin`, bypassing the rule list.
 
 - A rules file (JSON/YAML) plus a **pure** function
   `decide_bin(match_result, is_foil, confidence, rules) -> bin_id` in `lorebook/sorter/rules.py`.

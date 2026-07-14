@@ -8,15 +8,17 @@ at which step.
 ## 0. Setup (once)
 
 ```bash
-git pull                      # on claude/code-review-improvements-5s9i9g
+git checkout main && git pull
 pip install -r requirements.txt
 python scripts/fetch_card_names.py --game Lorcana
 python scripts/fetch_card_names.py --game Riftbound
+python scripts/fetch_card_images.py --game Lorcana   # optional: card art
 ```
 
-- [ ] Both fetch commands print `Wrote N card names to card_names_<Game>.json`
-      (N in the low thousands for Lorcana). If either errors, save the full
-      output — the site format may differ from what the script expects.
+- [ ] Both name-fetch commands print `Wrote N card names to card_names_<Game>.json`
+      (N in the low thousands for Lorcana).
+- [ ] The image fetch skips files you already have and only downloads what's
+      missing; re-running it immediately downloads nothing.
 
 ## 1. Startup & database build
 
@@ -96,6 +98,15 @@ Enable "Auto-scan when a card settles in the focus box" in Settings, then:
       counts merged. No `.tmp` files left in the folder.
 - [ ] Import it into Dreamborn.ink bulk add — still accepted.
 
+## 9b. Collection tab & art auto-download
+
+- [ ] Switch to the **Collection** tab: the table shows your `<Game>List.csv`
+      rows, sorts by clicking headers, and follows the game dropdown.
+- [ ] **Export CSV…** saves a copy that opens cleanly (original untouched).
+- [ ] Settings → **Rebuild Database**: with new Lorcana sets available, missing
+      card art downloads automatically before the build; offline it logs a
+      warning and the build continues with what you have.
+
 ## 10. Camera robustness
 
 - [ ] Unplug the webcam mid-preview: within ~3s you get the "Camera stopped"
@@ -121,6 +132,6 @@ python -m lorebook.sorter --game Lorcana --source Card_Images/Lorcana \
 
 ## Reporting back
 
-Worth mentioning even if everything passes: fetch-script output for both games,
-whether the 2% close-match gap feels right, and whether auto-scan needed the
-`min_std` tweak — those three were calibrated blind.
+Worth mentioning even if everything passes: whether the 2% close-match gap
+feels right, and whether auto-scan needed the `min_std` tweak — both were
+calibrated without hardware.

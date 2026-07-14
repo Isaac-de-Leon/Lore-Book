@@ -27,10 +27,14 @@ camera frame ──► focus-box crop ──► MobileNetV2 ──► 1280-dim v
 3. **The reference cache.** `build_feature_database()`
    (`lorebook/core/card_database.py`) extracts a vector for every image in
    `Card_Images/<Game>/` and stores them in `DBCardCache_<Game>.db`
-   (SQLite, filename → vector blob). Incremental: only new images are
+   (SQLite, filename → **float32** vector blob — float32 is a contract:
+   blobs are read back with `np.frombuffer(dtype=np.float32)`, so any other
+   dtype would corrupt the round-trip). Incremental: only new images are
    processed; entries whose image was deleted are pruned (but a *missing*
    folder is treated as a bad path, never as "everything was deleted").
-   Delete the .db to force a full rebuild.
+   Delete the .db to force a full rebuild. Reference images themselves can be
+   auto-downloaded for Lorcana (`lorebook/core/image_fetcher.py` — runs on the
+   GUI's Rebuild Database, or via `scripts/fetch_card_images.py`).
 
 4. **Matching.** Because all vectors are unit-length, cosine similarity is a
    dot product. `MatchIndex` (`lorebook/core/matching.py`) stacks the cache

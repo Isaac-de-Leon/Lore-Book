@@ -229,3 +229,4 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 - Camera index `0` may not be correct on machines with multiple cameras — adjust in Settings.
 - `foil_score` threshold (default `0.08`) was tuned empirically; may need adjustment per lighting setup.
 - `riot.txt` at the repo root is a Riot Games API domain-verification token — don't delete it.
+- `PySide6` is pinned to the 6.8 LTS line for NumPy 2 compatibility (6.6's shiboken predates NumPy 2; 6.11.1 fails to bootstrap on Windows/Py3.12) — see the comment in `requirements.txt` before bumping.
