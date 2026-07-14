@@ -8,8 +8,11 @@
 # card_names lookups line up. Existing files are skipped, so re-running only
 # downloads what's new.
 #
-# Source (community-maintained; pass url= if the format changes):
-#   Lorcana — LorcanaJSON bulk data   https://lorcanajson.org
+# Sources (pass url= if a format changes):
+#   Lorcana   — LorcanaJSON bulk data (community)   https://lorcanajson.org
+#   Riftbound — Riot content API (official, needs RIOT_API_KEY env var)
+#               https://developer.riotgames.com/docs/riftbound
+#               falls back to the open Riftcodex API   https://riftcodex.com
 #
 # Note: card art is copyrighted by Ravensburger/Riot. Downloads are local, for
 # personal-collection use only (Card_Images/ is gitignored); nothing is
@@ -23,8 +26,11 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Iterable, Iterator, Optional, Tuple
+from urllib.parse import urlsplit
 
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
+RIFTBOUND_RIOT_URL = "https://americas.api.riotgames.com/riftbound/content/v1/contents?locale=en"
+RIFTBOUND_FALLBACK_URL = "https://riftcodex.com/api/cards"
 
 # A UA header — the Ravensburger image CDN can 403 an empty urllib agent.
 _UA = "Lore-Book-image-fetcher/1.0 (+https://github.com/; personal collection tool)"
@@ -38,8 +44,8 @@ class FetchStats:
     failed: int = 0
 
 
-def _fetch_json(url: str):
-    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+def _fetch_json(url: str, headers: Optional[dict] = None):
+    req = urllib.request.Request(url, headers={"User-Agent": _UA, **(headers or {})})
     with urllib.request.urlopen(req, timeout=120) as resp:
         return json.load(resp)
 
@@ -96,9 +102,120 @@ def lorcana_targets(data) -> Iterator[Tuple[str, str, str]]:
         yield set_code, number, best[(set_code, number)][1]
 
 
+def _riot_api_key() -> str:
+    return os.environ.get("RIOT_API_KEY", "").strip()
+
+
+def _is_riot_host(url: str) -> bool:
+    host = urlsplit(url).hostname or ""
+    return host == "api.riotgames.com" or host.endswith(".api.riotgames.com")
+
+
+def _fetch_riftbound_pages(url: str) -> list:
+    """
+    Fetch all cards from an offset-paginated card list (Riftcodex-style,
+    48-card pages): keep requesting until a page comes back short or repeats.
+    """
+    cards, offset, last_first_id = [], 0, None
+    for _ in range(200):  # hard cap: never loop forever on a misbehaving API
+        sep = "&" if "?" in url else "?"
+        page = _fetch_json(f"{url}{sep}offset={offset}" if offset else url)
+        if isinstance(page, dict):
+            page = page.get("cards", [])
+        if not page:
+            break
+        first_id = page[0].get("id") if isinstance(page[0], dict) else None
+        if first_id is not None and first_id == last_first_id:
+            break  # API ignored the offset; stop rather than duplicate
+        last_first_id = first_id
+        cards.extend(page)
+        if len(page) < 48:
+            break
+        offset += len(page)
+    return cards
+
+
+def _fetch_riftbound(url: str):
+    """
+    Fetch the Riftbound card list. On the default URL, the official Riot
+    content endpoint is used when RIOT_API_KEY is set; without a key — or if
+    the Riot call fails — the open Riftcodex API is used instead. An explicit
+    url= override is fetched as-is (the key header is only ever attached to
+    *.api.riotgames.com hosts).
+    """
+    key = _riot_api_key()
+    if url == RIFTBOUND_RIOT_URL:
+        if not key:
+            logging.info(f"RIOT_API_KEY not set; using {RIFTBOUND_FALLBACK_URL}")
+            return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
+        try:
+            return _fetch_json(url, headers={"X-Riot-Token": key})
+        except Exception as e:
+            logging.warning(f"Riot API fetch failed ({e}); "
+                            f"falling back to {RIFTBOUND_FALLBACK_URL}")
+            return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
+    if _is_riot_host(url):
+        return _fetch_json(url, headers={"X-Riot-Token": key} if key else None)
+    return _fetch_riftbound_pages(url)
+
+
+def _first_field(card: dict, *names):
+    """First non-empty scalar among the named fields (nested objects don't
+    stringify into usable codes/URLs, so they count as missing)."""
+    for name in names:
+        value = card.get(name)
+        if isinstance(value, (str, int)) and str(value).strip():
+            return value
+    return None
+
+
+def _riftbound_cards(data) -> Iterator[dict]:
+    """Flatten either Riftbound payload shape into a stream of card dicts."""
+    if isinstance(data, dict):
+        if isinstance(data.get("sets"), list):  # Riot content: sets → cards
+            for s in data["sets"]:
+                if isinstance(s, dict):
+                    yield from (c for c in s.get("cards") or [] if isinstance(c, dict))
+            return
+        data = data.get("cards", [])
+    yield from (c for c in data or [] if isinstance(c, dict))
+
+
+def riftbound_targets(data) -> Iterator[Tuple[str, str, str]]:
+    """
+    Yield (set_code, number, image_url) for every Riftbound card with art.
+
+    Handles both source payload shapes — the Riot content endpoint (sets →
+    cards with art.fullUrl) and the Riftcodex card list (flat cards with
+    media.image_url) — tolerating camelCase/snake_case spellings. Duplicate
+    set/number keys keep the first occurrence (there is no promo-collision
+    rule like Lorcana's).
+    """
+    seen = set()
+    for card in _riftbound_cards(data):
+        set_code = str(_first_field(card, "set", "setCode", "set_code", "set_id") or "").strip()
+        number = str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
+        art = card.get("art")
+        media = card.get("media")
+        url = (
+            _first_field(art if isinstance(art, dict) else {},
+                         "fullUrl", "full_url", "thumbnailUrl", "thumbnail_url")
+            or _first_field(media if isinstance(media, dict) else {}, "image_url", "imageUrl")
+            or _first_field(card, "image_url", "imageUrl", "image")
+        )
+        if not (set_code and number and isinstance(url, str)):
+            continue
+        key = (set_code, number)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield set_code, number, url
+
+
 # game key (lowercased folder name) → (bulk-data URL, fetcher, targets fn)
 GAMES = {
     "lorcana": (LORCANA_URL, _fetch_json, lorcana_targets),
+    "riftbound": (RIFTBOUND_RIOT_URL, _fetch_riftbound, riftbound_targets),
 }
 
 
@@ -149,7 +266,7 @@ def download_new_images(
     Download any missing card images for a game into out_dir.
 
     game: game folder name (e.g. "Lorcana"). Returns None when no fetcher is
-    registered for it (e.g. Riftbound) — callers should skip silently.
+    registered for it in GAMES — callers should skip silently.
     out_dir: defaults to Card_Images/<Game>.
     progress_callback: receives one-line status strings (per-image and summary).
     sets: restrict to these set codes ('9' and '009' both match); None = all.
