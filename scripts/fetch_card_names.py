@@ -51,15 +51,38 @@ def _fetch_riftbound(url: str):
     return cards
 
 
+def _is_promo_printing(card: dict) -> bool:
+    """
+    True for promo printings, which share their home set's setCode/number with
+    the main-set card in LorcanaJSON (e.g. Zeus "18/P3 · EN · 10" collides with
+    Scrooge "18/204 · EN · 10"). The fullIdentifier denominator tells them
+    apart: main-set cards have a numeric one. Must match the image fetcher's
+    rule (lorebook/core/image_fetcher.py) so names describe the downloaded art.
+    """
+    ident = str(card.get("fullIdentifier", ""))
+    denom = ident.split("/", 1)[1].split()[0] if "/" in ident else ""
+    return bool(denom) and not denom.isdigit()
+
+
 def lorcana_names(data) -> dict:
-    """Map LorcanaJSON allCards.json → {"<setCode>-<number>": fullName}."""
-    names = {}
+    """
+    Map LorcanaJSON allCards.json → {"<setCode>-<number>": fullName}.
+
+    Main-set printings win setCode-number collisions with promos (a promo name
+    is only kept when no main printing shares its key).
+    """
+    names, is_promo = {}, {}
     for card in (data or {}).get("cards", []):
         set_code = str(card.get("setCode", "")).strip()
         number = str(card.get("number", "")).strip()
         name = card.get("fullName") or card.get("name")
-        if set_code and number and name:
-            names[f"{set_code}-{number}"] = str(name)
+        if not (set_code and number and name):
+            continue
+        key = f"{set_code}-{number}"
+        promo = _is_promo_printing(card)
+        if key not in names or (is_promo[key] and not promo):
+            names[key] = str(name)
+            is_promo[key] = promo
     return names
 
 

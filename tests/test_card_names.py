@@ -69,6 +69,26 @@ class TestFetchMappers:
             "1-1": "Ariel",
         }
 
+    def test_lorcana_mapper_prefers_main_set_over_promo(self):
+        # Promo printings share their home set's setCode/number in LorcanaJSON
+        # (Zeus "18/P3" vs Scrooge "18/204", both setCode 10). The main-set
+        # name must win regardless of order; promo-only keys are still kept.
+        mod = _load_fetch_module()
+        data = {"cards": [
+            {"setCode": "10", "number": 18, "fullName": "Zeus - Missing His Spark",
+             "fullIdentifier": "18/P3 · EN · 10"},
+            {"setCode": "10", "number": 18, "fullName": "Scrooge McDuck - Cavern Prospector",
+             "fullIdentifier": "18/204 · EN · 10"},
+            {"setCode": "10", "number": 99, "fullName": "Promo Only",
+             "fullIdentifier": "99/P3 · EN · 10"},
+        ]}
+        names = mod.lorcana_names(data)
+        assert names["10-18"] == "Scrooge McDuck - Cavern Prospector"
+        assert names["10-99"] == "Promo Only"
+        # ...and with main-set first, a later promo must not overwrite it
+        data["cards"].reverse()
+        assert mod.lorcana_names(data)["10-18"] == "Scrooge McDuck - Cavern Prospector"
+
     def test_riftbound_mapper_accepts_both_shapes_and_spellings(self):
         mod = _load_fetch_module()
         as_list = [{"set": "OGN", "number": "23c", "name": "Jinx"}]
