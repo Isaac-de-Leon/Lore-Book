@@ -98,6 +98,14 @@ def _normalize_existing_rows(csv_path: str) -> List[List[str]]:
         return rows
 
 
+def read_collection_rows(game: str) -> List[List[str]]:
+    """
+    Return the collection rows for a game as normalized 4-column lists
+    [Set Number, Card Number, Variant, Count]. Missing file → [].
+    """
+    return _normalize_existing_rows(csv_for_game(game))
+
+
 def _write_rows_4col(csv_path: str, rows: List[List[str]]) -> None:
     """
     Write rows to CSV with a 4-column header.

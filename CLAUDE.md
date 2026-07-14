@@ -24,6 +24,7 @@ Lore-Book/
 │   │   ├── features.py        # get_extractor("keras"|"tflite"), extract_features(+_batch), heatmap
 │   │   ├── card_database.py   # Feature cache build/load, set_database_path
 │   │   ├── card_names.py      # Optional card-name lookup (card_names_<Game>.json)
+│   │   ├── image_fetcher.py   # download_new_images — card art from LorcanaJSON
 │   │   └── csv_manager.py     # CSV read/write, update_cardlist(_batch), split_filename
 │   ├── hardware/          # Hardware abstraction (no Qt; mocks run on any desktop)
 │   │   ├── camera.py          # open_capture, CameraSource, OpenCVCameraSource, MockCameraSource
@@ -36,7 +37,8 @@ Lore-Book/
 │       ├── app.py             # main() — QApplication bootstrap (lorebook-ui script)
 │       ├── styles.py          # APP_STYLESHEET dark theme
 │       ├── settings_window.py # SettingsWindow dialog
-│       └── main_window.py     # MainWindow: camera, scan, match nav, CSV export
+│       ├── collection_view.py # Collection tab: CSV table + Export CSV button
+│       └── main_window.py     # MainWindow: Scanner/Collection tabs, camera, match nav
 │
 ├── .github/workflows/tests.yml # CI: pytest on every push/PR (no TF needed)
 ├── configs/
@@ -44,7 +46,8 @@ Lore-Book/
 ├── scripts/
 │   ├── convert_to_tflite.py    # Export the feature model → mobilenetv2_features.tflite
 │   ├── check_parity.py         # Verify keras vs tflite vectors agree
-│   └── fetch_card_names.py     # Download card names → card_names_<Game>.json (gitignored)
+│   ├── fetch_card_names.py     # Download card names → card_names_<Game>.json (gitignored)
+│   └── fetch_card_images.py    # CLI over image_fetcher — card art → Card_Images/<Game>/
 ├── docs/
 │   ├── MATCHING.md             # How recognition works (pipeline, thresholds)
 │   └── SORTER_ROADMAP.md       # Phased plan for the physical sorter
@@ -64,6 +67,7 @@ Lore-Book/
     ├── test_matching_index.py
     ├── test_card_database.py
     ├── test_card_names.py
+    ├── test_image_fetcher.py
     ├── test_camera.py
     ├── test_sorter_rules.py
     └── test_sorter_pipeline.py
@@ -76,10 +80,11 @@ Lore-Book/
 | `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, constants |
 | `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` (auto-scan) |
 | `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
+| `lorebook/core/image_fetcher.py` | `download_new_images()` — fetch missing card art from LorcanaJSON into `Card_Images/<Game>/` (auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py`) |
 | `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
 | `lorebook/core/features.py` | `get_extractor(backend)` (keras/tflite), `extract_features`, `visualize_activation_overlay` |
 | `lorebook/core/card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
-| `lorebook/core/csv_manager.py` | `update_cardlist`, `update_cardlist_batch`, `split_filename`, `get_available_sets` |
+| `lorebook/core/csv_manager.py` | `update_cardlist`, `update_cardlist_batch`, `split_filename`, `get_available_sets`, `read_collection_rows` |
 | `lorebook/hardware/camera.py` | `open_capture` (shared with GUI), `CameraSource` + OpenCV/Mock implementations |
 | `lorebook/hardware/transport.py` | `Transport` interface, `MockTransport` (real gantry driver comes later) |
 | `lorebook/sorter/rules.py` | `Rule`, `SortRules`, `load_rules`, `decide_bin` |
@@ -87,7 +92,8 @@ Lore-Book/
 | `lorebook/sorter/__main__.py` | `python -m lorebook.sorter` argument parsing and wiring |
 | `lorebook/ui/styles.py` | `APP_STYLESHEET` dark theme |
 | `lorebook/ui/settings_window.py` | `SettingsWindow` PySide6 dialog |
-| `lorebook/ui/main_window.py` | `MainWindow`, `setup_logging` |
+| `lorebook/ui/collection_view.py` | `CollectionView` — read-only collection table (game dropdown, sortable, Export CSV… save-a-copy) |
+| `lorebook/ui/main_window.py` | `MainWindow` (Scanner + Collection tabs, responsive `_apply_scale`), `setup_logging` |
 | `lorebook/ui/app.py` | `main()` — QApplication bootstrap (installed as `lorebook-ui`) |
 | `UI.py` | Thin wrapper around `lorebook.ui.app.main()` |
 | `PhotoMatching.py` | Re-exports all of the above for backward compatibility; also runnable as CLI |
@@ -208,6 +214,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 - **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()` (`lorebook/core/image_utils.py`).
 - **Change match threshold** — core default is `0.70` in `find_best_matches()` / `MatchIndex.find()` (`lorebook/core/matching.py`); the GUI ships a stricter `0.90` default, exposed in Settings as confidence %. See `docs/MATCHING.md` for how the whole pipeline fits together.
 - **Show card names** — run `python scripts/fetch_card_names.py --game <Game>` once; the GUI/sorter pick up `card_names_<Game>.json` automatically (display-only, never written to the CSV).
+- **Get a new set's images** — the GUI's Rebuild Database button auto-downloads missing Lorcana card art from LorcanaJSON before rebuilding (offline → warning logged, build continues). CLI: `python scripts/fetch_card_images.py --game Lorcana [--set <N>] [--dry-run]`. Only Lorcana has a registered fetcher (`GAMES` in `lorebook/core/image_fetcher.py`); other games are skipped silently.
 - **Change sort routing** — edit the rules JSON (see `configs/sort_rules.example.json`); the engine is `decide_bin()` in `lorebook/sorter/rules.py`. Unmatched cards always go to `reject_bin`.
 - **Implement the real transport** — subclass `Transport` (`lorebook/hardware/transport.py`); the pipeline needs `route_to_bin`, `advance`, `home`.
 - **Cache issues** — delete `DBCardCache_<game>.db` and rebuild with `--build` flag.

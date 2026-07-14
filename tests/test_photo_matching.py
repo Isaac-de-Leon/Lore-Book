@@ -109,6 +109,14 @@ class TestL2Normalize:
         # Should not raise; result is zero vector
         assert result.shape == (5,)
 
+    def test_always_returns_float32(self):
+        # float32 is a cache contract: blobs are read back with
+        # np.frombuffer(dtype=np.float32), so a float64 result here (sklearn's
+        # normalize upcasts) silently corrupts every stored vector into NaN.
+        for dtype in (np.float32, np.float64):
+            result = _l2_normalize(np.array([3.0, 4.0], dtype=dtype))
+            assert result.dtype == np.float32, f"input {dtype} -> {result.dtype}"
+
 
 # ===========================================================================
 # _cosine_score
@@ -495,6 +503,26 @@ class TestNormalizeExistingRows:
         self._write_csv(p, [["009", "041", "normal", ""]])
         rows = _normalize_existing_rows(str(p))
         assert rows[0][3] == "0"
+
+
+class TestReadCollectionRows:
+    def test_reads_games_csv_normalized(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with open("LorcanaList.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
+            writer.writerow(["009", "041", "normal", "2"])
+            writer.writerow(["001", "007", "foil"])  # legacy 3-col row
+        from lorebook.core.csv_manager import read_collection_rows
+        assert read_collection_rows("Lorcana") == [
+            ["009", "041", "normal", "2"],
+            ["001", "007", "foil", "0"],
+        ]
+
+    def test_missing_file_returns_empty(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from lorebook.core.csv_manager import read_collection_rows
+        assert read_collection_rows("Riftbound") == []
 
 
 class TestWriteRows4Col:

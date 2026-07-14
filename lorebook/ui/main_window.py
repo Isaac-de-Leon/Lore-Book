@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
     QProgressBar,
@@ -36,9 +37,11 @@ from lorebook.core.card_names import name_for
 from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
+from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import MotionGate, crop_to_card, focus_rect, is_probably_foil
 from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import open_capture
+from lorebook.ui.collection_view import CollectionView
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import APP_STYLESHEET
 
@@ -219,7 +222,8 @@ class MainWindow(QWidget):
         # ── Result panel ─────────────────────────────────────────────────────
         result_panel = QFrame()
         result_panel.setObjectName("resultPanel")
-        result_panel.setFixedHeight(152)
+        # Height is set by _apply_scale (scales with the window, 140-200px).
+        self.result_panel = result_panel
 
         # Thumbnail (card image)
         self.image_label = QLabel()
@@ -320,16 +324,33 @@ class MainWindow(QWidget):
         top.addWidget(self.stop_btn)
         top.addWidget(self.settings_btn)
 
+        # ── Tabs: Scanner / Collection ────────────────────────────────────────
+        scanner_tab = QWidget()
+        scanner_layout = QVBoxLayout()
+        scanner_layout.setContentsMargins(0, 8, 0, 0)
+        scanner_layout.setSpacing(8)
+        scanner_layout.addWidget(self.preview_label, stretch=1)
+        scanner_layout.addWidget(self.match_label)
+        scanner_layout.addWidget(result_panel)
+        scanner_layout.addLayout(scan_row)
+        scanner_tab.setLayout(scanner_layout)
+
+        self.collection_view = CollectionView(initial_game=self.get_active_game())
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(scanner_tab, "Scanner")
+        self.tabs.addTab(self.collection_view, "Collection")
+        self._scanner_tab_index = 0
+        # Pick up CSV changes made while the tab was hidden (scans, undo, edits)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
         # ── Root layout ───────────────────────────────────────────────────────
         root = QVBoxLayout()
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
         root.addLayout(top)
         root.addWidget(self.progress)
-        root.addWidget(self.preview_label, stretch=1)
-        root.addWidget(self.match_label)
-        root.addWidget(result_panel)
-        root.addLayout(scan_row)
+        root.addWidget(self.tabs, stretch=1)
         self.setLayout(root)
 
         # Signals from background build threads → main-thread slots
@@ -360,6 +381,7 @@ class MainWindow(QWidget):
             widget.setFocusPolicy(Qt.NoFocus)
         self.count_edit.setFocusPolicy(Qt.StrongFocus)
 
+        self._apply_scale()
         self.start_db_build_in_background()
 
     # ------------------------------------------------------------------ settings
@@ -490,6 +512,28 @@ class MainWindow(QWidget):
         for game_name in game_folders:
             game_path = os.path.join("Card_Images", game_name)
             self._db_progress_pct = 0
+
+            # Download any newly released card images first (no-op for games
+            # without a registered fetcher). A fetch failure — offline, source
+            # down, format change — must never block the build itself.
+            try:
+                self.build_status.emit(f"Checking for new {game_name} card images…")
+                stats = download_new_images(
+                    game_name,
+                    out_dir=game_path,
+                    progress_callback=self.build_status.emit,
+                )
+                if stats and stats.downloaded:
+                    self.logger.info(
+                        f"Downloaded {stats.downloaded} new {game_name} images "
+                        f"({stats.failed} failed)"
+                    )
+                    self.build_status.emit(
+                        f"Downloaded {stats.downloaded} new {game_name} card images"
+                    )
+            except Exception as e:
+                self.logger.warning(f"Image fetch for {game_name} failed (continuing build): {e}")
+
             self.build_status.emit(f"Building {game_name} database…")
 
             for attempt in range(1, 4):  # initial try + 2 retries
@@ -781,6 +825,7 @@ class MainWindow(QWidget):
         self.undo_btn.setEnabled(True)
         self.set_status(f"Added {cnt}× {fname} to {target_file}")
         self.add_csv_btn.setEnabled(False)
+        self.collection_view.refresh()
 
     def undo_last_add(self) -> None:
         """Reverse the most recent Add (single-level undo)."""
@@ -791,6 +836,7 @@ class MainWindow(QWidget):
         self._last_add = None
         self.undo_btn.setEnabled(False)
         self.set_status(f"Removed {cnt}× {fname}")
+        self.collection_view.refresh()
 
     # ------------------------------------------------------------------ display helpers
 
@@ -833,13 +879,57 @@ class MainWindow(QWidget):
             )
         )
 
+    # ------------------------------------------------------------------ scaling
+
+    def _apply_scale(self) -> None:
+        """
+        Scale the fixed-size chrome — scan FAB, Add/Undo buttons, result panel,
+        thumbnail — with the window height, so the layout works maximized and
+        small alike. Clamps keep everything usable at the extremes.
+        """
+        h = max(self.height(), 1)
+
+        # Scan FAB: ~7% of window height; pill radius and font follow.
+        fab_h = int(min(max(h * 0.07, 48), 76))
+        fab_font = int(min(max(fab_h * 0.29, 14), 19))
+        self.capture_btn.setMinimumSize(int(fab_h * 3.6), fab_h)
+        self.capture_btn.setStyleSheet(
+            f"QPushButton#scanBtn {{ border-radius: {fab_h // 2}px; "
+            f"font-size: {fab_font}px; padding: 0 {fab_h // 2}px; }}"
+        )
+
+        # Add to Collection / Undo: modestly taller on big windows.
+        btn_h = int(min(max(h * 0.035, 28), 40))
+        self.add_csv_btn.setMinimumHeight(btn_h)
+        self.undo_btn.setMinimumHeight(btn_h)
+
+        # Result panel and its card thumbnail grow together (92x128 aspect).
+        panel_h = int(min(max(h * 0.20, 140), 200))
+        self.result_panel.setFixedHeight(panel_h)
+        thumb_h = panel_h - 24
+        self.image_label.setFixedSize(int(thumb_h * 92 / 128), thumb_h)
+
+    def resizeEvent(self, event):
+        self._apply_scale()
+        super().resizeEvent(event)
+
     # ------------------------------------------------------------------ keyboard
 
     def focusInEvent(self, event):
         self.setFocus()
         super().focusInEvent(event)
 
+    def _on_tab_changed(self, index: int) -> None:
+        """Refresh the collection table whenever its tab becomes visible."""
+        if self.tabs.widget(index) is self.collection_view:
+            self.collection_view.refresh()
+
     def keyPressEvent(self, event):
+        # Scan shortcuts are Scanner-tab-only: browsing the collection table
+        # must not trigger captures or foil toggles.
+        if self.tabs.currentIndex() != self._scanner_tab_index:
+            super().keyPressEvent(event)
+            return
         key = event.key()
         if key == Qt.Key_C:
             event.accept()

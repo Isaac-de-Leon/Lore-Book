@@ -38,3 +38,4 @@ captured_cards/
 # If you keep large image sets out of git (optional)
 # Card_Images/**
 # !Card_Images/.gitkeep
+logs/

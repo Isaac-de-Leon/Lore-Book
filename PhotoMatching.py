@@ -24,6 +24,7 @@ from lorebook.core.csv_manager import (
     split_filename,
     _write_rows_4col,
     get_available_sets,
+    read_collection_rows,
     update_cardlist,
     update_cardlist_batch,
 )
