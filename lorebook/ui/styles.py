@@ -125,19 +125,20 @@ QComboBox QAbstractItemView {
     selection-color: #fff;
 }
 
-/* ── Progress bar (thin accent strip) ─────────────────── */
-QProgressBar {
+/* ── Progress bar (DB build dialog) ───────────────────── */
+QProgressBar#buildProgressBar {
     background-color: #21262D;
-    border: none;
-    border-radius: 2px;
-    max-height: 4px;
+    border: 1px solid #30363D;
+    border-radius: 5px;
+    min-height: 18px;
+    max-height: 18px;
     text-align: center;
-    color: transparent;
+    color: #E6EDF3;
 }
-QProgressBar::chunk {
+QProgressBar#buildProgressBar::chunk {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
         stop:0 #D97706, stop:1 #F97316);
-    border-radius: 2px;
+    border-radius: 4px;
 }
 
 /* ── Tabs (Scanner / Collection) ───────────────────────── */

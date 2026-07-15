@@ -1,5 +1,7 @@
 # tests/test_image_fetcher.py — card-image downloader (no network).
 
+import threading
+
 import numpy as np
 import pytest
 
@@ -288,6 +290,32 @@ class TestDownloadNewImages:
     def test_limit_caps_downloads(self, tmp_path):
         stats = download_new_images("Lorcana", out_dir=str(tmp_path), limit=1, delay=0)
         assert stats.downloaded == 1
+
+    def test_cancel_stops_between_downloads(self, tmp_path, monkeypatch):
+        cancel = threading.Event()
+
+        def download_then_cancel(url):
+            cancel.set()  # set mid-flight: takes effect before the next image
+            return self.jpg
+
+        monkeypatch.setattr(image_fetcher, "_download", download_then_cancel)
+        messages = []
+        stats = download_new_images(
+            "Lorcana", out_dir=str(tmp_path), delay=0,
+            progress_callback=messages.append, cancel_event=cancel,
+        )
+        assert stats.downloaded == 1
+        assert [p.name for p in tmp_path.iterdir()] == ["009-041.webp"]
+        assert any("cancelled" in m.lower() for m in messages)
+
+    def test_preset_cancel_downloads_nothing(self, tmp_path):
+        cancel = threading.Event()
+        cancel.set()
+        stats = download_new_images(
+            "Lorcana", out_dir=str(tmp_path), delay=0, cancel_event=cancel
+        )
+        assert stats.downloaded == 0
+        assert list(tmp_path.iterdir()) == []
 
     def test_riftbound_downloads_with_padded_names(self, tmp_path, monkeypatch):
         cards = [

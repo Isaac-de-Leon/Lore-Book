@@ -4,6 +4,7 @@ import concurrent.futures
 import logging
 import os
 import sqlite3
+import threading
 from typing import Callable, Dict, List, Optional, Tuple
 
 import cv2
@@ -95,6 +96,7 @@ def build_feature_database(
     max_workers: Optional[int] = None,
     db_path: Optional[str] = None,
     extractor=None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Dict[str, np.ndarray]:
     """
     Build or update the feature database for db_path (defaults to databasePath).
@@ -103,6 +105,9 @@ def build_feature_database(
     returns the full feature dict. Image reads run in a thread pool; feature
     extraction runs in batches through extractor.extract_batch (defaults to the
     keras backend, resolved lazily so importing this module never pulls in TF).
+
+    cancel_event: when set, the build stops between batches. Vectors extracted
+    so far are still written to the cache, so the next build resumes from them.
     """
     resolved = db_path or databasePath
     featureDB: Dict[str, np.ndarray] = {}
@@ -139,6 +144,9 @@ def build_feature_database(
         successful = failed = done = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             for start in range(0, total, _BATCH_SIZE):
+                if cancel_event is not None and cancel_event.is_set():
+                    logging.info(f"Build cancelled after {done}/{total} files in {resolved}")
+                    break
                 chunk = new_files[start:start + _BATCH_SIZE]
                 loaded = list(pool.map(lambda f: _read_image(f, resolved), chunk))
 

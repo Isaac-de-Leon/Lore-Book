@@ -37,6 +37,7 @@ Lore-Book/
 │       ├── app.py             # main() — QApplication bootstrap (lorebook-ui script)
 │       ├── styles.py          # APP_STYLESHEET dark theme
 │       ├── settings_window.py # SettingsWindow dialog
+│       ├── progress_dialog.py # BuildProgressDialog: DB build status/progress + Cancel
 │       ├── collection_view.py # Collection tab: CSV table + Export CSV button
 │       └── main_window.py     # MainWindow: Scanner/Collection tabs, camera, match nav
 │
@@ -92,6 +93,7 @@ Lore-Book/
 | `lorebook/sorter/__main__.py` | `python -m lorebook.sorter` argument parsing and wiring |
 | `lorebook/ui/styles.py` | `APP_STYLESHEET` dark theme |
 | `lorebook/ui/settings_window.py` | `SettingsWindow` PySide6 dialog |
+| `lorebook/ui/progress_dialog.py` | `BuildProgressDialog` — modeless DB-build progress popup with Cancel |
 | `lorebook/ui/collection_view.py` | `CollectionView` — read-only collection table (game dropdown, sortable, Export CSV… save-a-copy) |
 | `lorebook/ui/main_window.py` | `MainWindow` (Scanner + Collection tabs, responsive `_apply_scale`), `setup_logging` |
 | `lorebook/ui/app.py` | `main()` — QApplication bootstrap (installed as `lorebook-ui`) |

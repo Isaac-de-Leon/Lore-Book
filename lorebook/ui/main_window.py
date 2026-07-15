@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
-    QProgressBar,
 )
 
 from lorebook.core.card_database import (
@@ -42,6 +41,7 @@ from lorebook.core.image_utils import MotionGate, crop_to_card, focus_rect, is_p
 from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import open_capture
 from lorebook.ui.collection_view import CollectionView
+from lorebook.ui.progress_dialog import BuildProgressDialog
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import APP_STYLESHEET
 
@@ -84,7 +84,7 @@ class MainWindow(QWidget):
     - On-demand card scan: feature extraction → DB match → display results
     - Previous / Next navigation across top matches
     - One-click "Add to card list" writing to the appropriate CSV (with Undo)
-    - Background DB build with progress bar
+    - Background DB build with a progress dialog (status, percent, Cancel)
     - Settings persistence via ui_settings.json
 
     Threading rules
@@ -95,8 +95,10 @@ class MainWindow(QWidget):
       - writing the plain attribute ``_db_progress_pct`` (polled by a QTimer)
       - emitting the ``build_status`` / ``build_done`` signals (Qt delivers
         them on the main thread)
-    Everything else — widgets, featureDB/_match_index, settings, the
-    set_database_path global — is main-thread-only.
+      - reading the ``cancel_event`` passed in as a worker argument
+    Everything else — widgets (including the progress dialog),
+    featureDB/_match_index, settings, the set_database_path global — is
+    main-thread-only.
     """
 
     logger = logging.getLogger("MainWindow")
@@ -186,6 +188,11 @@ class MainWindow(QWidget):
         self.current_match_idx: int = 0
         self._last_add: Optional[Tuple[str, bool, int, str]] = None  # (fname, foil, count, game)
 
+        # DB build state (dialog created lazily on first build)
+        self._progress_dialog: Optional[BuildProgressDialog] = None
+        self._build_cancel_event = threading.Event()
+        self._build_thread: Optional[threading.Thread] = None
+
         self.load_settings()
 
         # ── Widgets ──────────────────────────────────────────────────────────
@@ -200,12 +207,6 @@ class MainWindow(QWidget):
         self.stop_btn.clicked.connect(self.stop_camera)
         self.settings_btn = QPushButton("⚙  Settings")
         self.settings_btn.clicked.connect(self.open_settings)
-
-        # Thin progress bar (DB build indicator)
-        self.progress = QProgressBar()
-        self.progress.setTextVisible(False)
-        self.progress.setValue(0)
-        self.progress.hide()
 
         # Camera preview
         self.preview_label = QLabel("Camera stopped")
@@ -349,12 +350,11 @@ class MainWindow(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
         root.addLayout(top)
-        root.addWidget(self.progress)
         root.addWidget(self.tabs, stretch=1)
         self.setLayout(root)
 
         # Signals from background build threads → main-thread slots
-        self.build_status.connect(self.match_label.setText)
+        self.build_status.connect(self._on_build_status)
         self.build_done.connect(self._on_build_done)
 
         # Timers
@@ -483,23 +483,42 @@ class MainWindow(QWidget):
             self.match_label.setText("No game folders found in Card_Images directory")
             return
 
-        self._db_progress_pct = 0
-        self.progress.setValue(0)
-        self.progress.show()
-        self.match_label.setText(f"Building {game_folders[0]} database, please wait…")
+        # One build at a time — Settings → Rebuild while the startup build is
+        # still running must not spawn a second worker thread.
+        if self._build_thread is not None and self._build_thread.is_alive():
+            if self._progress_dialog is not None:
+                self._progress_dialog.show()
+                self._progress_dialog.raise_()
+            return
 
-        threading.Thread(
-            target=self._build_all_games_worker, args=(game_folders,), daemon=True
-        ).start()
+        # Fresh Event per build: never clear() a shared one — a lingering old
+        # worker could be un-cancelled, or a new build instantly cancelled.
+        self._build_cancel_event = threading.Event()
+
+        if self._progress_dialog is None:
+            self._progress_dialog = BuildProgressDialog(self)
+            self._progress_dialog.cancel_requested.connect(self._cancel_db_build)
+        self._progress_dialog.reset_for_new_build()
+        self._progress_dialog.set_status(f"Building {game_folders[0]} database, please wait…")
+        self._progress_dialog.show()
+
+        self._db_progress_pct = 0
+        self._build_thread = threading.Thread(
+            target=self._build_all_games_worker,
+            args=(game_folders, self._build_cancel_event),
+            daemon=True,
+        )
+        self._build_thread.start()
         self._db_progress_timer.start()
 
-    def _build_all_games_worker(self, game_folders: List[str]) -> None:
+    def _build_all_games_worker(self, game_folders: List[str], cancel_event: threading.Event) -> None:
         """Build every game's feature DB sequentially in one background thread.
 
         Runs off the main thread and must NOT touch Qt widgets directly — all
         UI updates go through signals (build_status, build_done) which Qt
         delivers on the main thread. The active database path global is left
-        alone; each build gets its db_path explicitly.
+        alone; each build gets its db_path explicitly. cancel_event stops the
+        build between images/batches/games; partial caches stay valid.
         """
         start_time = time.time()
         failed: List[str] = []
@@ -510,8 +529,11 @@ class MainWindow(QWidget):
                 self.build_status.emit(f"Processing {current_file}…")
 
         for game_name in game_folders:
+            if cancel_event.is_set():
+                break
             game_path = os.path.join("Card_Images", game_name)
-            self._db_progress_pct = 0
+            # -1 = indeterminate: the download phase only reports text lines
+            self._db_progress_pct = -1
 
             # Download any newly released card images first (no-op for games
             # without a registered fetcher). A fetch failure — offline, source
@@ -522,6 +544,7 @@ class MainWindow(QWidget):
                     game_name,
                     out_dir=game_path,
                     progress_callback=self.build_status.emit,
+                    cancel_event=cancel_event,
                 )
                 if stats and stats.downloaded:
                     self.logger.info(
@@ -535,8 +558,11 @@ class MainWindow(QWidget):
                 self.logger.warning(f"Image fetch for {game_name} failed (continuing build): {e}")
 
             self.build_status.emit(f"Building {game_name} database…")
+            self._db_progress_pct = 0
 
             for attempt in range(1, 4):  # initial try + 2 retries
+                if cancel_event.is_set():
+                    break
                 try:
                     self.logger.info(
                         f"Building DB for {game_name} at {game_path} (attempt {attempt})"
@@ -546,7 +572,12 @@ class MainWindow(QWidget):
                     db = build_feature_database(
                         progress_callback=progress_callback,
                         db_path=game_path,
+                        cancel_event=cancel_event,
                     )
+                    # A cancelled build legitimately returns few/no entries —
+                    # don't count it as a failure or burn retries on it.
+                    if cancel_event.is_set():
+                        break
                     if not db:
                         raise RuntimeError("Database build returned no entries")
                     self.logger.info(f"DB ready for {game_name}: {len(db)} entries")
@@ -558,27 +589,43 @@ class MainWindow(QWidget):
                 self.build_status.emit(f"Error building {game_name} database")
 
         elapsed = time.time() - start_time
-        self.logger.info(f"DB builds finished in {elapsed:.1f}s ({len(failed)} failed)")
-        self.build_done.emit(not failed)
+        cancelled = cancel_event.is_set()
+        self.logger.info(
+            f"DB builds finished in {elapsed:.1f}s "
+            f"({len(failed)} failed{', cancelled' if cancelled else ''})"
+        )
+        self.build_done.emit(not failed and not cancelled)
+
+    def _on_build_status(self, text: str) -> None:
+        """Main-thread slot: route worker status lines into the progress dialog."""
+        if self._progress_dialog is not None:
+            self._progress_dialog.set_status(text)
+
+    def _cancel_db_build(self) -> None:
+        """Main-thread slot: the dialog's Cancel was pressed (or it was closed)."""
+        self.logger.info("Database build cancel requested")
+        self._build_cancel_event.set()
 
     def _on_build_done(self, success: bool) -> None:
         """Main-thread slot: finalize UI after the background build finishes."""
         self._db_progress_timer.stop()
-        self.progress.hide()
-        if success:
+        if self._progress_dialog is not None:
+            self._progress_dialog.hide()
+        if self._build_cancel_event.is_set():
+            self.match_label.setText("Database build cancelled.")
+        elif success:
             self.match_label.setText("All databases ready. Scan a card to begin.")
         # The in-memory featureDB may be stale after a rebuild — force reload on next scan
         self._loaded_game = None
 
     def _tick_db_progress(self) -> None:
-        """Poll _db_progress_pct and update the progress bar.
+        """Poll _db_progress_pct and update the dialog's progress bar.
 
         The timer keeps running until _on_build_done — a single game hitting
         100% must not kill progress display for the games after it.
         """
-        progress = int(getattr(self, "_db_progress_pct", 0))
-        if progress != self.progress.value():
-            self.progress.setValue(progress)
+        if self._progress_dialog is not None:
+            self._progress_dialog.set_progress(int(getattr(self, "_db_progress_pct", 0)))
 
     # ------------------------------------------------------------------ camera
 
