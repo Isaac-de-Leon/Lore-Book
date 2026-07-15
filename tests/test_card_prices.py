@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from lorebook.core import card_prices, price_fetcher
+from lorebook.core import price_fetcher
 from lorebook.core.card_prices import (
     RATES_FILE,
     clear_price_cache,
