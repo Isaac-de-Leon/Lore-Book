@@ -34,12 +34,22 @@ from lorebook.core.card_database import (
     set_database_path,
 )
 from lorebook.core.card_names import name_for
+from lorebook.core.card_prices import (
+    RATES_FILE,
+    SUPPORTED_CURRENCIES,
+    clear_price_cache,
+    format_price,
+    price_for,
+    prices_stale,
+    rate_for,
+)
 from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.game_types import csv_for_game
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import MotionGate, crop_to_card, focus_rect, is_probably_foil
 from lorebook.core.matching import MatchIndex
+from lorebook.core.price_fetcher import download_card_prices, download_currency_rates
 from lorebook.hardware.camera import open_capture
 from lorebook.ui.collection_view import CollectionView
 from lorebook.ui.settings_window import SettingsWindow
@@ -93,8 +103,8 @@ class MainWindow(QWidget):
     (_build_all_games_worker). From any non-main thread, the ONLY permitted
     interactions with this object are:
       - writing the plain attribute ``_db_progress_pct`` (polled by a QTimer)
-      - emitting the ``build_status`` / ``build_done`` signals (Qt delivers
-        them on the main thread)
+      - emitting the ``build_status`` / ``build_done`` / ``prices_refreshed``
+        signals (Qt delivers them on the main thread)
     Everything else — widgets, featureDB/_match_index, settings, the
     set_database_path global — is main-thread-only.
     """
@@ -108,6 +118,7 @@ class MainWindow(QWidget):
     # Signals for marshalling background-thread updates onto the main thread.
     build_status = Signal(str)      # status text for the status label
     build_done = Signal(bool)       # True = all builds succeeded
+    prices_refreshed = Signal()     # price/rate files were rewritten on disk
 
     # ------------------------------------------------------------------ helpers
 
@@ -240,6 +251,10 @@ class MainWindow(QWidget):
         self.match_detail_label = QLabel("")
         self.match_detail_label.setObjectName("matchDetail")
 
+        # Market value (empty when no price data is available)
+        self.match_price_label = QLabel("")
+        self.match_price_label.setObjectName("matchDetail")
+
         # Navigation
         self.prev_btn = QPushButton("◀")
         self.prev_btn.setFixedSize(30, 30)
@@ -294,6 +309,7 @@ class MainWindow(QWidget):
         info_col.setSpacing(4)
         info_col.addWidget(self.match_name_label)
         info_col.addWidget(self.match_detail_label)
+        info_col.addWidget(self.match_price_label)
         info_col.addLayout(nav_row)
         info_col.addStretch()
         info_col.addLayout(actions_row)
@@ -356,6 +372,7 @@ class MainWindow(QWidget):
         # Signals from background build threads → main-thread slots
         self.build_status.connect(self.match_label.setText)
         self.build_done.connect(self._on_build_done)
+        self.prices_refreshed.connect(self._on_prices_refreshed)
 
         # Timers
         self.timer = QTimer(self)
@@ -399,6 +416,7 @@ class MainWindow(QWidget):
             "rotate_display": False,
             "crop_to_focus": True,
             "auto_scan": False,
+            "currency": "USD",
         }
 
         def apply_defaults():
@@ -427,6 +445,10 @@ class MainWindow(QWidget):
                         value = max(0.0, min(1.0, float(value)))
                     elif key == "camera_index":
                         value = max(0, int(value))
+                    elif key == "currency":
+                        value = str(value).upper()
+                        if value not in SUPPORTED_CURRENCIES:
+                            value = default
                     setattr(self, key, value)
                 except Exception as e:
                     self.logger.error(f"Error loading setting {key}: {e}")
@@ -451,6 +473,7 @@ class MainWindow(QWidget):
             "rotate_display": self.rotate_display,
             "crop_to_focus": self.crop_to_focus,
             "auto_scan": self.auto_scan,
+            "currency": getattr(self, "currency", "USD"),
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -503,11 +526,21 @@ class MainWindow(QWidget):
         """
         start_time = time.time()
         failed: List[str] = []
+        refreshed_prices = False
 
         def progress_callback(pct: int, current_file: Optional[str]) -> None:
             self._db_progress_pct = pct
             if current_file:
                 self.build_status.emit(f"Processing {current_file}…")
+
+        # Refresh the shared USD exchange rates once per run when stale. A
+        # failure never blocks anything — non-USD display falls back to USD.
+        if prices_stale(path=RATES_FILE):
+            try:
+                download_currency_rates()
+                refreshed_prices = True
+            except Exception as e:
+                self.logger.warning(f"Currency-rate refresh failed (continuing): {e}")
 
         for game_name in game_folders:
             game_path = os.path.join("Card_Images", game_name)
@@ -534,6 +567,19 @@ class MainWindow(QWidget):
             except Exception as e:
                 self.logger.warning(f"Image fetch for {game_name} failed (continuing build): {e}")
 
+            # Refresh market prices when the cached file is missing or older
+            # than a day (no-op for games without a registered price source).
+            # Same failure contract as the image fetch: warn and move on.
+            if prices_stale(game_name):
+                try:
+                    self.build_status.emit(f"Updating {game_name} card prices…")
+                    count = download_card_prices(game_name)
+                    if count is not None:
+                        self.logger.info(f"Refreshed {count} {game_name} price entries")
+                        refreshed_prices = True
+                except Exception as e:
+                    self.logger.warning(f"Price fetch for {game_name} failed (continuing build): {e}")
+
             self.build_status.emit(f"Building {game_name} database…")
 
             for attempt in range(1, 4):  # initial try + 2 retries
@@ -559,6 +605,8 @@ class MainWindow(QWidget):
 
         elapsed = time.time() - start_time
         self.logger.info(f"DB builds finished in {elapsed:.1f}s ({len(failed)} failed)")
+        if refreshed_prices:
+            self.prices_refreshed.emit()
         self.build_done.emit(not failed)
 
     def _on_build_done(self, success: bool) -> None:
@@ -569,6 +617,13 @@ class MainWindow(QWidget):
             self.match_label.setText("All databases ready. Scan a card to begin.")
         # The in-memory featureDB may be stale after a rebuild — force reload on next scan
         self._loaded_game = None
+        clear_price_cache()
+
+    def _on_prices_refreshed(self) -> None:
+        """Main-thread slot: re-read price files and re-render the current match."""
+        clear_price_cache()
+        if self.last_matches:
+            self._show_match_at(self.current_match_idx)
 
     def _tick_db_progress(self) -> None:
         """Poll _db_progress_pct and update the progress bar.
@@ -752,6 +807,10 @@ class MainWindow(QWidget):
         self.match_name_label.setText(f"{card_name}  ·  {code}" if card_name else code)
         self.match_detail_label.setText(
             f"Set {set_code}  ·  {score:.1%} match" if set_code else f"{score:.1%} match"
+        )
+        price = price_for(set_code, card_code, active_game) if active_game else None
+        self.match_price_label.setText(
+            format_price(price, self.currency, rate_for(self.currency))
         )
         self.match_pos_label.setText(f"{idx + 1} / {len(self.last_matches)}")
         self.match_label.setText(f"{score:.3f}  {fname}")

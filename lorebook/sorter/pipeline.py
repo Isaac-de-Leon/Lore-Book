@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 
 from lorebook.core.card_names import name_for
+from lorebook.core.card_prices import format_price, price_for
 from lorebook.core.csv_manager import split_filename, update_cardlist_batch
 from lorebook.core.image_utils import crop_to_card, is_probably_foil
 from lorebook.core.matching import MatchIndex
@@ -160,10 +161,12 @@ class SortPipeline:
                 self.flush_csv()
 
         card_name = name_for(set_code, card_code, self.game) if matched else None
+        price = format_price(price_for(set_code, card_code, self.game)) if matched else ""
         logger.info(
-            "card=%s%s conf=%.3f foil=%s → bin=%s%s",
+            "card=%s%s%s conf=%.3f foil=%s → bin=%s%s",
             filename or "<no match>",
             f" ({card_name})" if card_name else "",
+            f" [{price}]" if price else "",
             confidence,
             is_foil,
             bin_id,

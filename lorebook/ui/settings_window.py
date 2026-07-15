@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
+from lorebook.core.card_prices import SUPPORTED_CURRENCIES
 from lorebook.core.csv_manager import get_available_sets
 from lorebook.core.game_types import BASE_DATABASE_PATH
 from lorebook.ui.styles import APP_STYLESHEET
@@ -36,7 +37,7 @@ class SettingsWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setFixedSize(390, 640)
+        self.setFixedSize(390, 675)
         self.setStyleSheet(APP_STYLESHEET)
         self.logger.info("Initializing settings window")
 
@@ -78,6 +79,15 @@ class SettingsWindow(QDialog):
             str(round(100 * getattr(parent, "foil_threshold", 0.08), 1))
         )
         layout.addRow("Foil Threshold (%):", self.foil_threshold_input)
+
+        # Display currency for scanned-card market prices (source data is USD)
+        self.currency_combo = QComboBox()
+        for code in SUPPORTED_CURRENCIES:
+            self.currency_combo.addItem(code, userData=code)
+        current_currency = getattr(parent, "currency", "USD")
+        idx = self.currency_combo.findData(current_currency)
+        self.currency_combo.setCurrentIndex(max(0, idx))
+        layout.addRow("Price currency:", self.currency_combo)
 
         self.debug_mode_checkbox = QCheckBox("Enable Debug Mode (heatmap overlay)")
         self.debug_mode_checkbox.setChecked(getattr(parent, "debug_mode", False))
@@ -154,6 +164,7 @@ class SettingsWindow(QDialog):
         parent.auto_scan = self.auto_scan_checkbox.isChecked()
         parent.debug_mode = self.debug_mode_checkbox.isChecked()
         parent.camera_index = self.camera_combo.currentData()
+        parent.currency = self.currency_combo.currentData()
 
         try:
             pct = float(self.confidence_input.text())
