@@ -89,16 +89,19 @@ class MainWindow(QWidget):
 
     Threading rules
     ---------------
-    The DB build runs in one background daemon thread
-    (_build_all_games_worker). From any non-main thread, the ONLY permitted
-    interactions with this object are:
+    Two kinds of background daemon threads exist: the DB build
+    (_build_all_games_worker) and the camera opener (_open_camera_worker,
+    which keeps the slow open_capture() backend probe off the paint path).
+    From any non-main thread, the ONLY permitted interactions with this
+    object are:
       - writing the plain attribute ``_db_progress_pct`` (polled by a QTimer)
-      - emitting the ``build_status`` / ``build_done`` signals (Qt delivers
-        them on the main thread)
-      - reading the ``cancel_event`` passed in as a worker argument
+      - emitting the ``build_status`` / ``build_done`` / ``camera_ready`` /
+        ``camera_failed`` signals (Qt delivers them on the main thread)
+      - reading the ``cancel_event`` / ``token`` passed in as worker arguments
     Everything else — widgets (including the progress dialog),
     featureDB/_match_index, settings, the set_database_path global — is
-    main-thread-only.
+    main-thread-only. Camera-open results carry a generation token checked
+    against ``_cam_open_token`` so a Stop/restart discards stale opens.
     """
 
     logger = logging.getLogger("MainWindow")
@@ -110,6 +113,8 @@ class MainWindow(QWidget):
     # Signals for marshalling background-thread updates onto the main thread.
     build_status = Signal(str)      # status text for the status label
     build_done = Signal(bool)       # True = all builds succeeded
+    camera_ready = Signal(int, object)   # (open token, cv2.VideoCapture)
+    camera_failed = Signal(int, str)     # (open token, error message)
 
     # ------------------------------------------------------------------ helpers
 
@@ -179,6 +184,9 @@ class MainWindow(QWidget):
         self._motion_gate = MotionGate(min_std=12.0)
 
         self.cap: Optional[cv2.VideoCapture] = None
+        # Bumped on every start/stop; camera-open worker results carrying an
+        # older token are stale (user hit Stop or restarted) and get discarded.
+        self._cam_open_token = 0
         self.last_frame: Optional[np.ndarray] = None
         self.last_frame_time: Optional[float] = None
         self.read_fail_count = 0
@@ -353,9 +361,11 @@ class MainWindow(QWidget):
         root.addWidget(self.tabs, stretch=1)
         self.setLayout(root)
 
-        # Signals from background build threads → main-thread slots
+        # Signals from background threads → main-thread slots
         self.build_status.connect(self._on_build_status)
         self.build_done.connect(self._on_build_done)
+        self.camera_ready.connect(self._on_camera_ready)
+        self.camera_failed.connect(self._on_camera_failed)
 
         # Timers
         self.timer = QTimer(self)
@@ -382,7 +392,10 @@ class MainWindow(QWidget):
         self.count_edit.setFocusPolicy(Qt.StrongFocus)
 
         self._apply_scale()
-        self.start_db_build_in_background()
+        # Deferred until the event loop runs so the main window paints before
+        # the progress dialog appears — showing it here leaves both windows
+        # as unpainted white rectangles until the first paint event.
+        QTimer.singleShot(0, self.start_db_build_in_background)
 
     # ------------------------------------------------------------------ settings
 
@@ -630,24 +643,59 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ camera
 
     def start_camera(self) -> None:
-        """Open the camera via the shared backend-probe helper, then start the preview."""
+        """Open the camera in a background thread, then start the preview.
+
+        open_capture() (lorebook.hardware.camera, shared with the headless
+        sorter) probes backends and reads warm-up frames — several seconds of
+        blocking work that must stay off the GUI thread or the window sits
+        unpainted. The worker hands the opened capture back via camera_ready/
+        camera_failed; a stale token (Stop or another Start meanwhile) means
+        the result is discarded.
+        """
         self.stop_camera()
         cv2.destroyAllWindows()
 
-        # open_capture() (lorebook.hardware.camera) holds the platform backend
-        # probe + warm-up logic shared with the headless sorter.
-        try:
-            self.cap = open_capture(self.camera_index)
-        except Exception as e:
-            self.cap = None
-            self._fail_and_stop(str(e))
-            return
+        self._cam_open_token += 1
+        token = self._cam_open_token
+        self.preview_label.setText("Starting camera…")
+        self.match_label.setText("Starting camera…")
 
+        threading.Thread(
+            target=self._open_camera_worker,
+            args=(token, self.camera_index),
+            daemon=True,
+        ).start()
+
+    def _open_camera_worker(self, token: int, camera_index: int) -> None:
+        """Background thread: open the camera and report back via signals only."""
+        try:
+            cap = open_capture(camera_index)
+        except Exception as e:
+            self.camera_failed.emit(token, str(e))
+            return
+        self.camera_ready.emit(token, cap)
+
+    def _on_camera_ready(self, token: int, cap) -> None:
+        """Main-thread slot: the background open succeeded — start the preview."""
+        if token != self._cam_open_token:
+            # Stop (or a newer Start) happened while this open was in flight.
+            try:
+                cap.release()
+            except Exception:
+                pass
+            return
+        self.cap = cap
         self.read_fail_count = 0
         self.last_frame_time = time.monotonic()
         self.timer.start(30)
         self.watchdog.start()
         self.match_label.setText("Camera running …")
+
+    def _on_camera_failed(self, token: int, message: str) -> None:
+        """Main-thread slot: the background open failed."""
+        if token != self._cam_open_token:
+            return
+        self._fail_and_stop(message)
 
     def _fail_and_stop(self, message: str) -> None:
         self.stop_camera()
@@ -655,6 +703,7 @@ class MainWindow(QWidget):
 
     def stop_camera(self) -> None:
         """Stop timers and release camera resources."""
+        self._cam_open_token += 1  # invalidate any in-flight background open
         self.timer.stop()
         self.watchdog.stop()
         if self.cap is not None:
