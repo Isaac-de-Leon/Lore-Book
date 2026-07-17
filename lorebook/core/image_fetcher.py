@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
 RIFTBOUND_RIOT_URL = "https://americas.api.riotgames.com/riftbound/content/v1/contents?locale=en"
-RIFTBOUND_FALLBACK_URL = "https://riftcodex.com/api/cards"
+RIFTBOUND_FALLBACK_URL = "https://api.riftcodex.com/api/cards"
 
 # A UA header — the Ravensburger image CDN can 403 an empty urllib agent.
 _UA = "Lore-Book-image-fetcher/1.0 (+https://github.com/; personal collection tool)"
@@ -111,27 +111,34 @@ def _is_riot_host(url: str) -> bool:
     return host == "api.riotgames.com" or host.endswith(".api.riotgames.com")
 
 
-def _fetch_riftbound_pages(url: str) -> list:
+def _fetch_riftbound_pages(url: str, limit: int = 100) -> list:
     """
-    Fetch all cards from an offset-paginated card list (Riftcodex-style,
-    48-card pages): keep requesting until a page comes back short or repeats.
+    Fetch all cards from the page-numbered Riftcodex list API, which responds
+    with {"total": N, "items": [...]} to limit=/page= query params. Requests
+    pages until `total` cards are collected, a page comes back empty or
+    repeats (page param ignored), or the hard cap is hit.
     """
-    cards, offset, last_first_id = [], 0, None
+    cards, page_no, last_first_id = [], 1, None
     for _ in range(200):  # hard cap: never loop forever on a misbehaving API
         sep = "&" if "?" in url else "?"
-        page = _fetch_json(f"{url}{sep}offset={offset}" if offset else url)
-        if isinstance(page, dict):
-            page = page.get("cards", [])
-        if not page:
+        data = _fetch_json(f"{url}{sep}limit={limit}&page={page_no}")
+        if isinstance(data, dict):
+            items = data.get("items") or data.get("cards") or []
+            total = data.get("total")
+        else:
+            items, total = data, None
+        if not items:
             break
-        first_id = page[0].get("id") if isinstance(page[0], dict) else None
+        first_id = items[0].get("id") if isinstance(items[0], dict) else None
         if first_id is not None and first_id == last_first_id:
-            break  # API ignored the offset; stop rather than duplicate
+            break  # API ignored the page param; stop rather than duplicate
         last_first_id = first_id
-        cards.extend(page)
-        if len(page) < 48:
+        cards.extend(items)
+        if not isinstance(data, dict):  # bare list: everything came at once
             break
-        offset += len(page)
+        if isinstance(total, int) and len(cards) >= total:
+            break
+        page_no += 1
     return cards
 
 
@@ -177,7 +184,7 @@ def _riftbound_cards(data) -> Iterator[dict]:
                 if isinstance(s, dict):
                     yield from (c for c in s.get("cards") or [] if isinstance(c, dict))
             return
-        data = data.get("cards", [])
+        data = data.get("cards") or data.get("items") or []
     yield from (c for c in data or [] if isinstance(c, dict))
 
 
@@ -187,13 +194,14 @@ def riftbound_targets(data) -> Iterator[Tuple[str, str, str]]:
 
     Handles both source payload shapes — the Riot content endpoint (sets →
     cards with art.fullUrl) and the Riftcodex card list (flat cards with
-    media.image_url) — tolerating camelCase/snake_case spellings. Duplicate
-    set/number keys keep the first occurrence (there is no promo-collision
-    rule like Lorcana's).
+    media.image_url) — tolerating camelCase/snake_case spellings. Set codes
+    are uppercased (Riftcodex uses "ogn") to match the repo's OGN-001 filename
+    convention. Duplicate set/number keys keep the first occurrence (there is
+    no promo-collision rule like Lorcana's).
     """
     seen = set()
     for card in _riftbound_cards(data):
-        set_code = str(_first_field(card, "set", "setCode", "set_code", "set_id") or "").strip()
+        set_code = str(_first_field(card, "set", "setCode", "set_code", "set_id") or "").strip().upper()
         number = str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
         art = card.get("art")
         media = card.get("media")

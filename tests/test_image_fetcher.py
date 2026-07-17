@@ -97,10 +97,12 @@ class TestRiftboundTargets:
 
     def test_parses_riftcodex_shape(self):
         cards = [
-            {"set_id": "OGN", "collector_number": "23c", "media": {"image_url": "http://img/23c.png"}},
+            # Riftcodex ships lowercase set ids; codes are uppercased to match
+            # the OGN-001 filename convention.
+            {"set_id": "ogn", "collector_number": "23c", "media": {"image_url": "http://img/23c.png"}},
             {"set": "OGN", "number": 24, "image_url": "http://img/24.png"},
         ]
-        for data in (cards, {"cards": cards}):  # bare list or wrapper
+        for data in (cards, {"cards": cards}, {"total": 2, "items": cards}):
             assert list(riftbound_targets(data)) == [
                 ("OGN", "23c", "http://img/23c.png"),
                 ("OGN", "24", "http://img/24.png"),
@@ -157,7 +159,7 @@ class TestFetchRiftbound:
         cards = [{"id": 1}]
         calls = self._record(monkeypatch, cards)
         assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == cards
-        assert calls == [(RIFTBOUND_FALLBACK_URL, {})]
+        assert calls == [(f"{RIFTBOUND_FALLBACK_URL}?limit=100&page=1", {})]
 
     def test_riot_failure_falls_back_to_riftcodex(self, monkeypatch):
         monkeypatch.setenv("RIOT_API_KEY", "RGAPI-test")
@@ -170,13 +172,17 @@ class TestFetchRiftbound:
 
         calls = self._record(monkeypatch, responses)
         assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == cards
-        assert [c[0] for c in calls] == [RIFTBOUND_RIOT_URL, RIFTBOUND_FALLBACK_URL]
+        assert [c[0] for c in calls] == [
+            RIFTBOUND_RIOT_URL,
+            f"{RIFTBOUND_FALLBACK_URL}?limit=100&page=1",
+        ]
 
     def test_url_override_is_fetched_as_is(self, monkeypatch):
         monkeypatch.setenv("RIOT_API_KEY", "RGAPI-test")
         calls = self._record(monkeypatch, [{"id": 1}])
         _fetch_riftbound("https://mirror.example/cards")
-        assert calls == [("https://mirror.example/cards", {})]  # no token leak off-Riot
+        # paginated like the fallback, and no token leak off-Riot
+        assert calls == [("https://mirror.example/cards?limit=100&page=1", {})]
 
     def test_riot_url_override_keeps_token(self, monkeypatch):
         monkeypatch.setenv("RIOT_API_KEY", "RGAPI-test")
@@ -186,28 +192,58 @@ class TestFetchRiftbound:
         assert _fetch_riftbound(url) == data
         assert calls == [(url, {"X-Riot-Token": "RGAPI-test"})]
 
-    def test_pagination_assembles_full_pages(self, monkeypatch):
+    def test_pagination_collects_until_total(self, monkeypatch):
         monkeypatch.delenv("RIOT_API_KEY", raising=False)
-        page1 = [{"id": i} for i in range(48)]
-        page2 = [{"id": 48}]
+        page1 = [{"id": i} for i in range(100)]
+        page2 = [{"id": 100}]
 
         def responses(url):
-            return page2 if "offset=48" in url else page1
+            return {"total": 101, "items": page2 if "page=2" in url else page1}
 
         calls = self._record(monkeypatch, responses)
         assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == page1 + page2
         assert len(calls) == 2
+        assert "limit=100&page=1" in calls[0][0]
 
-    def test_pagination_stops_when_offset_is_ignored(self, monkeypatch):
+    def test_pagination_survives_a_capped_page_size(self, monkeypatch):
+        # The API may serve fewer items than limit= asks for; total, not page
+        # size, decides when to stop.
         monkeypatch.delenv("RIOT_API_KEY", raising=False)
-        page = [{"id": i} for i in range(48)]  # same first id every time
-        calls = self._record(monkeypatch, page)
+        pages = {1: [{"id": 1}, {"id": 2}], 2: [{"id": 3}]}
+
+        def responses(url):
+            page_no = int(url.rsplit("page=", 1)[1])
+            return {"total": 3, "items": pages.get(page_no, [])}
+
+        calls = self._record(monkeypatch, responses)
+        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}, {"id": 2}, {"id": 3}]
+        assert len(calls) == 2
+
+    def test_pagination_stops_when_page_param_is_ignored(self, monkeypatch):
+        monkeypatch.delenv("RIOT_API_KEY", raising=False)
+        page = [{"id": i} for i in range(100)]  # same first id every time
+        calls = self._record(monkeypatch, {"total": 500, "items": page})
         assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == page
         assert len(calls) == 2  # second (repeated) page detected and dropped
 
-    def test_pagination_unwraps_cards_dict(self, monkeypatch):
+    def test_pagination_stops_on_empty_page_without_total(self, monkeypatch):
         monkeypatch.delenv("RIOT_API_KEY", raising=False)
-        calls = self._record(monkeypatch, {"cards": [{"id": 1}]})
+        pages = {1: {"items": [{"id": 1}]}, 2: {"items": []}}
+
+        def responses(url):
+            return pages[int(url.rsplit("page=", 1)[1])]
+
+        calls = self._record(monkeypatch, responses)
+        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}]
+        assert len(calls) == 2
+
+    def test_pagination_tolerates_bare_list_and_cards_wrapper(self, monkeypatch):
+        monkeypatch.delenv("RIOT_API_KEY", raising=False)
+        calls = self._record(monkeypatch, [{"id": 1}])
+        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}]
+        assert len(calls) == 1  # bare list means no further pages
+
+        calls = self._record(monkeypatch, {"total": 1, "cards": [{"id": 1}]})
         assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}]
         assert len(calls) == 1
 
