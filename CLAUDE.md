@@ -24,6 +24,8 @@ Lore-Book/
 │   │   ├── features.py        # get_extractor("keras"|"tflite"), extract_features(+_batch), heatmap
 │   │   ├── card_database.py   # Feature cache build/load, set_database_path
 │   │   ├── card_names.py      # Optional card-name lookup (card_names_<Game>.json)
+│   │   ├── card_prices.py     # Optional market-price lookup/format (card_prices_<Game>.json, currency_rates.json)
+│   │   ├── price_fetcher.py   # download_card_prices / download_currency_rates — Lorcast + Frankfurter
 │   │   ├── image_fetcher.py   # download_new_images — card art from LorcanaJSON / Riot API (Riftcodex fallback)
 │   │   └── csv_manager.py     # CSV read/write, update_cardlist(_batch), split_filename
 │   ├── hardware/          # Hardware abstraction (no Qt; mocks run on any desktop)
@@ -47,6 +49,7 @@ Lore-Book/
 │   ├── convert_to_tflite.py    # Export the feature model → mobilenetv2_features.tflite
 │   ├── check_parity.py         # Verify keras vs tflite vectors agree
 │   ├── fetch_card_names.py     # Download card names → card_names_<Game>.json (gitignored)
+│   ├── fetch_card_prices.py    # CLI over price_fetcher — market prices → card_prices_<Game>.json
 │   └── fetch_card_images.py    # CLI over image_fetcher — card art → Card_Images/<Game>/
 ├── docs/
 │   ├── MATCHING.md             # How recognition works (pipeline, thresholds)
@@ -67,6 +70,7 @@ Lore-Book/
     ├── test_matching_index.py
     ├── test_card_database.py
     ├── test_card_names.py
+    ├── test_card_prices.py
     ├── test_image_fetcher.py
     ├── test_camera.py
     ├── test_sorter_rules.py
@@ -80,6 +84,8 @@ Lore-Book/
 | `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, constants |
 | `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` (auto-scan) |
 | `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
+| `lorebook/core/card_prices.py` | `price_for()`, `format_price()`, `rate_for()`, `prices_stale()`, `clear_price_cache()` — optional market prices from `card_prices_<Game>.json` + `currency_rates.json` (display only) |
+| `lorebook/core/price_fetcher.py` | `download_card_prices()` (Lorcast → TCGplayer USD prices; `GAMES` registry), `download_currency_rates()` (Frankfurter/ECB). Auto-run by the GUI when files are >24 h old; CLI: `scripts/fetch_card_prices.py` |
 | `lorebook/core/image_fetcher.py` | `download_new_images()` — fetch missing card art into `Card_Images/<Game>/` (Lorcana: LorcanaJSON; Riftbound: Riot content API when `RIOT_API_KEY` is set, else Riftcodex). Auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py` |
 | `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
 | `lorebook/core/features.py` | `get_extractor(backend)` (keras/tflite), `extract_features`, `visualize_activation_overlay` |
@@ -189,6 +195,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 | `rotate_display` | bool | Rotate camera preview 180° |
 | `crop_to_focus` | bool | Crop the capture to the on-screen focus box before matching |
 | `auto_scan` | bool | Scan automatically when a card settles in the focus box (`MotionGate`) |
+| `currency` | str | Display currency for scanned-card market prices (`USD`/`CAD`/`EUR`/`GBP`; source prices are USD) |
 | `debug_mode` | bool | Overlay activation heatmap on the matched card image |
 | `selected_games` | object | Which games are active (`{"lorcana": true, "riftbound": false}`) |
 | `selected_sets` | object | Which set codes to search within each game |
@@ -214,6 +221,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 - **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()` (`lorebook/core/image_utils.py`).
 - **Change match threshold** — core default is `0.70` in `find_best_matches()` / `MatchIndex.find()` (`lorebook/core/matching.py`); the GUI ships a stricter `0.90` default, exposed in Settings as confidence %. See `docs/MATCHING.md` for how the whole pipeline fits together.
 - **Show card names** — run `python scripts/fetch_card_names.py --game <Game>` once; the GUI/sorter pick up `card_names_<Game>.json` automatically (display-only, never written to the CSV).
+- **Card prices on scan** — the GUI refreshes `card_prices_<Game>.json` (Lorcast API, TCGplayer-sourced USD) and `currency_rates.json` (Frankfurter/ECB) in the background whenever they're >24 h old, and shows e.g. `$1.24 · foil $3.80` under the match details; display currency is a Settings dropdown. Only games registered in `GAMES` (`lorebook/core/price_fetcher.py`) get prices — others show nothing. CLI: `python scripts/fetch_card_prices.py --game <Game>`. Display-only, never written to the CSV.
 - **Get a new set's images** — the GUI's Rebuild Database button auto-downloads missing card art before rebuilding (offline → warning logged, build continues). Lorcana pulls from LorcanaJSON; Riftbound uses the official Riot content API when the `RIOT_API_KEY` env var is set and falls back to the open Riftcodex API otherwise. CLI: `python scripts/fetch_card_images.py --game <Game> [--set <N>] [--dry-run]`. Registered fetchers live in `GAMES` (`lorebook/core/image_fetcher.py`); unregistered games are skipped silently.
 - **Change sort routing** — edit the rules JSON (see `configs/sort_rules.example.json`); the engine is `decide_bin()` in `lorebook/sorter/rules.py`. Unmatched cards always go to `reject_bin`.
 - **Implement the real transport** — subclass `Transport` (`lorebook/hardware/transport.py`); the pipeline needs `route_to_bin`, `advance`, `home`.
