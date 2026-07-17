@@ -1,6 +1,7 @@
 # tests/test_card_database.py — feature-cache build/prune behavior (no TF, no camera).
 
 import sqlite3
+import threading
 
 import cv2
 import numpy as np
@@ -94,6 +95,44 @@ class TestBatchedBuild:
 
         assert "001-000.webp" not in db  # sanity: names come from real files
         assert set(db) == {"001-000.png"}
+
+    def test_cancel_stops_between_batches_and_commits_partial(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(card_database, "_BATCH_SIZE", 2)
+        images = tmp_path / "Lorcana"
+        self._make_images(images, 6)
+
+        cancel = threading.Event()
+        extractor = RecordingExtractor()
+        db = build_feature_database(
+            progress_callback=lambda pct, fname: cancel.set(),  # cancel after batch 1
+            db_path=str(images),
+            extractor=extractor,
+            cancel_event=cancel,
+        )
+
+        assert extractor.batch_sizes == [2]
+        assert len(db) == 2
+        # Partial progress is committed so the next build resumes from it.
+        assert set(load_cache(str(images))) == set(db)
+
+    def test_preset_cancel_processes_nothing(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        images = tmp_path / "Lorcana"
+        self._make_images(images, 3)
+        cache_file = _cache_path(str(images))
+        _seed_cache(cache_file, ["001-000.png"])
+
+        cancel = threading.Event()
+        cancel.set()
+        extractor = RecordingExtractor()
+        db = build_feature_database(
+            db_path=str(images), extractor=extractor, cancel_event=cancel
+        )
+
+        assert extractor.batch_sizes == []
+        assert set(db) == {"001-000.png"}  # pre-seeded entry survives
+        assert set(load_cache(str(images))) == {"001-000.png"}
 
 
 class TestStaleCachePruning:

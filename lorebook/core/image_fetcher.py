@@ -21,6 +21,7 @@
 import json
 import logging
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -269,6 +270,7 @@ def download_new_images(
     force: bool = False,
     delay: float = 0.05,
     dry_run: bool = False,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Optional[FetchStats]:
     """
     Download any missing card images for a game into out_dir.
@@ -280,6 +282,8 @@ def download_new_images(
     sets: restrict to these set codes ('9' and '009' both match); None = all.
     fmt: "webp" (re-encode via OpenCV) or "jpg" (keep the source bytes).
     dry_run: report what would download without fetching images or writing.
+    cancel_event: when set, stops between images (the in-flight request
+    finishes first); already-downloaded files stay and partial stats return.
 
     Errors fetching the card list propagate to the caller; per-image failures
     are counted in FetchStats.failed and never raise.
@@ -300,6 +304,9 @@ def download_new_images(
 
     report(f"Fetching card list from {resolved_url} ...")
     data = fetcher(resolved_url)
+    if cancel_event is not None and cancel_event.is_set():
+        report("Download cancelled.")
+        return FetchStats()
 
     targets = [t for t in target_fn(data) if wanted is None or _norm(t[0]) in wanted]
     stats = FetchStats()
@@ -313,6 +320,9 @@ def download_new_images(
 
     report(f"{len(targets)} card(s) to consider -> {resolved_out}  (format: {fmt})")
     for set_code, number, img_url in targets:
+        if cancel_event is not None and cancel_event.is_set():
+            report("Download cancelled.")
+            break
         fname = f"{_pad(set_code)}-{_pad(number)}{ext}"
         dest = os.path.join(resolved_out, fname)
 
