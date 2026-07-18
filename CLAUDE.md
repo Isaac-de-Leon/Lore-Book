@@ -37,11 +37,12 @@ Lore-Book/
 │   │   └── __main__.py        # python -m lorebook.sorter CLI
 │   └── ui/                # PySide6 widgets
 │       ├── app.py             # main() — QApplication bootstrap (lorebook-ui script)
-│       ├── styles.py          # APP_STYLESHEET dark theme
-│       ├── settings_window.py # SettingsWindow dialog
+│       ├── styles.py          # Theme system: dark/light token palettes + build_stylesheet()
+│       ├── icons.py           # Inline SVG icons → theme-tinted QIcons (get_icon)
+│       ├── settings_window.py # SettingsWindow dialog (theme + currency selectors)
 │       ├── progress_dialog.py # BuildProgressDialog: DB build status/progress + Cancel
-│       ├── collection_view.py # Collection tab: CSV table + Export CSV button
-│       └── main_window.py     # MainWindow: Scanner/Collection tabs, camera, match nav
+│       ├── collection_view.py # Collection page: CSV table, Export CSV, Clear…
+│       └── main_window.py     # MainWindow: sidebar nav, Scanner/Collection pages, camera
 │
 ├── .github/workflows/tests.yml # CI: pytest on every push/PR (no TF needed)
 ├── configs/
@@ -97,11 +98,12 @@ Lore-Book/
 | `lorebook/sorter/rules.py` | `Rule`, `SortRules`, `load_rules`, `decide_bin` |
 | `lorebook/sorter/pipeline.py` | `SortPipeline`, `SortOutcome` — the headless sort loop |
 | `lorebook/sorter/__main__.py` | `python -m lorebook.sorter` argument parsing and wiring |
-| `lorebook/ui/styles.py` | `APP_STYLESHEET` dark theme |
-| `lorebook/ui/settings_window.py` | `SettingsWindow` PySide6 dialog |
+| `lorebook/ui/styles.py` | `THEMES` (dark/light token palettes), `build_stylesheet(theme)`, `theme_tokens()`; `APP_STYLESHEET` kept as the dark sheet for backward compat |
+| `lorebook/ui/icons.py` | `get_icon(name, color, checked_color=None)` — inline SVG outline icons rendered to tinted QIcons (high-DPI safe, cached) |
+| `lorebook/ui/settings_window.py` | `SettingsWindow` PySide6 dialog (theme + currency selectors; stylesheet inherited from parent) |
 | `lorebook/ui/progress_dialog.py` | `BuildProgressDialog` — modeless DB-build progress popup with Cancel |
-| `lorebook/ui/collection_view.py` | `CollectionView` — read-only collection table (game dropdown, sortable, Export CSV… save-a-copy) |
-| `lorebook/ui/main_window.py` | `MainWindow` (Scanner + Collection tabs, responsive `_apply_scale`), `setup_logging` |
+| `lorebook/ui/collection_view.py` | `CollectionView` — collection table (game dropdown, sortable, Export CSV… save-a-copy, Clear… with confirm) |
+| `lorebook/ui/main_window.py` | `MainWindow` (icon sidebar switching Scanner/Collection pages, `apply_theme`, smart camera toggle `_set_camera_state`, responsive `_apply_scale`), `setup_logging` (incl. faulthandler crash log) |
 | `lorebook/ui/app.py` | `main()` — QApplication bootstrap (installed as `lorebook-ui`) |
 | `UI.py` | Thin wrapper around `lorebook.ui.app.main()` |
 | `PhotoMatching.py` | Re-exports all of the above for backward compatibility; also runnable as CLI |
@@ -198,6 +200,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 | `crop_to_focus` | bool | Crop the capture to the on-screen focus box before matching |
 | `auto_scan` | bool | Scan automatically when a card settles in the focus box (`MotionGate`) |
 | `currency` | str | Display currency for scanned-card market prices (`USD`/`CAD`/`EUR`/`GBP`; source prices are USD) |
+| `theme` | string | UI theme: `"dark"` (default) or `"light"` — set in Settings |
 | `debug_mode` | bool | Overlay activation heatmap on the matched card image |
 | `selected_games` | object | Which games are active (`{"lorcana": true, "riftbound": false}`) |
 | `selected_sets` | object | Which set codes to search within each game |

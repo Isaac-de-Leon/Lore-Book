@@ -1,19 +1,22 @@
 # main_window.py — MainWindow: camera preview, card matching, CSV export.
 
+import faulthandler
 import gc
 import json
 import logging
 import logging.handlers
 import os
+import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QIntValidator, QPixmap
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -22,7 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QTabWidget,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -51,11 +54,15 @@ from lorebook.core.matching import MatchIndex
 from lorebook.core.price_fetcher import download_card_prices, download_currency_rates
 from lorebook.hardware.camera import open_capture
 from lorebook.ui.collection_view import CollectionView
+from lorebook.ui.icons import get_icon
 from lorebook.ui.progress_dialog import BuildProgressDialog
 from lorebook.ui.settings_window import SettingsWindow
-from lorebook.ui.styles import APP_STYLESHEET
+from lorebook.ui.styles import DEFAULT_THEME, THEMES, build_stylesheet, theme_tokens
 
 SETTINGS_FILE = "ui_settings.json"
+
+# Held at module level so the faulthandler target file is never GC-closed.
+_crash_log_file = None
 
 
 def setup_logging(log_file: str = "card_scanner.log") -> None:
@@ -82,6 +89,28 @@ def setup_logging(log_file: str = "card_scanner.log") -> None:
 
     logging.getLogger("PIL").setLevel(logging.WARNING)
     logging.getLogger("cv2").setLevel(logging.WARNING)
+
+    # Crash diagnostics. Native faults (e.g. access violations inside Qt or
+    # OpenCV) kill the process with no Python traceback — faulthandler dumps
+    # every thread's Python stack to logs/crash_native.log at fault time so
+    # the crash site is identifiable afterwards.
+    global _crash_log_file
+    try:
+        _crash_log_file = open(
+            os.path.join(log_dir, "crash_native.log"), "a", encoding="utf-8"
+        )
+        faulthandler.enable(file=_crash_log_file)
+    except OSError as e:
+        logging.warning(f"Could not enable native crash logging: {e}")
+
+    # Uncaught Python exceptions land in the main log too (PySide6 prints
+    # them to stderr, which is invisible when launched outside a terminal).
+    def _log_excepthook(exc_type, exc, tb):
+        logging.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _log_excepthook
+
     logging.info(f"Logging initialized — {log_path}")
 
 
@@ -139,9 +168,9 @@ class MainWindow(QWidget):
         QMessageBox.critical(self, title, message)
 
     def set_status(self, message: str, is_error: bool = False, timeout_ms: int = 3500) -> None:
-        self.csv_status.setStyleSheet(
-            f"color: {'#F85149' if is_error else '#3FB950'}; padding-left: 8px;"
-        )
+        tokens = theme_tokens(self.theme)
+        color = tokens["danger"] if is_error else tokens["success"]
+        self.csv_status.setStyleSheet(f"color: {color}; padding-left: 8px;")
         self.csv_status.setText(message)
         if timeout_ms > 0:
             QTimer.singleShot(timeout_ms, lambda: self.csv_status.setText(""))
@@ -175,8 +204,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Lore Book")
-        self.resize(960, 820)
-        self.setStyleSheet(APP_STYLESHEET)
+        self.resize(1000, 840)
 
         # State
         self.featureDB: Dict[str, np.ndarray] = load_cache()
@@ -192,6 +220,7 @@ class MainWindow(QWidget):
         self.rotate_display = False
         self.crop_to_focus = True
         self.auto_scan = False
+        self.theme = DEFAULT_THEME
         # min_std suppresses triggers on an empty (near-uniform) focus box
         self._motion_gate = MotionGate(min_std=12.0)
 
@@ -217,15 +246,37 @@ class MainWindow(QWidget):
 
         # ── Widgets ──────────────────────────────────────────────────────────
 
-        # Top bar
+        # Header bar (top of the content column, right of the sidebar).
+        # One smart camera toggle instead of a Start/Stop pair — its label,
+        # icon and style track the camera lifecycle via _set_camera_state.
         title_label = QLabel("LORE BOOK")
         title_label.setObjectName("appTitle")
 
-        self.start_btn = QPushButton("▶  Start")
-        self.start_btn.clicked.connect(self.start_camera)
-        self.stop_btn = QPushButton("■  Stop")
-        self.stop_btn.clicked.connect(self.stop_camera)
-        self.settings_btn = QPushButton("⚙  Settings")
+        self._camera_state = "idle"  # idle | starting | running
+        self.camera_btn = QPushButton("Start")
+        self.camera_btn.setObjectName("cameraBtn")
+        self.camera_btn.setToolTip("Start / stop the camera")
+        self.camera_btn.clicked.connect(self._on_camera_btn)
+
+        # Sidebar: logo + page navigation on top, settings at the bottom.
+        # Icons are set (and re-tinted) by _apply_icons via apply_theme.
+        self.logo_label = QLabel()
+        self.logo_label.setAlignment(Qt.AlignCenter)
+        self.logo_label.setToolTip("Lore Book")
+
+        def _nav_button(tooltip: str, checkable: bool = False) -> QPushButton:
+            btn = QPushButton()
+            btn.setObjectName("navBtn")
+            btn.setIconSize(QSize(22, 22))
+            btn.setToolTip(tooltip)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setCheckable(checkable)
+            return btn
+
+        self.nav_scanner_btn = _nav_button("Scanner", checkable=True)
+        self.nav_scanner_btn.setChecked(True)
+        self.nav_collection_btn = _nav_button("Collection", checkable=True)
+        self.settings_btn = _nav_button("Settings")
         self.settings_btn.clicked.connect(self.open_settings)
 
         # Camera preview
@@ -265,22 +316,30 @@ class MainWindow(QWidget):
         self.match_price_label = QLabel("")
         self.match_price_label.setObjectName("matchDetail")
 
-        # Navigation
-        self.prev_btn = QPushButton("◀")
-        self.prev_btn.setFixedSize(30, 30)
+        # Navigation — ‹ position › grouped in one compact pager pill
+        self.prev_btn = QPushButton()
+        self.prev_btn.setFixedSize(24, 24)
         self.prev_btn.clicked.connect(self.prev_match)
         self.match_pos_label = QLabel("")
         self.match_pos_label.setObjectName("matchDetail")
-        self.next_btn = QPushButton("▶")
-        self.next_btn.setFixedSize(30, 30)
+        self.match_pos_label.setAlignment(Qt.AlignCenter)
+        self.next_btn = QPushButton()
+        self.next_btn.setFixedSize(24, 24)
         self.next_btn.clicked.connect(self.next_match)
+
+        pager = QFrame()
+        pager.setObjectName("pagerPill")
+        pager_row = QHBoxLayout()
+        pager_row.setContentsMargins(3, 3, 3, 3)
+        pager_row.setSpacing(2)
+        pager_row.addWidget(self.prev_btn)
+        pager_row.addWidget(self.match_pos_label)
+        pager_row.addWidget(self.next_btn)
+        pager.setLayout(pager_row)
 
         nav_row = QHBoxLayout()
         nav_row.setContentsMargins(0, 0, 0, 0)
-        nav_row.setSpacing(6)
-        nav_row.addWidget(self.prev_btn)
-        nav_row.addWidget(self.match_pos_label)
-        nav_row.addWidget(self.next_btn)
+        nav_row.addWidget(pager)
         nav_row.addStretch()
 
         # Foil / count / add / status
@@ -291,12 +350,13 @@ class MainWindow(QWidget):
         self.count_edit.setFixedWidth(48)
         self.count_edit.setValidator(QIntValidator(1, 999, self))
 
-        self.add_csv_btn = QPushButton("+ Add to Collection")
+        self.add_csv_btn = QPushButton("Add to Collection")
         self.add_csv_btn.setObjectName("addBtn")
         self.add_csv_btn.clicked.connect(self.add_to_csv)
         self.add_csv_btn.setEnabled(False)
 
-        self.undo_btn = QPushButton("Undo")
+        # Icon-only ghost button — Add is the sole prominent action
+        self.undo_btn = QPushButton()
         self.undo_btn.clicked.connect(self.undo_last_add)
         self.undo_btn.setEnabled(False)
 
@@ -332,7 +392,7 @@ class MainWindow(QWidget):
         result_panel.setLayout(panel_inner)
 
         # ── Scan FAB ─────────────────────────────────────────────────────────
-        self.capture_btn = QPushButton("●  SCAN CARD")
+        self.capture_btn = QPushButton("SCAN CARD")
         self.capture_btn.setObjectName("scanBtn")
         self.capture_btn.clicked.connect(self.capture_and_match)
 
@@ -341,17 +401,15 @@ class MainWindow(QWidget):
         scan_row.addWidget(self.capture_btn)
         scan_row.addStretch()
 
-        # ── Top bar layout ────────────────────────────────────────────────────
+        # ── Header row ────────────────────────────────────────────────────────
         top = QHBoxLayout()
         top.setSpacing(8)
         top.addWidget(title_label)
         top.addStretch()
-        top.addWidget(self.start_btn)
-        top.addWidget(self.stop_btn)
-        top.addWidget(self.settings_btn)
+        top.addWidget(self.camera_btn)
 
-        # ── Tabs: Scanner / Collection ────────────────────────────────────────
-        scanner_tab = QWidget()
+        # ── Pages: Scanner / Collection, switched by the sidebar nav ─────────
+        self.scanner_page = QWidget()
         scanner_layout = QVBoxLayout()
         scanner_layout.setContentsMargins(0, 8, 0, 0)
         scanner_layout.setSpacing(8)
@@ -359,23 +417,48 @@ class MainWindow(QWidget):
         scanner_layout.addWidget(self.match_label)
         scanner_layout.addWidget(result_panel)
         scanner_layout.addLayout(scan_row)
-        scanner_tab.setLayout(scanner_layout)
+        self.scanner_page.setLayout(scanner_layout)
 
         self.collection_view = CollectionView(initial_game=self.get_active_game())
 
-        self.tabs = QTabWidget()
-        self.tabs.addTab(scanner_tab, "Scanner")
-        self.tabs.addTab(self.collection_view, "Collection")
-        self._scanner_tab_index = 0
-        # Pick up CSV changes made while the tab was hidden (scans, undo, edits)
-        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.scanner_page)
+        self.stack.addWidget(self.collection_view)
+        # Pick up CSV changes made while the page was hidden (scans, undo, edits)
+        self.stack.currentChanged.connect(self._on_page_changed)
 
-        # ── Root layout ───────────────────────────────────────────────────────
-        root = QVBoxLayout()
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
-        root.addLayout(top)
-        root.addWidget(self.tabs, stretch=1)
+        nav_group = QButtonGroup(self)
+        nav_group.setExclusive(True)
+        nav_group.addButton(self.nav_scanner_btn, 0)
+        nav_group.addButton(self.nav_collection_btn, 1)
+        nav_group.idClicked.connect(self.stack.setCurrentIndex)
+
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(64)
+        side = QVBoxLayout()
+        side.setContentsMargins(10, 14, 10, 14)
+        side.setSpacing(10)
+        side.addWidget(self.logo_label, 0, Qt.AlignHCenter)
+        side.addSpacing(8)
+        side.addWidget(self.nav_scanner_btn, 0, Qt.AlignHCenter)
+        side.addWidget(self.nav_collection_btn, 0, Qt.AlignHCenter)
+        side.addStretch(1)
+        side.addWidget(self.settings_btn, 0, Qt.AlignHCenter)
+        sidebar.setLayout(side)
+
+        # ── Root layout: sidebar | content column ────────────────────────────
+        content = QVBoxLayout()
+        content.setContentsMargins(16, 12, 16, 12)
+        content.setSpacing(8)
+        content.addLayout(top)
+        content.addWidget(self.stack, stretch=1)
+
+        root = QHBoxLayout()
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(sidebar)
+        root.addLayout(content, stretch=1)
         self.setLayout(root)
 
         # Signals from background threads → main-thread slots
@@ -402,18 +485,50 @@ class MainWindow(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self._setup_tooltips()
         for widget in [
-            self.capture_btn, self.start_btn, self.stop_btn,
+            self.capture_btn, self.camera_btn,
             self.settings_btn, self.add_csv_btn, self.undo_btn,
             self.prev_btn, self.next_btn, self.foil_check,
+            self.nav_scanner_btn, self.nav_collection_btn,
         ]:
             widget.setFocusPolicy(Qt.NoFocus)
         self.count_edit.setFocusPolicy(Qt.StrongFocus)
 
-        self._apply_scale()
+        self.apply_theme(self.theme)  # stylesheet + icon tints (also scales chrome)
         # Deferred until the event loop runs so the main window paints before
         # the progress dialog appears — showing it here leaves both windows
         # as unpainted white rectangles until the first paint event.
         QTimer.singleShot(0, self.start_db_build_in_background)
+
+    # ------------------------------------------------------------------ theme
+
+    def apply_theme(self, theme: str) -> None:
+        """Switch the app-wide theme at runtime: stylesheet + icon tints.
+
+        Child dialogs (Settings, build progress) inherit the stylesheet
+        automatically, so re-setting it here re-themes them too.
+        """
+        self.theme = theme if theme in THEMES else DEFAULT_THEME
+        self.setStyleSheet(build_stylesheet(self.theme))
+        self._apply_icons()
+        self._apply_scale()  # re-applies the scan FAB's inline geometry QSS
+
+    def _apply_icons(self) -> None:
+        """(Re)tint every icon for the current theme."""
+        tokens = theme_tokens(self.theme)
+        text, muted, accent = tokens["text"], tokens["muted"], tokens["accent"]
+
+        self.logo_label.setPixmap(get_icon("book", accent).pixmap(26, 26))
+        self.nav_scanner_btn.setIcon(get_icon("camera", muted, checked_color=accent))
+        self.nav_collection_btn.setIcon(get_icon("grid", muted, checked_color=accent))
+        self.settings_btn.setIcon(get_icon("sliders", muted))
+
+        self._set_camera_state(self._camera_state)  # re-tints the camera toggle
+        self.capture_btn.setIcon(get_icon("scan", tokens["on_accent"]))
+        self.add_csv_btn.setIcon(get_icon("plus", tokens["on_success"]))
+        self.undo_btn.setIcon(get_icon("undo", text))
+        self.prev_btn.setIcon(get_icon("chevron-left", text))
+        self.next_btn.setIcon(get_icon("chevron-right", text))
+        self.collection_view.apply_icons(text, tokens["danger"])
 
     # ------------------------------------------------------------------ settings
 
@@ -431,6 +546,7 @@ class MainWindow(QWidget):
             "crop_to_focus": True,
             "auto_scan": False,
             "currency": "USD",
+            "theme": DEFAULT_THEME,
         }
 
         def apply_defaults():
@@ -443,7 +559,8 @@ class MainWindow(QWidget):
             return
 
         try:
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            # utf-8-sig tolerates a BOM (editors/PowerShell often add one)
+            with open(SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
                 settings = json.load(f)
 
             for key, default in defaults.items():
@@ -462,6 +579,10 @@ class MainWindow(QWidget):
                     elif key == "currency":
                         value = str(value).upper()
                         if value not in SUPPORTED_CURRENCIES:
+                            value = default
+                    elif key == "theme":
+                        value = str(value).lower()
+                        if value not in THEMES:
                             value = default
                     setattr(self, key, value)
                 except Exception as e:
@@ -488,6 +609,7 @@ class MainWindow(QWidget):
             "crop_to_focus": self.crop_to_focus,
             "auto_scan": self.auto_scan,
             "currency": getattr(self, "currency", "USD"),
+            "theme": self.theme,
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -698,6 +820,35 @@ class MainWindow(QWidget):
 
     # ------------------------------------------------------------------ camera
 
+    def _on_camera_btn(self) -> None:
+        """The smart toggle: Start when idle, Stop when running."""
+        if self._camera_state == "running":
+            self.stop_camera()
+        elif self._camera_state == "idle":
+            self.start_camera()
+        # "starting" → button is disabled, nothing to do
+
+    def _set_camera_state(self, state: str) -> None:
+        """Sync the camera toggle's text/icon/enabled + [cam=...] QSS state."""
+        self._camera_state = state
+        tokens = theme_tokens(self.theme)
+        if state == "starting":
+            self.camera_btn.setText("Starting…")
+            self.camera_btn.setIcon(get_icon("camera", tokens["muted"]))
+            self.camera_btn.setEnabled(False)
+        elif state == "running":
+            self.camera_btn.setText("Stop")
+            self.camera_btn.setIcon(get_icon("stop", tokens["danger"]))
+            self.camera_btn.setEnabled(True)
+        else:  # idle
+            self.camera_btn.setText("Start")
+            self.camera_btn.setIcon(get_icon("play", tokens["on_accent"]))
+            self.camera_btn.setEnabled(True)
+        # Property-based QSS needs an explicit repolish to take effect
+        self.camera_btn.setProperty("cam", state)
+        self.camera_btn.style().unpolish(self.camera_btn)
+        self.camera_btn.style().polish(self.camera_btn)
+
     def start_camera(self) -> None:
         """Open the camera in a background thread, then start the preview.
 
@@ -713,6 +864,7 @@ class MainWindow(QWidget):
 
         self._cam_open_token += 1
         token = self._cam_open_token
+        self._set_camera_state("starting")
         self.preview_label.setText("Starting camera…")
         self.match_label.setText("Starting camera…")
 
@@ -745,6 +897,7 @@ class MainWindow(QWidget):
         self.last_frame_time = time.monotonic()
         self.timer.start(30)
         self.watchdog.start()
+        self._set_camera_state("running")
         self.match_label.setText("Camera running …")
 
     def _on_camera_failed(self, token: int, message: str) -> None:
@@ -774,6 +927,7 @@ class MainWindow(QWidget):
         self.last_frame = None
         self.last_frame_time = None
         self.read_fail_count = 0
+        self._set_camera_state("idle")
         self.preview_label.setText("Camera stopped")
         gc.collect()
 
@@ -1049,6 +1203,7 @@ class MainWindow(QWidget):
         fab_h = int(min(max(h * 0.07, 48), 76))
         fab_font = int(min(max(fab_h * 0.29, 14), 19))
         self.capture_btn.setMinimumSize(int(fab_h * 3.6), fab_h)
+        self.capture_btn.setIconSize(QSize(fab_font + 5, fab_font + 5))
         self.capture_btn.setStyleSheet(
             f"QPushButton#scanBtn {{ border-radius: {fab_h // 2}px; "
             f"font-size: {fab_font}px; padding: 0 {fab_h // 2}px; }}"
@@ -1075,15 +1230,15 @@ class MainWindow(QWidget):
         self.setFocus()
         super().focusInEvent(event)
 
-    def _on_tab_changed(self, index: int) -> None:
-        """Refresh the collection table whenever its tab becomes visible."""
-        if self.tabs.widget(index) is self.collection_view:
+    def _on_page_changed(self, index: int) -> None:
+        """Refresh the collection table whenever its page becomes visible."""
+        if self.stack.widget(index) is self.collection_view:
             self.collection_view.refresh()
 
     def keyPressEvent(self, event):
-        # Scan shortcuts are Scanner-tab-only: browsing the collection table
+        # Scan shortcuts are Scanner-page-only: browsing the collection table
         # must not trigger captures or foil toggles.
-        if self.tabs.currentIndex() != self._scanner_tab_index:
+        if self.stack.currentWidget() is not self.scanner_page:
             super().keyPressEvent(event)
             return
         key = event.key()

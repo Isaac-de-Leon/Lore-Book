@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -20,8 +21,9 @@ from PySide6.QtWidgets import (
 )
 
 from lorebook.core.card_names import name_for
-from lorebook.core.csv_manager import read_collection_rows
+from lorebook.core.csv_manager import clear_collection, read_collection_rows
 from lorebook.core.game_types import BASE_DATABASE_PATH, csv_for_game
+from lorebook.ui.icons import get_icon
 
 _COLUMNS = ["Set", "Card", "Variant", "Count", "Name"]
 
@@ -59,11 +61,16 @@ class CollectionView(QWidget):
         self.summary_label = QLabel("")
         self.summary_label.setObjectName("statusLabel")
 
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self.refresh)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh)
 
-        export_btn = QPushButton("Export CSV…")
-        export_btn.clicked.connect(self._export_csv)
+        self.export_btn = QPushButton("Export CSV…")
+        self.export_btn.clicked.connect(self._export_csv)
+
+        self.clear_btn = QPushButton("Clear…")
+        self.clear_btn.setObjectName("dangerBtn")
+        self.clear_btn.setToolTip("Delete every entry in this game's collection CSV")
+        self.clear_btn.clicked.connect(self._clear_csv)
 
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
@@ -72,8 +79,9 @@ class CollectionView(QWidget):
         toolbar.addWidget(self.game_combo)
         toolbar.addStretch()
         toolbar.addWidget(self.summary_label)
-        toolbar.addWidget(refresh_btn)
-        toolbar.addWidget(export_btn)
+        toolbar.addWidget(self.refresh_btn)
+        toolbar.addWidget(self.export_btn)
+        toolbar.addWidget(self.clear_btn)
 
         # Table
         self.table = QTableWidget(0, len(_COLUMNS))
@@ -85,6 +93,9 @@ class CollectionView(QWidget):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(len(_COLUMNS) - 1, QHeaderView.Stretch)  # Name fills
+        # Short values ("011") would otherwise shrink columns below their
+        # header text + sort arrow, truncating "Set" to garbage.
+        header.setMinimumSectionSize(72)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 8, 0, 0)
@@ -94,6 +105,12 @@ class CollectionView(QWidget):
         self.setLayout(layout)
 
         self.refresh()
+
+    def apply_icons(self, color: str, danger_color: str) -> None:
+        """Tint the toolbar icons — called by MainWindow on every theme change."""
+        self.refresh_btn.setIcon(get_icon("refresh", color))
+        self.export_btn.setIcon(get_icon("export", color))
+        self.clear_btn.setIcon(get_icon("trash", danger_color))
 
     def current_game(self) -> str:
         return self.game_combo.currentText()
@@ -150,3 +167,34 @@ class CollectionView(QWidget):
         except OSError as e:
             self.summary_label.setText(f"Export failed: {e}")
             self.logger.error(f"Error exporting {source} to {dest}: {e}")
+
+    def _clear_csv(self) -> None:
+        """Empty the selected game's collection CSV after an explicit confirm."""
+        game = self.current_game()
+        if not game:
+            return
+        rows = read_collection_rows(game)
+        if not rows:
+            self.summary_label.setText("Collection is already empty.")
+            return
+        total = sum(int(r[3]) for r in rows if str(r[3]).lstrip("-").isdigit())
+        answer = QMessageBox.warning(
+            self,
+            "Clear collection",
+            f"Delete all {len(rows)} entries ({total} cards) from "
+            f"{os.path.basename(csv_for_game(game))}?\n\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        clear_collection(game)
+        self.logger.info(f"Cleared collection CSV for {game}")
+        # The scanner's single-level Undo now points at rows that no longer
+        # exist — disable it rather than let it "undo" into the empty file.
+        win = self.window()
+        if hasattr(win, "undo_btn"):
+            win.undo_btn.setEnabled(False)
+            win._last_add = None
+        self.refresh()
+        self.summary_label.setText("Collection cleared.")

@@ -106,6 +106,16 @@ def read_collection_rows(game: str) -> List[List[str]]:
     return _normalize_existing_rows(csv_for_game(game))
 
 
+def clear_collection(game: str) -> None:
+    """
+    Empty a game's collection CSV, leaving a header-only file.
+
+    Uses the same atomic temp-file replace as every other write, so an
+    interrupted clear can't corrupt the file.
+    """
+    _write_rows_4col(csv_for_game(game), [])
+
+
 def _write_rows_4col(csv_path: str, rows: List[List[str]]) -> None:
     """
     Write rows to CSV with a 4-column header.

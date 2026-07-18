@@ -12,6 +12,7 @@ import pytest
 
 from PhotoMatching import (
     GameType,
+    clear_collection,
     csv_for_game,
     update_cardlist,
     _cosine_score,
@@ -403,6 +404,30 @@ class TestUpdateCardlistGameRouting:
         update_cardlist(os.path.join("Card_Images", "Riftbound", "001-042.webp"), is_foil=True)
         rows = list(csv.reader((tmp_path / "RiftboundList.csv").open(encoding="utf-8")))
         assert ["001", "042", "foil", "1"] in rows
+
+
+class TestClearCollection:
+    def test_clear_leaves_header_only(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, count=3, game="Lorcana")
+        update_cardlist("002-007.webp", is_foil=True, count=1, game="Lorcana")
+        clear_collection("Lorcana")
+        rows = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
+        assert rows == [["Set Number", "Card Number", "Variant", "Count"]]
+
+    def test_clear_missing_file_creates_header_only(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        clear_collection("Lorcana")
+        rows = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
+        assert rows == [["Set Number", "Card Number", "Variant", "Count"]]
+
+    def test_clear_only_touches_named_game(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("001-042.webp", is_foil=False, game="Lorcana")
+        update_cardlist("001-001.webp", is_foil=False, game="Riftbound")
+        clear_collection("Riftbound")
+        lorcana = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
+        assert ["001", "042", "normal", "1"] in lorcana
 
 
 class TestNegativeCounts:

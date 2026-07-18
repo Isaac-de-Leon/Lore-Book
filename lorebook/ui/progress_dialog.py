@@ -10,8 +10,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from lorebook.ui.styles import APP_STYLESHEET
-
 
 class BuildProgressDialog(QDialog):
     """Progress popup for the background database build.
@@ -28,7 +26,7 @@ class BuildProgressDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Building Card Database")
-        self.setStyleSheet(APP_STYLESHEET)
+        # Stylesheet is inherited from the parent MainWindow (matches theme).
         self.setWindowModality(Qt.NonModal)
         self.setFixedWidth(440)
 

@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
 from lorebook.core.card_prices import SUPPORTED_CURRENCIES
 from lorebook.core.csv_manager import get_available_sets
 from lorebook.core.game_types import BASE_DATABASE_PATH
-from lorebook.ui.styles import APP_STYLESHEET
 
 
 class SettingsWindow(QDialog):
@@ -37,11 +36,20 @@ class SettingsWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setFixedSize(390, 675)
-        self.setStyleSheet(APP_STYLESHEET)
+        self.setFixedSize(390, 715)
+        # Stylesheet is inherited from the parent MainWindow, so the dialog
+        # always matches the active theme.
         self.logger.info("Initializing settings window")
 
         layout = QFormLayout()
+
+        # Theme selector
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Dark", userData="dark")
+        self.theme_combo.addItem("Light", userData="light")
+        if getattr(parent, "theme", "dark") == "light":
+            self.theme_combo.setCurrentIndex(1)
+        layout.addRow("Theme:", self.theme_combo)
 
         # Camera index selector (0–4)
         self.camera_combo = QComboBox()
@@ -51,7 +59,7 @@ class SettingsWindow(QDialog):
         layout.addRow("Camera:", self.camera_combo)
 
         help_label = QLabel("Note: If camera doesn't work, try a different index\nand restart the application.")
-        help_label.setStyleSheet("color: #666; font-size: 10px;")
+        help_label.setObjectName("statusLabel")  # themed muted text
         layout.addRow(help_label)
 
         self.keep_foil_checked = QCheckBox("Keep Foil Checked")
@@ -158,6 +166,8 @@ class SettingsWindow(QDialog):
                 self.close()
             return
 
+        if hasattr(parent, "apply_theme"):
+            parent.apply_theme(self.theme_combo.currentData())
         parent.keep_foil_checked = self.keep_foil_checked.isChecked()
         parent.rotate_display = self.rotate_checkbox.isChecked()
         parent.crop_to_focus = self.crop_checkbox.isChecked()
