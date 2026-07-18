@@ -26,6 +26,7 @@ from PhotoMatching import (
     game_type_from_name,
     get_extractor,
     get_game_type,
+    is_foil_only_card,
     is_probably_foil,
 )
 from lorebook.core.card_database import _cache_path
@@ -404,6 +405,41 @@ class TestUpdateCardlistGameRouting:
         update_cardlist(os.path.join("Card_Images", "Riftbound", "001-042.webp"), is_foil=True)
         rows = list(csv.reader((tmp_path / "RiftboundList.csv").open(encoding="utf-8")))
         assert ["001", "042", "foil", "1"] in rows
+
+
+class TestFoilOnlyCards:
+    def test_lorcana_above_204_is_foil_only(self):
+        assert is_foil_only_card("013", "205", GameType.LORCANA)
+        assert is_foil_only_card("013", "218", GameType.LORCANA)
+
+    def test_lorcana_regular_range_is_not(self):
+        assert not is_foil_only_card("013", "204", GameType.LORCANA)
+        assert not is_foil_only_card("001", "042", GameType.LORCANA)
+
+    def test_non_numeric_and_other_games_are_not(self):
+        assert not is_foil_only_card("ONG", "23c-alt", GameType.LORCANA)
+        assert not is_foil_only_card("001", "218", GameType.RIFTBOUND)
+        assert not is_foil_only_card("001", "218", GameType.UNKNOWN)
+
+    def test_update_cardlist_coerces_variant_to_foil(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("013-218.webp", is_foil=False, game="Lorcana")
+        rows = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
+        assert ["013", "218", "foil", "1"] in rows
+        assert not any(r[2] == "normal" for r in rows[1:])
+
+    def test_coercion_applies_to_inferred_game_too(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist(os.path.join("Card_Images", "Lorcana", "013-218.webp"), is_foil=False)
+        rows = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
+        assert ["013", "218", "foil", "1"] in rows
+
+    def test_undo_decrements_the_coerced_foil_row(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        update_cardlist("013-218.webp", is_foil=False, count=2, game="Lorcana")
+        update_cardlist("013-218.webp", is_foil=False, count=-1, game="Lorcana", allow_negative=True)
+        rows = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
+        assert ["013", "218", "foil", "1"] in rows
 
 
 class TestClearCollection:

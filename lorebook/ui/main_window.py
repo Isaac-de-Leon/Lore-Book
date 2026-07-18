@@ -46,7 +46,7 @@ from lorebook.core.card_prices import (
     rate_for,
 )
 from lorebook.core.csv_manager import split_filename, update_cardlist
-from lorebook.core.game_types import csv_for_game
+from lorebook.core.game_types import csv_for_game, game_type_from_name, is_foil_only_card
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import MotionGate, crop_to_card, focus_rect, is_probably_foil
@@ -236,6 +236,8 @@ class MainWindow(QWidget):
         self.last_matches: List[Tuple[str, float]] = []
         self.current_match_idx: int = 0
         self._last_add: Optional[Tuple[str, bool, int, str]] = None  # (fname, foil, count, game)
+        self._foil_locked = False        # Foil checkbox forced on for foil-only rarities
+        self._foil_before_lock = False   # user's checkbox state to restore on unlock
 
         # DB build state (dialog created lazily on first build)
         self._progress_dialog: Optional[BuildProgressDialog] = None
@@ -1000,6 +1002,11 @@ class MainWindow(QWidget):
         if self.crop_to_focus:
             img_bgr = crop_to_card(img_bgr)
 
+        # Release any foil-only lock from the previous match before the fresh
+        # auto-detect; _show_match_at re-locks if the new match is foil-only.
+        if self._foil_locked:
+            self._foil_locked = False
+            self.foil_check.setEnabled(True)
         self.foil_check.setChecked(self.keep_foil_checked or is_probably_foil(img_bgr, threshold=self.foil_threshold))
 
         active_game = self.get_active_game()
@@ -1059,6 +1066,7 @@ class MainWindow(QWidget):
         self.match_detail_label.setText(
             f"Set {set_code}  ·  {score:.1%} match" if set_code else f"{score:.1%} match"
         )
+        self._apply_foil_lock(set_code, card_code, active_game)
         price = price_for(set_code, card_code, active_game) if active_game else None
         self.match_price_label.setText(
             format_price(price, self.currency, rate_for(self.currency))
@@ -1075,6 +1083,26 @@ class MainWindow(QWidget):
                 return
             self.logger.error(f"Failed to load image: {match_path}")
         self.image_label.setText("—")
+
+    def _apply_foil_lock(self, set_code: str, card_code: str, active_game: Optional[str]) -> None:
+        """
+        Force the Foil checkbox on (and lock it) while a foil-only rarity
+        (Lorcana Enchanted/Epic/Iconic) is displayed — those cards have no
+        normal printing, and Dreamborn.ink rejects a "normal" row for them.
+        Restores the user's checkbox state when a regular card is shown again.
+        """
+        foil_only = bool(active_game) and is_foil_only_card(
+            set_code, card_code, game_type_from_name(active_game)
+        )
+        if foil_only and not self._foil_locked:
+            self._foil_before_lock = self.foil_check.isChecked()
+            self._foil_locked = True
+            self.foil_check.setChecked(True)
+            self.foil_check.setEnabled(False)
+        elif not foil_only and self._foil_locked:
+            self._foil_locked = False
+            self.foil_check.setEnabled(True)
+            self.foil_check.setChecked(self._foil_before_lock)
 
     def prev_match(self) -> None:
         if self.last_matches:
@@ -1107,7 +1135,10 @@ class MainWindow(QWidget):
     def open_settings(self) -> None:
         dlg = SettingsWindow(self)
         dlg.exec()
-        self.foil_check.setChecked(self.keep_foil_checked)
+        if self._foil_locked:
+            self._foil_before_lock = self.keep_foil_checked
+        else:
+            self.foil_check.setChecked(self.keep_foil_checked)
 
     def add_to_csv(self) -> None:
         """Write the current match to the game-appropriate CSV."""
@@ -1255,7 +1286,8 @@ class MainWindow(QWidget):
         elif key == Qt.Key_D:
             self.next_match()
         elif key == Qt.Key_F:
-            self.foil_check.setChecked(not self.foil_check.isChecked())
+            if self.foil_check.isEnabled():
+                self.foil_check.setChecked(not self.foil_check.isChecked())
         else:
             super().keyPressEvent(event)
 

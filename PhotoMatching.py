@@ -37,12 +37,14 @@ from lorebook.core.features import (
 from lorebook.core.game_types import (
     BASE_DATABASE_PATH,
     LORCANA_CSV,
+    LORCANA_MAX_NORMAL_CARD,
     RIFTBOUND_CSV,
     SUPPORTED_EXTS,
     GameType,
     csv_for_game,
     game_type_from_name,
     get_game_type,
+    is_foil_only_card,
 )
 from lorebook.core.image_utils import ensure_valid_image, foil_score, is_probably_foil
 from lorebook.core.matching import MatchIndex, _cosine_score, _l2_normalize, find_best_matches

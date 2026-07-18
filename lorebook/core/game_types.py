@@ -44,6 +44,22 @@ def csv_for_game(game_name: str) -> str:
     return f"{name}List.csv"
 
 
+# Lorcana main sets have exactly 204 regular cards; anything numbered above
+# that (Enchanted / Epic / Iconic) is printed only as foil.
+LORCANA_MAX_NORMAL_CARD = 204
+
+
+def is_foil_only_card(set_code: str, card_code: str, game_type: "GameType") -> bool:
+    """
+    True when a card exists only in foil, so its collection variant must be
+    "foil" (Dreamborn.ink rejects a "normal" row for these).
+    """
+    if game_type != GameType.LORCANA:
+        return False
+    code = (card_code or "").strip()
+    return code.isdigit() and int(code) > LORCANA_MAX_NORMAL_CARD
+
+
 def get_game_type(filepath: str) -> "GameType":
     """Determine game type based on image file location."""
     try:

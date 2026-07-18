@@ -12,7 +12,9 @@ from lorebook.core.game_types import (
     RIFTBOUND_CSV,
     GameType,
     csv_for_game,
+    game_type_from_name,
     get_game_type,
+    is_foil_only_card,
 )
 
 
@@ -185,9 +187,12 @@ def update_cardlist_batch(
             count = 1
         if count == 0 or (count < 0 and not allow_negative):
             continue
-        target_file = target or _csv_for_game_type(get_game_type(matchedFilename))
+        game_type = game_type_from_name(game) if game is not None else get_game_type(matchedFilename)
+        target_file = target or _csv_for_game_type(game_type)
         set_code, card_code = split_filename(matchedFilename)
-        variant = "foil" if is_foil else "normal"
+        # Foil-only rarities (Lorcana Enchanted/Epic/Iconic) are always recorded
+        # as foil — Dreamborn.ink rejects a "normal" row for them.
+        variant = "foil" if is_foil or is_foil_only_card(set_code, card_code, game_type) else "normal"
         by_file.setdefault(target_file, []).append((set_code, card_code, variant, count))
 
     for target_file, updates in by_file.items():

@@ -181,6 +181,8 @@ Every game gets its own `<GameName>List.csv` (e.g. `LorcanaList.csv`, `Riftbound
 
 The target file comes from `csv_for_game(game)` (`lorebook/core/game_types.py`): callers that know the game (GUI, sorter) pass it explicitly via `update_cardlist(..., game=...)`. When no game is passed, `update_cardlist()` falls back to inferring it from the `Card_Images/<game>/` folder in the matched filename path (Riftbound paths → `RiftboundList.csv`, everything else → `LorcanaList.csv`).
 
+**Foil-only rarities:** Lorcana cards numbered above 204 (Enchanted/Epic/Iconic) exist only as foil — Dreamborn.ink rejects a `normal` row for them. `is_foil_only_card()` (`lorebook/core/game_types.py`) encodes the rule; `update_cardlist_batch()` coerces the variant to `foil` at write time and the GUI locks the Foil checkbox on while such a match is displayed.
+
 ### Filename convention for card images
 ```
 <SetCode>-<CardCode>[.<ext>]
