@@ -21,8 +21,9 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from lorebook.core.card_names import normalize_key
+from lorebook.core.paths import data_path
 
-RATES_FILE = "currency_rates.json"
+RATES_FILE = data_path("currency_rates.json")
 
 # Display currencies offered in Settings; all are converted from the USD
 # source prices via the cached rates file. Order = dropdown order.
@@ -32,7 +33,7 @@ _SYMBOLS = {"USD": "$", "CAD": "CA$", "EUR": "€", "GBP": "£"}
 
 def prices_file_for(game: str) -> str:
     """Path of the (optional) prices file for a game folder name."""
-    return f"card_prices_{game}.json"
+    return data_path(f"card_prices_{game}.json")
 
 
 # Loaded price/rate maps keyed by the file's absolute path (so tests that

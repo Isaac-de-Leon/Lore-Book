@@ -4,8 +4,10 @@ import logging
 from enum import Enum
 from pathlib import Path
 
+from lorebook.core.paths import data_path
+
 SUPPORTED_EXTS = (".webp", ".jpg", ".jpeg", ".png")
-BASE_DATABASE_PATH = "Card_Images"
+BASE_DATABASE_PATH = data_path("Card_Images")
 LORCANA_CSV = "LorcanaList.csv"
 RIFTBOUND_CSV = "RiftboundList.csv"
 
@@ -38,10 +40,10 @@ def csv_for_game(game_name: str) -> str:
         raise ValueError("game name is required")
     game_type = game_type_from_name(name)
     if game_type == GameType.LORCANA:
-        return LORCANA_CSV
+        return data_path(LORCANA_CSV)
     if game_type == GameType.RIFTBOUND:
-        return RIFTBOUND_CSV
-    return f"{name}List.csv"
+        return data_path(RIFTBOUND_CSV)
+    return data_path(f"{name}List.csv")
 
 
 # Lorcana main sets have exactly 204 regular cards; anything numbered above

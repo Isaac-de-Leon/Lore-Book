@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Iterator, Optional, Tuple
 from urllib.parse import urlsplit
 
+from lorebook.core.game_types import BASE_DATABASE_PATH
+
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
 RIFTBOUND_RIOT_URL = "https://americas.api.riotgames.com/riftbound/content/v1/contents?locale=en"
 RIFTBOUND_FALLBACK_URL = "https://api.riftcodex.com/api/cards"
@@ -298,7 +300,7 @@ def download_new_images(
 
     default_url, fetcher, target_fn = GAMES[key]
     resolved_url = url or default_url
-    resolved_out = out_dir or os.path.join("Card_Images", game.strip().capitalize())
+    resolved_out = out_dir or os.path.join(BASE_DATABASE_PATH, game.strip().capitalize())
     ext = ".webp" if fmt == "webp" else ".jpg"
     wanted = {_norm(s) for s in sets} if sets else None
 

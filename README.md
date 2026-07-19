@@ -14,7 +14,11 @@ A desktop trading-card scanner. Point a webcam at a physical card, and Lore-Book
 - A **Collection tab** to browse the current collection (sortable, per-game) and export a CSV copy
 - A headless multi-bin **card sorter** pipeline (`python -m lorebook.sorter`) with a JSON rules engine — motion hardware is mocked until the gantry exists (see `docs/SORTER_ROADMAP.md`)
 
-## Setup
+## Install (Windows)
+
+Grab `LoreBook-Setup-<version>.exe` from the [latest release](https://github.com/Isaac-de-Leon/Lore-Book/releases/latest) and run it — no Python required. It installs per-user (no admin prompt) to `%LOCALAPPDATA%\Programs\Lore Book`; app data (settings, card images, caches, collection CSVs, logs) lives in `%LOCALAPPDATA%\LoreBook` and survives uninstall/upgrade. On first run the app downloads the MobileNetV2 model weights (~14 MB).
+
+## Setup (from source)
 
 Requires Python 3.11+ and a webcam (only at runtime).
 
@@ -69,6 +73,12 @@ No camera, GPU, or TensorFlow needed (TF/Keras are stubbed in `tests/conftest.py
 ```bash
 python -m pytest tests/ -v
 ```
+
+## Releasing
+
+1. Bump `__version__` in `lorebook/__init__.py` and commit.
+2. Tag and push: `git tag v<version> && git push origin v<version>`.
+3. The `Release` workflow builds the Windows installer (PyInstaller + Inno Setup) and attaches it to a GitHub Release with auto-generated notes. The build fails fast if the tag doesn't match `__version__`.
 
 ## More
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lorebook"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Desktop trading-card scanner: webcam capture, MobileNetV2 matching, CSV export for Dreamborn.ink."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,12 @@ packages = [
     "lorebook.hardware",
     "lorebook.sorter",
 ]
+
+[tool.setuptools.dynamic]
+version = {attr = "lorebook.__version__"}
+
+[tool.setuptools.package-data]
+"lorebook.ui" = ["assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

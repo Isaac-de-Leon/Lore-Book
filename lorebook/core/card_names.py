@@ -11,10 +11,12 @@ import logging
 import os
 from typing import Dict, Optional
 
+from lorebook.core.paths import data_path
+
 
 def names_file_for(game: str) -> str:
     """Path of the (optional) names file for a game folder name."""
-    return f"card_names_{game}.json"
+    return data_path(f"card_names_{game}.json")
 
 
 def normalize_key(set_code: str, card_code: str) -> str:
