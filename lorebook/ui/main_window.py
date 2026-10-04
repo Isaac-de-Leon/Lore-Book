@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from lorebook.core.card_database import (
+    _list_image_files,
     build_feature_database,
     load_cache,
     set_database_path,
@@ -168,7 +169,7 @@ class MainWindow(QWidget):
 
     # Signals for marshalling background-thread updates onto the main thread.
     build_status = Signal(str)      # status text for the status label
-    build_done = Signal(bool)       # True = all builds succeeded
+    build_done = Signal(bool, object)  # (all builds succeeded, [failed game names])
     prices_refreshed = Signal()     # price/rate files were rewritten on disk
     camera_ready = Signal(int, object)   # (open token, cv2.VideoCapture)
     camera_failed = Signal(int, str)     # (open token, error message)
@@ -631,6 +632,11 @@ class MainWindow(QWidget):
                     self.logger.error(f"Error loading setting {key}: {e}")
                     setattr(self, key, default)
 
+            # Older settings files could select several games; scanning only
+            # ever used the first, so keep just that one.
+            first = next((k for k, v in self.selected_games.items() if v), None)
+            self.selected_games = {k: (k == first) for k in self.selected_games}
+
             self.logger.info("Settings loaded successfully")
 
         except (json.JSONDecodeError, Exception) as e:
@@ -661,6 +667,14 @@ class MainWindow(QWidget):
 
     def closeEvent(self, event):
         self.save_settings()
+        # Clean shutdown: release the camera, stop a running build at its next
+        # safe point (downloads and cache writes are atomic, so nothing is left
+        # half-written), and drop any in-flight scan result.
+        self.stop_camera()
+        self._build_cancel_event.set()
+        self._scan_token += 1
+        if self._build_thread is not None and self._build_thread.is_alive():
+            self._build_thread.join(timeout=2.0)
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ DB build
@@ -780,33 +794,32 @@ class MainWindow(QWidget):
             self.build_status.emit(f"Building {game_name} database…")
             self._db_progress_pct = 0
 
-            for attempt in range(1, 4):  # initial try + 2 retries
-                if cancel_event.is_set():
-                    break
-                try:
-                    self.logger.info(
-                        f"Building DB for {game_name} at {game_path} (attempt {attempt})"
-                    )
-                    if not os.path.exists(game_path):
-                        raise RuntimeError(f"Game folder not found: {game_path}")
-                    db = build_feature_database(
-                        progress_callback=progress_callback,
-                        db_path=game_path,
-                        cancel_event=cancel_event,
-                    )
-                    # A cancelled build legitimately returns few/no entries —
-                    # don't count it as a failure or burn retries on it.
-                    if cancel_event.is_set():
-                        break
-                    if not db:
-                        raise RuntimeError("Database build returned no entries")
-                    self.logger.info(f"DB ready for {game_name}: {len(db)} entries")
-                    break
-                except Exception as e:
-                    self.logger.error(f"Error building DB for {game_name}: {e}")
-            else:
+            # Single attempt: build_feature_database already catches and logs
+            # its own errors (returning what it has), so retrying never helped.
+            if not os.path.isdir(game_path):
+                self.logger.error(f"Game folder not found: {game_path}")
+                failed.append(game_name)
+                continue
+            if not _list_image_files(game_path):
+                # Nothing to build (no images, and none downloaded) — not a failure.
+                self.logger.info(f"No images for {game_name} — skipped")
+                self.build_status.emit(f"No images for {game_name} — skipped")
+                continue
+            self.logger.info(f"Building DB for {game_name} at {game_path}")
+            db = build_feature_database(
+                progress_callback=progress_callback,
+                db_path=game_path,
+                cancel_event=cancel_event,
+            )
+            # A cancelled build legitimately returns few/no entries.
+            if cancel_event.is_set():
+                break
+            if not db:
+                self.logger.error(f"Database build for {game_name} produced no entries")
                 failed.append(game_name)
                 self.build_status.emit(f"Error building {game_name} database")
+            else:
+                self.logger.info(f"DB ready for {game_name}: {len(db)} entries")
 
         elapsed = time.time() - start_time
         cancelled = cancel_event.is_set()
@@ -816,7 +829,7 @@ class MainWindow(QWidget):
         )
         if refreshed_prices:
             self.prices_refreshed.emit()
-        self.build_done.emit(not failed and not cancelled)
+        self.build_done.emit(not failed and not cancelled, failed)
 
     def _on_build_status(self, text: str) -> None:
         """Main-thread slot: route worker status lines into the progress dialog."""
@@ -828,7 +841,7 @@ class MainWindow(QWidget):
         self.logger.info("Database build cancel requested")
         self._build_cancel_event.set()
 
-    def _on_build_done(self, success: bool) -> None:
+    def _on_build_done(self, success: bool, failed: List[str]) -> None:
         """Main-thread slot: finalize UI after the background build finishes."""
         self._db_progress_timer.stop()
         if self._progress_dialog is not None:
@@ -837,6 +850,11 @@ class MainWindow(QWidget):
             self.match_label.setText("Database build cancelled.")
         elif success:
             self.match_label.setText("All databases ready. Scan a card to begin.")
+        else:
+            # The progress dialog is hidden now — don't let the failure vanish with it.
+            self.match_label.setText(
+                f"Database build failed for {', '.join(failed)} — see logs/card_scanner.log."
+            )
         # The in-memory featureDB may be stale after a rebuild — force reload on next scan
         self._loaded_game = None
         clear_price_cache()
