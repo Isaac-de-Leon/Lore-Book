@@ -75,7 +75,7 @@ def sets_to_display(stored: Iterable[str], available: Iterable[str], game_select
     return [s for s in available if s in stored] or available
 
 
-def game_type_from_name(name: str) -> "GameType":
+def game_type_from_name(name: Optional[str]) -> "GameType":
     """Resolve a game name (e.g. "Lorcana", "riftbound") to a GameType."""
     try:
         return GameType((name or "").strip().lower())
@@ -83,7 +83,7 @@ def game_type_from_name(name: str) -> "GameType":
         return GameType.UNKNOWN
 
 
-def csv_for_game(game_name: str) -> str:
+def csv_for_game(game_name: Optional[str]) -> str:
     """
     Return the collection CSV filename for a game folder name.
 

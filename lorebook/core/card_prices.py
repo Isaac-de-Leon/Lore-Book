@@ -146,7 +146,12 @@ def prices_stale(game: Optional[str] = None, path: Optional[str] = None,
     missing or its fetched_at is older than max_age_hours or unparseable.
     Reads the file directly — no cache — so it's safe from worker threads.
     """
-    file = os.path.abspath(path or prices_file_for(game))
+    if path is not None:
+        file = os.path.abspath(path)
+    elif game is not None:
+        file = os.path.abspath(prices_file_for(game))
+    else:
+        raise ValueError("prices_stale() needs a game or a path")
     try:
         with open(file, "r", encoding="utf-8") as f:
             fetched_at = json.load(f).get("fetched_at")

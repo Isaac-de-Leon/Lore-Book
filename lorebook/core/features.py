@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 
 from lorebook.core.image_utils import ensure_valid_image
-from lorebook.core.matching import _l2_normalize
+from lorebook.core.matching import l2_normalize
 
 # TensorFlow/Keras are imported lazily (only when the "keras" backend or the
 # heatmap overlay is actually used) so importing this module — and the "tflite"
@@ -128,7 +128,7 @@ def _finalize(features: np.ndarray) -> Optional[np.ndarray]:
     if features.size != 1280:
         logging.error(f"Unexpected feature dimension: {features.size}")
         return None
-    return _l2_normalize(features)
+    return l2_normalize(features)
 
 
 class _KerasExtractor:
@@ -215,8 +215,9 @@ class _TFLiteExtractor:
         self._ensure_interpreter()
 
     def _ensure_interpreter(self):
+        """Load the interpreter on first use and return it."""
         if self._interpreter is not None:
-            return
+            return self._interpreter
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(
                 f"tflite model not found at {self.model_path}. "
@@ -239,16 +240,17 @@ class _TFLiteExtractor:
         self._interpreter = interp
         self._in_index = in_detail["index"]
         self._out_index = out_detail["index"]
+        return interp
 
     def extract(self, img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray]:
         try:
-            self._ensure_interpreter()
+            interp = self._ensure_interpreter()
             batch = _preprocess_to_batch(img_or_path)
             if batch is None:
                 return None
-            self._interpreter.set_tensor(self._in_index, batch)
-            self._interpreter.invoke()
-            features = self._interpreter.get_tensor(self._out_index)
+            interp.set_tensor(self._in_index, batch)
+            interp.invoke()
+            features = interp.get_tensor(self._out_index)
             return _finalize(features)
         except Exception as e:
             logging.error(f"Error extracting features (tflite): {e}")

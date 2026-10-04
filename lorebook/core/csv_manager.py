@@ -52,11 +52,11 @@ def get_available_sets(
     game_type is accepted for API compatibility but no longer restricts results —
     all set codes present in the folder are returned regardless of format.
     """
-    from lorebook.core.card_database import _list_image_files, databasePath
+    from lorebook.core.card_database import databasePath, list_image_files
 
     resolved = db_path or databasePath
     sets = set()
-    for fname in _list_image_files(resolved):
+    for fname in list_image_files(resolved):
         set_code, _ = split_filename(fname)
         if set_code:
             sets.add(set_code)

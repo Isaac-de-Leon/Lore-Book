@@ -3,7 +3,7 @@
 # All logic has been moved to focused modules under lorebook/core/:
 #   game_types.py    — GameType enum, get_game_type, constants
 #   image_utils.py   — ensure_valid_image, foil_score, is_probably_foil
-#   matching.py      — _l2_normalize, _cosine_score, find_best_matches
+#   matching.py      — l2_normalize, _cosine_score, find_best_matches
 #   features.py      — extract_features, visualize_activation_overlay
 #   card_database.py — load_cache, build_feature_database, set_database_path
 #   csv_manager.py   — update_cardlist, get_available_sets, CSV helpers
@@ -47,7 +47,7 @@ from lorebook.core.game_types import (
     is_foil_only_card,
 )
 from lorebook.core.image_utils import ensure_valid_image, foil_score, is_probably_foil
-from lorebook.core.matching import MatchIndex, _cosine_score, _l2_normalize, find_best_matches
+from lorebook.core.matching import MatchIndex, _cosine_score, _l2_normalize, find_best_matches, l2_normalize
 
 # Legacy name aliases
 baseDatabasePath = BASE_DATABASE_PATH

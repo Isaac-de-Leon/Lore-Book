@@ -149,7 +149,7 @@ class OpenCVCameraSource(CameraSource):
     def __init__(self, camera_index: int = 0, max_read_failures: int = 20):
         self.camera_index = camera_index
         self.max_read_failures = max_read_failures
-        self._cap = open_capture(camera_index)
+        self._cap: Optional[cv2.VideoCapture] = open_capture(camera_index)
 
     def read(self) -> Optional[np.ndarray]:
         if self._cap is None:

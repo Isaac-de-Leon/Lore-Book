@@ -124,11 +124,15 @@ def _remove_cache_entries(cache_file: str, filenames: List[str]) -> None:
         logging.error(f"Error pruning stale cache entries from {cache_file}: {e}")
 
 
-def _list_image_files(folder: str) -> List[str]:
+def list_image_files(folder: str) -> List[str]:
     """Return sorted list of supported image filenames in folder."""
     if not os.path.isdir(folder):
         return []
     return sorted(n for n in os.listdir(folder) if n.lower().endswith(SUPPORTED_EXTS))
+
+
+# Backward-compat alias (was private; csv_manager and the GUI need it).
+_list_image_files = list_image_files
 
 
 # Images per inference batch during builds. Reads are parallelized within a
@@ -166,7 +170,7 @@ def build_feature_database(
         featureDB = load_cache(resolved)
         logging.info(f"Loaded {len(featureDB)} cached entries from {resolved}")
 
-        current_files = _list_image_files(resolved)
+        current_files = list_image_files(resolved)
 
         # Prune cache entries for deleted/renamed images so they can't keep
         # matching against cards that no longer exist. Only when the folder
@@ -195,8 +199,8 @@ def build_feature_database(
             _remove_cache_entries(cache_file, changed)
             logging.info(f"Re-extracting {len(changed)} changed images in {resolved}")
         _save_stamps(cache_file, {
-            f: disk[f] for f in featureDB
-            if stored.get(f) is None and disk.get(f) is not None
+            f: stamp for f in featureDB
+            if stored.get(f) is None and (stamp := disk.get(f)) is not None
         })
 
         new_files = [f for f in current_files if f not in featureDB]

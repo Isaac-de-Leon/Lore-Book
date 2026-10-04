@@ -16,7 +16,7 @@ except Exception:
     sk_cosine = None
 
 
-def _l2_normalize(vec: np.ndarray) -> np.ndarray:
+def l2_normalize(vec: np.ndarray) -> np.ndarray:
     """L2-normalize a vector, always returning float32.
 
     float32 is a contract, not an optimization: cache blobs are written with
@@ -31,13 +31,17 @@ def _l2_normalize(vec: np.ndarray) -> np.ndarray:
     return v / n if n else v
 
 
+# Backward-compat alias (was private; features.py and callers need it).
+_l2_normalize = l2_normalize
+
+
 def _cosine_score(a: np.ndarray, b: np.ndarray) -> float:
     """
     Cosine similarity for L2-normalized vectors.
     Raises ValueError if either vector is not L2-normalized.
     """
     def _is_normalized(v: np.ndarray, tol: float = 1e-3) -> bool:
-        return abs(np.linalg.norm(v) - 1.0) < tol
+        return bool(abs(np.linalg.norm(v) - 1.0) < tol)
 
     if not _is_normalized(a) or not _is_normalized(b):
         raise ValueError("Both input vectors must be l2-normalized.")
@@ -54,7 +58,7 @@ def find_best_matches(
     """Return all DB entries with cosine similarity >= threshold, sorted descending."""
     if inputFeatures is None or inputFeatures.size == 0 or not featureDB:
         return []
-    q = _l2_normalize(inputFeatures)
+    q = l2_normalize(inputFeatures)
     scored: List[Tuple[str, float]] = []
     for fname, vec in featureDB.items():
         if vec is None or np.size(vec) == 0:
@@ -116,7 +120,7 @@ class MatchIndex:
         """Return all entries with cosine similarity >= threshold, sorted descending."""
         if inputFeatures is None or np.size(inputFeatures) == 0 or not self._names:
             return []
-        q = _l2_normalize(np.asarray(inputFeatures, dtype=np.float32).ravel())
+        q = l2_normalize(np.asarray(inputFeatures, dtype=np.float32).ravel())
         if q.size != self._matrix.shape[1]:
             logging.error(
                 f"MatchIndex: query dim {q.size} != index dim {self._matrix.shape[1]}"

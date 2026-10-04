@@ -14,7 +14,7 @@ import sys
 from lorebook.core.card_database import load_cache, set_database_path
 from lorebook.core.features import get_extractor
 from lorebook.core.image_utils import MotionGate
-from lorebook.hardware.camera import MockCameraSource, OpenCVCameraSource
+from lorebook.hardware.camera import CameraSource, MockCameraSource, OpenCVCameraSource
 from lorebook.hardware.transport import MockTransport
 from lorebook.sorter.pipeline import SortPipeline
 from lorebook.sorter.rules import SortRules, load_rules
@@ -73,6 +73,7 @@ def main(argv=None) -> int:
         log.warning("No --rules given; every card routes to '%s'.", rules.reject_bin)
 
     # Camera: live or a folder/file replay.
+    camera: CameraSource
     if args.source == "camera":
         try:
             camera = OpenCVCameraSource(args.camera_index)

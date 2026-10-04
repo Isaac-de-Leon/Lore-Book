@@ -31,8 +31,8 @@ from PySide6.QtWidgets import (
 )
 
 from lorebook.core.card_database import (
-    _list_image_files,
     build_feature_database,
+    list_image_files,
     load_cache,
     set_database_path,
 )
@@ -800,7 +800,7 @@ class MainWindow(QWidget):
                 self.logger.error(f"Game folder not found: {game_path}")
                 failed.append(game_name)
                 continue
-            if not _list_image_files(game_path):
+            if not list_image_files(game_path):
                 # Nothing to build (no images, and none downloaded) — not a failure.
                 self.logger.info(f"No images for {game_name} — skipped")
                 self.build_status.emit(f"No images for {game_name} — skipped")

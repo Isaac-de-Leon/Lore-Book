@@ -1,7 +1,7 @@
 # image_utils.py — Image validation and foil detection utilities.
 
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, overload
 
 import cv2
 import numpy as np
@@ -23,6 +23,10 @@ def focus_rect(h: int, w: int, height_frac: float = 0.6) -> Tuple[int, int, int,
     return fx, fy, fw, fh
 
 
+@overload
+def crop_to_card(img_bgr: None, height_frac: float = ...) -> None: ...
+@overload
+def crop_to_card(img_bgr: np.ndarray, height_frac: float = ...) -> np.ndarray: ...
 def crop_to_card(img_bgr: Optional[np.ndarray], height_frac: float = 0.6) -> Optional[np.ndarray]:
     """
     Crop a frame to the centered card focus box (see focus_rect).

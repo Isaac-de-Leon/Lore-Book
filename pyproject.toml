@@ -23,7 +23,7 @@ lorebook-ui = "lorebook.ui.app:main"
 lorebook-sort = "lorebook.sorter.__main__:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff", "mypy"]
 # Desktop GUI + keras feature backend (also builds the .tflite model).
 gui = [
     "tensorflow",
@@ -47,6 +47,13 @@ packages = [
     "lorebook.hardware",
     "lorebook.sorter",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["lorebook"]
+# TensorFlow/tflite/PySide6 aren't installed in CI (tests stub them);
+# treat their imports as untyped rather than failing.
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

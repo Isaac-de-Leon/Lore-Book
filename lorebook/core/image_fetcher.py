@@ -134,7 +134,8 @@ def _fetch_riftbound_pages(url: str, limit: int = 100) -> list:
     pages until `total` cards are collected, a page comes back empty or
     repeats (page param ignored), or the hard cap is hit.
     """
-    cards, page_no, last_first_id = [], 1, None
+    cards: list = []
+    page_no, last_first_id = 1, None
     for _ in range(200):  # hard cap: never loop forever on a misbehaving API
         sep = "&" if "?" in url else "?"
         data = _fetch_json(f"{url}{sep}limit={limit}&page={page_no}")
@@ -245,8 +246,8 @@ GAMES = {
 
 def _download(url: str, retries: int = 3, backoff: float = 1.5) -> bytes:
     """Fetch image bytes with a couple of retries on transient failures."""
-    last = None
-    for attempt in range(retries):
+    last: Optional[Exception] = None
+    for attempt in range(max(1, retries)):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": _UA})
             with urllib.request.urlopen(req, timeout=60) as resp:
@@ -259,6 +260,7 @@ def _download(url: str, retries: int = 3, backoff: float = 1.5) -> bytes:
                 raise
             if attempt < retries - 1:
                 time.sleep(backoff * (attempt + 1))
+    assert last is not None  # the loop runs at least once and only falls through on error
     raise last
 
 
