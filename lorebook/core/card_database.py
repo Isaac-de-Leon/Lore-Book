@@ -78,7 +78,7 @@ def _load_stamps(cache_file: str) -> dict[str, Stamp | None]:
                 name: (mtime, size) if mtime is not None and size is not None else None
                 for name, mtime, size in conn.execute("SELECT filename, mtime_ns, size FROM features")
             }
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error("Error reading cache stamps from %s: %s", cache_file, e)
         return {}
 
@@ -93,7 +93,7 @@ def _save_stamps(cache_file: str, stamps: dict[str, Stamp]) -> None:
                 "UPDATE features SET mtime_ns = ?, size = ? WHERE filename = ?",
                 [(m, sz, name) for name, (m, sz) in stamps.items()],
             )
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error("Error saving cache stamps to %s: %s", cache_file, e)
 
 
@@ -108,8 +108,8 @@ def load_cache(db_path: str | None = None) -> dict[str, np.ndarray]:
             for filename, blob in conn.execute("SELECT filename, vector FROM features"):
                 result[filename] = np.frombuffer(blob, dtype=np.float32).copy()
         return result
-    except Exception as e:
-        logger.error("Unexpected error loading cache from %s: %s", path, e)
+    except (sqlite3.Error, ValueError) as e:  # ValueError: a corrupt (odd-length) vector blob
+        logger.error("Could not load cache from %s: %s", path, e)
         return {}
 
 
@@ -122,7 +122,7 @@ def _remove_cache_entries(cache_file: str, filenames: list[str]) -> None:
             conn.executemany(
                 "DELETE FROM features WHERE filename = ?", [(n,) for n in filenames]
             )
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error("Error pruning stale cache entries from %s: %s", cache_file, e)
 
 
@@ -165,113 +165,112 @@ def build_feature_database(
 
     cancel_event: when set, the build stops between batches. Vectors extracted
     so far are still written to the cache, so the next build resumes from them.
+
+    Unreadable images and failed extractions are logged, counted and skipped;
+    anything unexpected propagates to the caller (it is not swallowed into a
+    silently partial result).
     """
     resolved = db_path or databasePath
-    featureDB: dict[str, np.ndarray] = {}
-    try:
-        featureDB = load_cache(resolved)
-        logger.info("Loaded %s cached entries from %s", len(featureDB), resolved)
+    featureDB: dict[str, np.ndarray] = load_cache(resolved)
+    logger.info("Loaded %s cached entries from %s", len(featureDB), resolved)
 
-        current_files = list_image_files(resolved)
+    current_files = list_image_files(resolved)
 
-        # Prune cache entries for deleted/renamed images so they can't keep
-        # matching against cards that no longer exist. Only when the folder
-        # itself exists — a missing folder (typo'd path, unmounted drive)
-        # must not be read as "every image was deleted" and wipe the cache.
-        stale = sorted(set(featureDB) - set(current_files)) if os.path.isdir(resolved) else []
-        if stale:
-            for name in stale:
-                featureDB.pop(name, None)
-            _remove_cache_entries(_cache_path(resolved), stale)
-            logger.info("Pruned %s stale cache entries from %s", len(stale), resolved)
+    # Prune cache entries for deleted/renamed images so they can't keep
+    # matching against cards that no longer exist. Only when the folder
+    # itself exists — a missing folder (typo'd path, unmounted drive)
+    # must not be read as "every image was deleted" and wipe the cache.
+    stale = sorted(set(featureDB) - set(current_files)) if os.path.isdir(resolved) else []
+    if stale:
+        for name in stale:
+            featureDB.pop(name, None)
+        _remove_cache_entries(_cache_path(resolved), stale)
+        logger.info("Pruned %s stale cache entries from %s", len(stale), resolved)
 
-        # Re-extract images replaced under the same name (e.g. re-downloaded
-        # with --force): their recorded size/mtime no longer match the file.
-        # Legacy rows without a stamp are trusted and backfilled below.
-        cache_file = _cache_path(resolved)
-        stored = _load_stamps(cache_file)
-        disk = {f: _file_stamp(os.path.join(resolved, f)) for f in current_files}
-        changed = sorted(
-            f for f in current_files
-            if f in featureDB and stored.get(f) is not None and stored[f] != disk[f]
-        )
-        if changed:
-            for name in changed:
-                featureDB.pop(name, None)
-            _remove_cache_entries(cache_file, changed)
-            logger.info("Re-extracting %s changed images in %s", len(changed), resolved)
-        _save_stamps(cache_file, {
-            f: stamp for f in featureDB
-            if stored.get(f) is None and (stamp := disk.get(f)) is not None
-        })
+    # Re-extract images replaced under the same name (e.g. re-downloaded
+    # with --force): their recorded size/mtime no longer match the file.
+    # Legacy rows without a stamp are trusted and backfilled below.
+    cache_file = _cache_path(resolved)
+    stored = _load_stamps(cache_file)
+    disk = {f: _file_stamp(os.path.join(resolved, f)) for f in current_files}
+    changed = sorted(
+        f for f in current_files
+        if f in featureDB and stored.get(f) is not None and stored[f] != disk[f]
+    )
+    if changed:
+        for name in changed:
+            featureDB.pop(name, None)
+        _remove_cache_entries(cache_file, changed)
+        logger.info("Re-extracting %s changed images in %s", len(changed), resolved)
+    _save_stamps(cache_file, {
+        f: stamp for f in featureDB
+        if stored.get(f) is None and (stamp := disk.get(f)) is not None
+    })
 
-        new_files = [f for f in current_files if f not in featureDB]
-        total = len(new_files)
-        logger.info("Processing %s new files in %s", total, resolved)
+    new_files = [f for f in current_files if f not in featureDB]
+    total = len(new_files)
+    logger.info("Processing %s new files in %s", total, resolved)
 
-        if total == 0:
+    if total == 0:
+        if progress_callback:
+            progress_callback(100, None)
+        return featureDB
+
+    if extractor is None:
+        from lorebook.core.features import get_extractor  # lazy TF import
+        extractor = get_extractor("keras")
+
+    successful = failed = done = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for start in range(0, total, _BATCH_SIZE):
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("Build cancelled after %s/%s files in %s", done, total, resolved)
+                break
+            chunk = new_files[start:start + _BATCH_SIZE]
+            loaded = list(pool.map(lambda f: _read_image(f, resolved), chunk))
+
+            readable = []
+            for fname, img in loaded:
+                if img is None:
+                    failed += 1
+                    logger.warning("Could not read image %s", fname)
+                else:
+                    readable.append((fname, img))
+
+            vectors = extractor.extract_batch([img for _, img in readable]) if readable else []
+            for (fname, _), vec in zip(readable, vectors):
+                if vec is not None:
+                    featureDB[fname] = vec
+                    successful += 1
+                else:
+                    failed += 1
+                    logger.warning("Feature extraction failed for %s", fname)
+
+            done += len(chunk)
             if progress_callback:
-                progress_callback(100, None)
-            return featureDB
+                progress_callback(int(done / total * 100), chunk[-1])
 
-        if extractor is None:
-            from lorebook.core.features import get_extractor  # lazy TF import
-            extractor = get_extractor("keras")
+    try:
+        _init_db(cache_file)
+        with sqlite3.connect(cache_file) as conn:
+            # Cast defensively: load_cache reads blobs as float32, so any
+            # other dtype here would corrupt the round-trip.
+            rows = []
+            for k, v in featureDB.items():
+                m, sz = disk.get(k) or (None, None)
+                rows.append((k, np.asarray(v, dtype=np.float32).tobytes(), m, sz))
+            conn.executemany(
+                "INSERT OR REPLACE INTO features (filename, vector, mtime_ns, size) "
+                "VALUES (?, ?, ?, ?)",
+                rows,
+            )
+        logger.info("Saved %s entries to %s", len(featureDB), cache_file)
+    except (sqlite3.Error, OSError) as e:
+        logger.error("Error saving cache to %s: %s", cache_file, e)
 
-        successful = failed = done = 0
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for start in range(0, total, _BATCH_SIZE):
-                if cancel_event is not None and cancel_event.is_set():
-                    logger.info("Build cancelled after %s/%s files in %s", done, total, resolved)
-                    break
-                chunk = new_files[start:start + _BATCH_SIZE]
-                loaded = list(pool.map(lambda f: _read_image(f, resolved), chunk))
+    logger.info("Build complete: %s ok, %s failed", successful, failed)
+    return featureDB
 
-                readable = []
-                for fname, img in loaded:
-                    if img is None:
-                        failed += 1
-                        logger.warning("Could not read image %s", fname)
-                    else:
-                        readable.append((fname, img))
-
-                vectors = extractor.extract_batch([img for _, img in readable]) if readable else []
-                for (fname, _), vec in zip(readable, vectors):
-                    if vec is not None:
-                        featureDB[fname] = vec
-                        successful += 1
-                    else:
-                        failed += 1
-                        logger.warning("Feature extraction failed for %s", fname)
-
-                done += len(chunk)
-                if progress_callback:
-                    progress_callback(int(done / total * 100), chunk[-1])
-
-        try:
-            _init_db(cache_file)
-            with sqlite3.connect(cache_file) as conn:
-                # Cast defensively: load_cache reads blobs as float32, so any
-                # other dtype here would corrupt the round-trip.
-                rows = []
-                for k, v in featureDB.items():
-                    m, sz = disk.get(k) or (None, None)
-                    rows.append((k, np.asarray(v, dtype=np.float32).tobytes(), m, sz))
-                conn.executemany(
-                    "INSERT OR REPLACE INTO features (filename, vector, mtime_ns, size) "
-                    "VALUES (?, ?, ?, ?)",
-                    rows,
-                )
-            logger.info("Saved %s entries to %s", len(featureDB), cache_file)
-        except Exception as e:
-            logger.error("Error saving cache to %s: %s", cache_file, e)
-
-        logger.info("Build complete: %s ok, %s failed", successful, failed)
-        return featureDB
-
-    except Exception as e:
-        logger.error("Error building feature database: %s", e)
-        return featureDB
 
 
 def clear_from_cache(filename: str, db_path: str | None = None) -> None:
@@ -283,5 +282,5 @@ def clear_from_cache(filename: str, db_path: str | None = None) -> None:
         with sqlite3.connect(path) as conn:
             conn.execute("DELETE FROM features WHERE filename = ?", (filename,))
         logger.info("Cleared %s from %s", filename, path)
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error("Error clearing cache entry %s: %s", filename, e)

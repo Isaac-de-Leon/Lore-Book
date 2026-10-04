@@ -52,7 +52,7 @@ def _read_json(file: str) -> dict | None:
         with open(file, encoding="utf-8") as f:
             raw = json.load(f)
         return raw if isinstance(raw, dict) else None
-    except Exception as e:
+    except (OSError, ValueError) as e:  # ValueError covers malformed JSON
         logger.warning("Could not load %s: %s", file, e)
         return None
 
@@ -155,8 +155,9 @@ def prices_stale(game: str | None = None, path: str | None = None,
         raise ValueError("prices_stale() needs a game or a path")
     try:
         with open(file, encoding="utf-8") as f:
-            fetched_at = json.load(f).get("fetched_at")
+            raw = json.load(f)
+        fetched_at = raw.get("fetched_at") if isinstance(raw, dict) else None
         fetched_ts = datetime.fromisoformat(str(fetched_at)).timestamp()
-    except Exception:
+    except (OSError, ValueError):  # missing/unreadable file, bad JSON or timestamp
         return True
     return (time.time() - fetched_ts) > max_age_hours * 3600

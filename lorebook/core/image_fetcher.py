@@ -169,7 +169,7 @@ def _fetch_riftbound(url: str):
             return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
         try:
             return _fetch_json(url, headers={"X-Riot-Token": key})
-        except Exception as e:
+        except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
             logger.warning("Riot API fetch failed (%s); falling back to %s", e, RIFTBOUND_FALLBACK_URL)
             return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
     if _is_riot_host(url):
@@ -360,7 +360,9 @@ def download_new_images(
             atomic_write_bytes(dest, payload, suffix=_PART_SUFFIX)
             stats.downloaded += 1
             report(f"  {fname}  ({len(payload) // 1024} KB)")
-        except Exception as e:
+        # Boundary: one bad image (network, decode, disk) is counted and the
+        # batch moves on; it must never abort the whole download.
+        except Exception as e:  # noqa: BLE001
             stats.failed += 1
             logger.warning("Failed to fetch card image %s: %s", fname, e)
             report(f"  FAILED {fname}: {e}")

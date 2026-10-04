@@ -59,7 +59,7 @@ def main(argv=None) -> int:
             delay=args.delay,
             dry_run=args.dry_run,
         )
-    except Exception as e:
+    except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
         print(f"Download of card list failed: {e}", file=sys.stderr)
         return 1
 

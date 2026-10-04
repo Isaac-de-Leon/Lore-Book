@@ -8,12 +8,12 @@ logger = logging.getLogger(__name__)
 
 try:
     from sklearn.preprocessing import normalize as sk_normalize
-except Exception:
+except ImportError:
     sk_normalize = None
 
 try:
     from sklearn.metrics.pairwise import cosine_similarity as sk_cosine
-except Exception:
+except ImportError:
     sk_cosine = None
 
 

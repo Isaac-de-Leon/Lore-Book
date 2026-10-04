@@ -150,7 +150,9 @@ class _KerasExtractor:
                 feat_model, _ = _get_models()
                 features = feat_model.predict(batch, verbose=0)
             return _finalize(features)
-        except Exception as e:
+        # Boundary: TF/Keras raise many error types; the contract is "None on
+        # failure" so one bad frame never aborts a scan or sort run.
+        except Exception as e:  # noqa: BLE001
             logger.error("Error extracting features (keras): %s", e)
             return None
 
@@ -179,7 +181,7 @@ class _KerasExtractor:
                 features = feat_model.predict(np.stack(rows), verbose=0)
             for pos, row in zip(positions, features):
                 results[pos] = _finalize(row)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — boundary, see extract()
             logger.error("Error extracting batch features (keras): %s", e)
         return results
 
@@ -228,10 +230,10 @@ class _TFLiteExtractor:
             )
         try:
             from tflite_runtime.interpreter import Interpreter  # Pi-friendly, no full TF
-        except Exception:
+        except ImportError:
             try:
                 from tensorflow.lite import Interpreter  # desktop fallback
-            except Exception as e:
+            except ImportError as e:
                 raise ImportError(
                     "The tflite backend needs 'tflite-runtime' or 'tensorflow' installed."
                 ) from e
@@ -255,7 +257,7 @@ class _TFLiteExtractor:
             interp.invoke()
             features = interp.get_tensor(self._out_index)
             return _finalize(features)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — boundary, see _KerasExtractor.extract()
             logger.error("Error extracting features (tflite): %s", e)
             return None
 

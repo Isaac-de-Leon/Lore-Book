@@ -141,7 +141,7 @@ class SettingsWindow(QDialog):
                     set_item.setFlags(set_item.flags() | Qt.ItemIsUserCheckable)
                     set_item.setCheckState(0, Qt.Checked if set_code in ticked else Qt.Unchecked)
                     set_item.setData(0, Qt.UserRole, set_code)
-            except Exception as e:
+            except OSError as e:
                 self.logger.warning("Error getting sets for %s: %s", game_name, e)
 
         # One active game at a time: ticking a game (or any of its sets)
@@ -205,13 +205,13 @@ class SettingsWindow(QDialog):
         try:
             pct = float(self.confidence_input.text())
             parent.confidence_threshold = max(0.0, min(1.0, pct / 100.0))
-        except Exception:
+        except ValueError:  # not a number
             parent.confidence_threshold = 0.90
 
         try:
             fpct = float(self.foil_threshold_input.text())
             parent.foil_threshold = max(0.0, min(1.0, fpct / 100.0))
-        except Exception:
+        except ValueError:  # not a number
             parent.foil_threshold = 0.08
 
         # Collect game / set selections from tree — every game folder, not

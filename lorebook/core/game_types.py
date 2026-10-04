@@ -1,12 +1,9 @@
 # game_types.py — Game type enum, detection, and shared constants.
 
-import logging
 import os
 from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTS = (".webp", ".jpg", ".jpeg", ".png")
 BASE_DATABASE_PATH = "Card_Images"
@@ -128,17 +125,15 @@ def get_game_type(filepath: str) -> "GameType":
     above that are ignored, so a checkout living under e.g. ~/Riftbound/
     can't make every Lorcana card look like Riftbound.
     """
-    try:
-        parts = list(Path(filepath).parts)
-        lowered = [p.lower() for p in parts]
-        base = BASE_DATABASE_PATH.lower()
-        if base in lowered and lowered.index(base) + 1 < len(parts) - 1:
-            folder = parts[lowered.index(base) + 1]
-        elif len(parts) >= 2:
-            folder = parts[-2]
-        else:
-            return GameType.UNKNOWN
-        return game_type_from_name(folder)
-    except Exception as e:
-        logger.error("Error determining game type for %s: %s", filepath, e)
+    if not filepath:
         return GameType.UNKNOWN
+    parts = list(Path(filepath).parts)
+    lowered = [p.lower() for p in parts]
+    base = BASE_DATABASE_PATH.lower()
+    if base in lowered and lowered.index(base) + 1 < len(parts) - 1:
+        folder = parts[lowered.index(base) + 1]
+    elif len(parts) >= 2:
+        folder = parts[-2]
+    else:
+        return GameType.UNKNOWN
+    return game_type_from_name(folder)

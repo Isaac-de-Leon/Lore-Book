@@ -77,7 +77,7 @@ def main(argv=None) -> int:
     if args.source == "camera":
         try:
             camera = OpenCVCameraSource(args.camera_index)
-        except Exception as e:
+        except RuntimeError as e:  # open_capture's "no backend could open it"
             log.error("Could not open camera %d: %s", args.camera_index, e)
             return 1
     else:
@@ -91,7 +91,9 @@ def main(argv=None) -> int:
     extractor = get_extractor(args.backend)
     try:
         extractor.ensure_ready()
-    except Exception as e:
+    # Boundary: model loading can fail in many ways (missing file, missing
+    # runtime, download error, TF internals); report it and exit cleanly.
+    except Exception as e:  # noqa: BLE001
         log.error("Feature extractor (%s) is not usable: %s", args.backend, e)
         camera.release()
         return 1

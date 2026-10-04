@@ -27,15 +27,11 @@ def split_filename(matchedFilename: str) -> tuple[str, str]:
         "ONG-23c-alt.jpg"   → ("ONG", "23c-alt")
         "nosetcode.png"     → ("",    "nosetcode")
     """
-    try:
-        base = os.path.splitext(os.path.basename(matchedFilename))[0]
-        parts = base.split("-", maxsplit=2)
-        if len(parts) < 2:
-            return "", base
-        return parts[0], "-".join(parts[1:])
-    except Exception as e:
-        logger.error("Error splitting filename %s: %s", matchedFilename, e)
-        return "", matchedFilename
+    base = os.path.splitext(os.path.basename(matchedFilename))[0]
+    parts = base.split("-", maxsplit=2)
+    if len(parts) < 2:
+        return "", base
+    return parts[0], "-".join(parts[1:])
 
 
 # Backward-compat alias (was private; other packages legitimately need it).

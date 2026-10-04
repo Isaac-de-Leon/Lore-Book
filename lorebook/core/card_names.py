@@ -48,11 +48,13 @@ def load_card_names(game: str, path: str | None = None) -> dict[str, str]:
         try:
             with open(file, encoding="utf-8") as f:
                 raw = json.load(f)
+            if not isinstance(raw, dict):
+                raise ValueError("expected a JSON object")
             for key, name in raw.items():
                 set_code, sep, card_code = str(key).partition("-")
                 if sep:
                     names[normalize_key(set_code, card_code)] = str(name)
-        except Exception as e:
+        except (OSError, ValueError) as e:  # ValueError covers malformed JSON
             logger.warning("Could not load card names from %s: %s", file, e)
 
     _cache[file] = names

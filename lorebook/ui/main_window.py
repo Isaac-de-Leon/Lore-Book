@@ -1,5 +1,6 @@
 # main_window.py — MainWindow: camera preview, card matching, CSV export.
 
+import contextlib
 import faulthandler
 import gc
 import json
@@ -201,12 +202,9 @@ class MainWindow(QWidget):
 
     def _active_game_key(self) -> str | None:
         """Settings key (lowercased folder name) of the selected game, or None."""
-        try:
-            for key, selected in self.selected_games.items():
-                if selected:
-                    return key
-        except Exception as e:
-            self.logger.error("Error getting active game: %s", e)
+        for key, selected in self.selected_games.items():
+            if selected:
+                return key
         return None
 
     def get_active_game(self) -> str | None:
@@ -611,6 +609,8 @@ class MainWindow(QWidget):
             # utf-8-sig tolerates a BOM (editors/PowerShell often add one)
             with open(SETTINGS_FILE, encoding="utf-8-sig") as f:
                 settings = json.load(f)
+            if not isinstance(settings, dict):
+                raise ValueError("settings file is not a JSON object")
 
             for key, default in defaults.items():
                 try:
@@ -634,7 +634,7 @@ class MainWindow(QWidget):
                         if value not in THEMES:
                             value = default
                     setattr(self, key, value)
-                except Exception as e:
+                except (TypeError, ValueError) as e:  # uncoercible value: use the default
                     self.logger.error("Error loading setting %s: %s", key, e)
                     setattr(self, key, default)
 
@@ -645,7 +645,7 @@ class MainWindow(QWidget):
 
             self.logger.info("Settings loaded successfully")
 
-        except (json.JSONDecodeError, Exception) as e:
+        except (OSError, ValueError) as e:  # unreadable, bad JSON, or not an object
             self.logger.error("Error loading settings file: %s", e)
             apply_defaults()
 
@@ -692,7 +692,7 @@ class MainWindow(QWidget):
         try:
             os.makedirs(card_images_dir, exist_ok=True)
             folders = game_folders(card_images_dir)
-        except Exception as e:
+        except OSError as e:
             self.logger.error("Error scanning %s: %s", card_images_dir, e)
             self.match_label.setText("Error scanning Card_Images directory")
             return
@@ -753,7 +753,10 @@ class MainWindow(QWidget):
             try:
                 download_currency_rates()
                 refreshed_prices = True
-            except Exception as e:
+            # Boundary (this whole worker): a refresh/download step may fail in
+            # any way — offline, source down, format change — and must never
+            # block the DB build or kill the thread (build_done must arrive).
+            except Exception as e:  # noqa: BLE001
                 self.logger.warning("Currency-rate refresh failed (continuing): %s", e)
 
         for game_name in folders:
@@ -781,7 +784,7 @@ class MainWindow(QWidget):
                     self.build_status.emit(
                         f"Downloaded {stats.downloaded} new {game_name} card images"
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — worker boundary, see above
                 self.logger.warning("Image fetch for %s failed (continuing build): %s", game_name, e)
 
             # Refresh market prices when the cached file is missing or older
@@ -794,7 +797,7 @@ class MainWindow(QWidget):
                     if count is not None:
                         self.logger.info("Refreshed %s %s price entries", count, game_name)
                         refreshed_prices = True
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — worker boundary, see above
                     self.logger.warning("Price fetch for %s failed (continuing build): %s", game_name, e)
 
             self.build_status.emit(f"Building {game_name} database…")
@@ -812,11 +815,17 @@ class MainWindow(QWidget):
                 self.build_status.emit(f"No images for {game_name} — skipped")
                 continue
             self.logger.info("Building DB for %s at %s", game_name, game_path)
-            db = build_feature_database(
-                progress_callback=progress_callback,
-                db_path=game_path,
-                cancel_event=cancel_event,
-            )
+            try:
+                db = build_feature_database(
+                    progress_callback=progress_callback,
+                    db_path=game_path,
+                    cancel_event=cancel_event,
+                )
+            except Exception:  # noqa: BLE001 — worker boundary: fail this game, build the rest
+                self.logger.exception("Database build for %s failed", game_name)
+                failed.append(game_name)
+                self.build_status.emit(f"Error building {game_name} database")
+                continue
             # A cancelled build legitimately returns few/no entries.
             if cancel_event.is_set():
                 break
@@ -939,7 +948,9 @@ class MainWindow(QWidget):
         """Background thread: open the camera and report back via signals only."""
         try:
             cap = open_capture(camera_index)
-        except Exception as e:
+        # Boundary: whatever happens, the UI must hear back (it sits in the
+        # "Starting…" state until camera_ready/camera_failed arrives).
+        except Exception as e:  # noqa: BLE001
             self.camera_failed.emit(token, str(e))
             return
         self.camera_ready.emit(token, cap)
@@ -948,10 +959,8 @@ class MainWindow(QWidget):
         """Main-thread slot: the background open succeeded — start the preview."""
         if token != self._cam_open_token:
             # Stop (or a newer Start) happened while this open was in flight.
-            try:
+            with contextlib.suppress(cv2.error):
                 cap.release()
-            except Exception:
-                pass
             return
         self.cap = cap
         self.read_fail_count = 0
@@ -978,11 +987,10 @@ class MainWindow(QWidget):
         self.watchdog.stop()
         if self.cap is not None:
             try:
-                for _ in range(5):
-                    self.cap.grab()
-                self.cap.release()
-            except Exception:
-                pass
+                with contextlib.suppress(cv2.error):  # a dead camera may refuse
+                    for _ in range(5):
+                        self.cap.grab()
+                    self.cap.release()
             finally:
                 self.cap = None
         self.last_frame = None
@@ -1042,7 +1050,10 @@ class MainWindow(QWidget):
             preview = visualize_activation_overlay(overlay, blocking=False) if self.debug_mode else overlay
             self._show_on_label(self.preview_label, preview, fill=True)
 
-        except Exception as e:
+        # Boundary: a Qt timer callback — an exception here would escape to
+        # the event loop every 30 ms. Count it like a failed read instead.
+        except Exception as e:  # noqa: BLE001
+            self.logger.debug("Frame processing error: %s", e)
             self.read_fail_count += 1
             if self.read_fail_count > self.max_read_fail:
                 self._fail_and_stop(f"Camera error: {e}")
@@ -1104,13 +1115,15 @@ class MainWindow(QWidget):
             features = extract_features(img_bgr)
             matches = index.find(features, threshold=threshold) if features is not None else None
             self.scan_done.emit(token, (game, matches, None))
-        except Exception as e:  # never let a worker die silently
+        # Boundary: never let the worker die silently — the UI stays in
+        # "Scanning…" until scan_done arrives.
+        except Exception as e:  # noqa: BLE001
             self.scan_done.emit(token, (game, None, str(e)))
 
     def _warm_model_worker(self) -> None:
         try:
             get_extractor("keras").ensure_ready()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — optional warm-up; the scan reports real errors
             self.logger.warning("Background model load failed (will retry on scan): %s", e)
 
     def _set_scan_busy(self, busy: bool) -> None:

@@ -125,7 +125,7 @@ def main(argv=None) -> int:
     print(f"Fetching {url} …")
     try:
         data = fetcher(url)
-    except Exception as e:
+    except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
         print(f"Download failed: {e}", file=sys.stderr)
         return 1
 

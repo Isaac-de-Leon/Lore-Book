@@ -150,7 +150,7 @@ def foil_score(img_bgr: np.ndarray) -> float:
         bright_ratio = float((gray > 240).astype(np.uint8).mean())
         contrast = float(np.mean(np.abs(cv2.Laplacian(gray, cv2.CV_32F)))) / 255.0
         return float(np.clip(0.7 * bright_ratio + 0.3 * contrast, 0.0, 1.0))
-    except Exception as e:
+    except cv2.error as e:
         logger.error("Error calculating foil score: %s", e)
         return 0.0
 

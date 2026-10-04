@@ -8,6 +8,7 @@
 # MockCameraSource replays images from disk for dry runs and tests — no camera,
 # no Qt.
 
+import contextlib
 import logging
 import os
 import platform
@@ -85,10 +86,8 @@ def open_capture(camera_index: int = 0, warmup_frames: int = 30) -> cv2.VideoCap
                 (cv2.CAP_PROP_AUTOFOCUS, 1),
                 (cv2.CAP_PROP_AUTO_EXPOSURE, _auto_exposure_value(backend_flag)),
             ]:
-                try:
+                with contextlib.suppress(cv2.error):  # unsupported property: ignore
                     cap.set(prop, value)
-                except Exception:
-                    pass
 
             ret, frame = cap.read()
             if not ret or frame is None or frame.size == 0:
@@ -98,18 +97,16 @@ def open_capture(camera_index: int = 0, warmup_frames: int = 30) -> cv2.VideoCap
             # Every warmup frame is read and discarded; sleep only after a
             # failed read so a healthy camera settles at its native frame rate.
             for _ in range(max(0, warmup_frames)):
-                try:
+                with contextlib.suppress(cv2.error):
                     ret, frm = cap.read()
                     if ret and frm is not None and frm.size > 0:
                         continue
-                except Exception:
-                    pass
                 time.sleep(0.1)
 
             logger.info("Camera opened with %s", backend_name)
             return cap
 
-        except Exception as e:
+        except (RuntimeError, cv2.error) as e:
             last_error = str(e)
             logger.warning("Failed with %s: %s", backend_name, e)
             if cap is not None:
@@ -176,15 +173,14 @@ class OpenCVCameraSource(CameraSource):
         for _ in range(self._FLUSH_FRAMES):
             try:
                 self._cap.grab()
-            except Exception:
+            except cv2.error:
                 break
 
     def release(self) -> None:
         if self._cap is not None:
             try:
-                self._cap.release()
-            except Exception:
-                pass
+                with contextlib.suppress(cv2.error):
+                    self._cap.release()
             finally:
                 self._cap = None
 
