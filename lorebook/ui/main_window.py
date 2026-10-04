@@ -53,7 +53,7 @@ from lorebook.core.game_types import (
     is_foil_only_card,
     resolve_game_folder,
 )
-from lorebook.core.features import extract_features, visualize_activation_overlay
+from lorebook.core.features import extract_features, get_extractor, visualize_activation_overlay
 from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import (
     MotionGate,
@@ -140,20 +140,24 @@ class MainWindow(QWidget):
 
     Threading rules
     ---------------
-    Two kinds of background daemon threads exist: the DB build
-    (_build_all_games_worker) and the camera opener (_open_camera_worker,
-    which keeps the slow open_capture() backend probe off the paint path).
+    Background daemon threads: the DB build (_build_all_games_worker), the
+    camera opener (_open_camera_worker, which keeps the slow open_capture()
+    backend probe off the paint path), the scan worker (_scan_worker:
+    feature extraction + matching) and a one-shot model warm-up. Model use
+    is serialized by features._model_lock, so a scan during a build waits
+    for the current batch instead of racing it.
     From any non-main thread, the ONLY permitted interactions with this
     object are:
       - writing the plain attribute ``_db_progress_pct`` (polled by a QTimer)
       - emitting the ``build_status`` / ``build_done`` / ``prices_refreshed`` /
-        ``camera_ready`` / ``camera_failed`` signals (Qt delivers them on the
+        ``camera_ready`` / ``camera_failed`` / ``scan_done`` signals (Qt delivers them on the
         main thread)
       - reading the ``cancel_event`` / ``token`` passed in as worker arguments
     Everything else — widgets (including the progress dialog),
     featureDB/_match_index, settings, the set_database_path global — is
     main-thread-only. Camera-open results carry a generation token checked
-    against ``_cam_open_token`` so a Stop/restart discards stale opens.
+    against ``_cam_open_token`` so a Stop/restart discards stale opens;
+    scan results likewise carry ``_scan_token``.
     """
 
     logger = logging.getLogger("MainWindow")
@@ -168,6 +172,7 @@ class MainWindow(QWidget):
     prices_refreshed = Signal()     # price/rate files were rewritten on disk
     camera_ready = Signal(int, object)   # (open token, cv2.VideoCapture)
     camera_failed = Signal(int, str)     # (open token, error message)
+    scan_done = Signal(int, object)      # (scan token, (matches | None, error | None))
 
     # ------------------------------------------------------------------ helpers
 
@@ -266,6 +271,14 @@ class MainWindow(QWidget):
         self._progress_dialog: Optional[BuildProgressDialog] = None
         self._build_cancel_event = threading.Event()
         self._build_thread: Optional[threading.Thread] = None
+
+        # Scan state: extraction runs on a worker thread; results carry a
+        # token so a superseded scan's result is dropped. _matches_game is
+        # the game the displayed matches belong to (Add/Undo/Prev/Next use
+        # it, never whatever Settings says now).
+        self._scan_token = 0
+        self._scan_busy = False
+        self._matches_game: Optional[str] = None
 
         self.load_settings()
 
@@ -492,6 +505,7 @@ class MainWindow(QWidget):
         self.prices_refreshed.connect(self._on_prices_refreshed)
         self.camera_ready.connect(self._on_camera_ready)
         self.camera_failed.connect(self._on_camera_failed)
+        self.scan_done.connect(self._on_scan_done)
 
         # Timers
         self.timer = QTimer(self)
@@ -523,6 +537,9 @@ class MainWindow(QWidget):
         # the progress dialog appears — showing it here leaves both windows
         # as unpainted white rectangles until the first paint event.
         QTimer.singleShot(0, self.start_db_build_in_background)
+        # Load the feature model in the background so the first scan doesn't
+        # stall for seconds (or a first-run weights download).
+        threading.Thread(target=self._warm_model_worker, daemon=True).start()
 
     # ------------------------------------------------------------------ theme
 
@@ -999,7 +1016,7 @@ class MainWindow(QWidget):
             ]:
                 cv2.line(overlay, (sx, sy), (ex, ey), color, thickness)
 
-            preview = visualize_activation_overlay(overlay) if self.debug_mode else overlay
+            preview = visualize_activation_overlay(overlay, blocking=False) if self.debug_mode else overlay
             self._show_on_label(self.preview_label, preview, fill=True)
 
         except Exception as e:
@@ -1011,6 +1028,8 @@ class MainWindow(QWidget):
 
     def capture_and_match(self) -> None:
         """Capture the current frame, extract features, and find the best matches."""
+        if self._scan_busy:
+            return  # one scan at a time; auto-scan simply skips this trigger
         if self.last_frame is None:
             QMessageBox.warning(self, "Scan Card", "Camera is not running or no frame available.")
             return
@@ -1041,14 +1060,57 @@ class MainWindow(QWidget):
             self.add_csv_btn.setEnabled(False)
             return
 
-        features = extract_features(img_bgr)
-        if features is None:
+        # Extraction (and the first-call model load) is seconds of work —
+        # run it off the GUI thread and finish in _on_scan_done.
+        self._scan_token += 1
+        self._set_scan_busy(True)
+        threading.Thread(
+            target=self._scan_worker,
+            args=(self._scan_token, img_bgr, self._match_index, self.confidence_threshold, active_game),
+            daemon=True,
+        ).start()
+
+    def _scan_worker(self, token: int, img_bgr: np.ndarray, index: MatchIndex,
+                     threshold: float, game: str) -> None:
+        """Background thread: extract + match, report via scan_done only.
+
+        Uses the index object it was handed, so a game switch on the main
+        thread mid-scan can't mix games.
+        """
+        try:
+            features = extract_features(img_bgr)
+            matches = index.find(features, threshold=threshold) if features is not None else None
+            self.scan_done.emit(token, (game, matches, None))
+        except Exception as e:  # never let a worker die silently
+            self.scan_done.emit(token, (game, None, str(e)))
+
+    def _warm_model_worker(self) -> None:
+        try:
+            get_extractor("keras").ensure_ready()
+        except Exception as e:
+            self.logger.warning(f"Background model load failed (will retry on scan): {e}")
+
+    def _set_scan_busy(self, busy: bool) -> None:
+        self._scan_busy = busy
+        self.capture_btn.setEnabled(not busy)
+        self.capture_btn.setText("SCANNING…" if busy else "SCAN CARD")
+        if busy:
+            self.match_label.setText("Scanning…")
+
+    def _on_scan_done(self, token: int, result) -> None:
+        """Main-thread slot: display the worker's matches."""
+        if token != self._scan_token:
+            return  # superseded
+        self._set_scan_busy(False)
+        game, matches, error = result
+        if error is not None:
+            self.logger.error(f"Scan failed: {error}")
+        if matches is None:
             self.match_label.setText("Could not extract features from image.")
             self.add_csv_btn.setEnabled(False)
             return
 
-        matches = self._match_index.find(features, threshold=self.confidence_threshold)
-        matches = self._filter_matches(matches)
+        matches = self._filter_matches(matches, game)
         self.logger.info(f"Found {len(matches)} matches after filtering")
 
         if not matches:
@@ -1056,6 +1118,7 @@ class MainWindow(QWidget):
             self.add_csv_btn.setEnabled(False)
             return
 
+        self._matches_game = game
         self.last_matches = matches[:20]
         self.current_match_idx = 0
         self._show_match_at(0)
@@ -1068,6 +1131,23 @@ class MainWindow(QWidget):
                 "check alternatives with A/D before adding."
             )
 
+    def _clear_results(self) -> None:
+        """Empty the result panel (e.g. the active game changed under it)."""
+        self.last_matches = []
+        self.current_match_idx = 0
+        self._matches_game = None
+        self.add_csv_btn.setEnabled(False)
+        if self._foil_locked:
+            self._foil_locked = False
+            self.foil_check.setEnabled(True)
+            self.foil_check.setChecked(self._foil_before_lock)
+        self.match_name_label.setText("—")
+        self.match_detail_label.setText("")
+        self.match_price_label.setText("")
+        self.match_pos_label.setText("")
+        self.image_label.clear()
+        self.image_label.setText("—")
+
     def _show_match_at(self, idx: int) -> None:
         """Display the match at position idx in the result panel."""
         if not self.last_matches:
@@ -1077,7 +1157,7 @@ class MainWindow(QWidget):
         fname, score = self.last_matches[idx]
 
         set_code, card_code = split_filename(fname)
-        active_game = self.get_active_game()
+        active_game = self._matches_game or self.get_active_game()
         code = f"{set_code}-{card_code}" if set_code else fname
         card_name = name_for(set_code, card_code, active_game) if active_game else None
         self.match_name_label.setText(f"{card_name}  ·  {code}" if card_name else code)
@@ -1130,15 +1210,11 @@ class MainWindow(QWidget):
         if self.last_matches:
             self._show_match_at(self.current_match_idx + 1)
 
-    def _filter_matches(self, matches: List[Tuple[str, float]]) -> List[Tuple[str, float]]:
-        """Keep only matches that belong to the active game's selected sets."""
-        if not matches:
-            return []
-        active_game = self._active_game_key()
-        if not active_game:
-            return matches
-
-        game_selected_sets = self.selected_sets.get(active_game, [])
+    def _filter_matches(self, matches: List[Tuple[str, float]], game: Optional[str]) -> List[Tuple[str, float]]:
+        """Keep only matches in the selected sets of the game they were scanned for."""
+        if not matches or not game:
+            return matches or []
+        game_selected_sets = self.selected_sets.get(game.lower(), [])
         filtered = []
         for fname, score in matches:
             set_code, _ = split_filename(os.path.basename(fname))
@@ -1149,6 +1225,9 @@ class MainWindow(QWidget):
     def open_settings(self) -> None:
         dlg = SettingsWindow(self)
         dlg.exec()
+        if self.last_matches and self.get_active_game() != self._matches_game:
+            self._clear_results()
+            self.match_label.setText("Game changed — scan a card.")
         if self._foil_locked:
             self._foil_before_lock = self.keep_foil_checked
         else:
@@ -1172,7 +1251,8 @@ class MainWindow(QWidget):
             return
         is_foil = self.foil_check.isChecked()
 
-        active_game = self.get_active_game() or "Lorcana"
+        # The game the match came from — not whatever Settings says now.
+        active_game = self._matches_game or self.get_active_game() or "Lorcana"
         target_file = csv_for_game(active_game)
 
         try:

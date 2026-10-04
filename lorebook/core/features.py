@@ -14,6 +14,7 @@ os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 import logging
+import threading
 import warnings
 from typing import List, Optional, Sequence, Union
 
@@ -31,6 +32,13 @@ from lorebook.core.matching import _l2_normalize
 _base_model = None
 _feat_model = None   # 1280-dim pooled features
 _act_model = None    # last conv activations (for heatmaps)
+
+# Serializes everything that touches the Keras models: the one-time load and
+# every predict. The GUI scans while the DB-build worker extracts batches;
+# concurrent model construction or predict on a shared model is not
+# thread-safe, so both sides queue here. Reentrant because predict paths
+# call _get_models() while holding it.
+_model_lock = threading.RLock()
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -62,7 +70,11 @@ def _get_models():
     Imports TensorFlow/Keras on first use only (keras backend / heatmap overlay).
     """
     global _base_model, _feat_model, _act_model
-    if _feat_model is None or _act_model is None:
+    if _feat_model is not None and _act_model is not None:
+        return _feat_model, _act_model
+    with _model_lock:
+        if _feat_model is not None and _act_model is not None:
+            return _feat_model, _act_model  # another thread finished loading first
         import tensorflow as tf
         from keras.applications import MobileNetV2
         from keras.models import Model
@@ -70,10 +82,17 @@ def _get_models():
         logging.getLogger("tensorflow").setLevel(logging.ERROR)
         tf.get_logger().setLevel("ERROR")
 
-        _base_model = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
-        _feat_model = Model(inputs=_base_model.input, outputs=_base_model.output)
-        _act_model = Model(inputs=_base_model.input, outputs=_base_model.layers[-2].output)
-    return _feat_model, _act_model
+        base = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
+        feat = Model(inputs=base.input, outputs=base.output)
+        act = Model(inputs=base.input, outputs=base.layers[-2].output)
+        # Publish only fully built models (the unlocked fast path reads these).
+        _base_model, _act_model, _feat_model = base, act, feat
+        return _feat_model, _act_model
+
+
+def models_loaded() -> bool:
+    """True once the Keras models are in memory (no load is triggered)."""
+    return _feat_model is not None and _act_model is not None
 
 
 def _preprocess_to_batch(img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray]:
@@ -122,8 +141,9 @@ class _KerasExtractor:
             batch = _preprocess_to_batch(img_or_path)
             if batch is None:
                 return None
-            feat_model, _ = _get_models()
-            features = feat_model.predict(batch, verbose=0)
+            with _model_lock:
+                feat_model, _ = _get_models()
+                features = feat_model.predict(batch, verbose=0)
             return _finalize(features)
         except Exception as e:
             logging.error(f"Error extracting features (keras): {e}")
@@ -149,8 +169,9 @@ class _KerasExtractor:
         if not rows:
             return results
         try:
-            feat_model, _ = _get_models()
-            features = feat_model.predict(np.stack(rows), verbose=0)
+            with _model_lock:
+                feat_model, _ = _get_models()
+                features = feat_model.predict(np.stack(rows), verbose=0)
             for pos, row in zip(positions, features):
                 results[pos] = _finalize(row)
         except Exception as e:
@@ -268,17 +289,32 @@ def extract_features(img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray
     return get_extractor("keras").extract(img_or_path)
 
 
-def visualize_activation_overlay(img_bgr: np.ndarray, model=None) -> np.ndarray:
-    """Return the image with a jet-colormap heatmap of average last-conv activations blended in."""
+def visualize_activation_overlay(img_bgr: np.ndarray, model=None, blocking: bool = True) -> np.ndarray:
+    """Return the image with a jet-colormap heatmap of average last-conv activations blended in.
+
+    blocking=False is for per-frame callers on the GUI thread: if the model
+    isn't loaded yet or is busy (a scan or DB-build batch holds it), the
+    image is returned unchanged instead of stalling the preview.
+    """
     if img_bgr is None or img_bgr.size == 0:
         return img_bgr
+    if not blocking and model is None and not models_loaded():
+        return img_bgr
+    if not _model_lock.acquire(blocking=blocking):
+        return img_bgr
+    try:
+        return _activation_overlay(img_bgr, model)
+    finally:
+        _model_lock.release()
+
+
+def _activation_overlay(img_bgr: np.ndarray, model=None) -> np.ndarray:
     if img_bgr.ndim == 2:
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
     if img_bgr.shape[-1] == 4:
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
 
-    _, act_model = _get_models()
-    use_model = model or act_model
+    use_model = model or _get_models()[1]
 
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(img_rgb, (224, 224), interpolation=cv2.INTER_AREA)

@@ -211,6 +211,35 @@ def test_get_extractor():
     with pytest.raises(ValueError):
         get_extractor("onnx")
 
+    # Concurrent first use (GUI scan + DB-build worker) builds the model once.
+    import sys
+    import threading
+    import time
+    import unittest.mock
+
+    import lorebook.core.features as features
+
+    mobilenet = sys.modules["keras.applications"].MobileNetV2  # conftest stub
+    saved = (features._base_model, features._feat_model, features._act_model)
+    calls = []
+    def slow_build(*args, **kwargs):
+        calls.append(1)
+        time.sleep(0.05)
+        return unittest.mock.MagicMock()
+
+    mobilenet.side_effect = slow_build
+    try:
+        features._base_model = features._feat_model = features._act_model = None
+        threads = [threading.Thread(target=features._get_models) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(calls) == 1 and features.models_loaded()
+    finally:
+        mobilenet.side_effect = None
+        features._base_model, features._feat_model, features._act_model = saved
+
     _check_tflite_input_dtype(np.float32, "model.tflite")  # no raise
     for dtype in (np.int8, np.uint8):
         with pytest.raises(ValueError, match="float32"):

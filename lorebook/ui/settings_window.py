@@ -5,16 +5,21 @@ import os
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
+    QFrame,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QTreeWidget,
     QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from lorebook.core.card_prices import SUPPORTED_CURRENCIES
@@ -41,7 +46,9 @@ class SettingsWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setFixedSize(390, 715)
+        # Not a fixed size: the form scrolls and the buttons stay pinned, so
+        # Apply is reachable on short screens (1366x768, 1080p at 150%).
+        self.setMinimumWidth(390)
         # Stylesheet is inherited from the parent MainWindow, so the dialog
         # always matches the active theme.
         self.logger.info("Initializing settings window")
@@ -149,13 +156,30 @@ class SettingsWindow(QDialog):
         rebuild_button = QPushButton("Rebuild Database")
         rebuild_button.setToolTip("Re-scan all card images and rebuild the feature cache")
         rebuild_button.clicked.connect(self._rebuild_database)
-        layout.addRow(rebuild_button)
 
         apply_button = QPushButton("Apply")
         # lambda guards against QPushButton.clicked's `checked` bool binding to `close`
         apply_button.clicked.connect(lambda: self.apply_settings())
-        layout.addRow(apply_button)
-        self.setLayout(layout)
+
+        form = QWidget()
+        form.setLayout(layout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(form)
+
+        outer = QVBoxLayout()
+        outer.addWidget(scroll, stretch=1)
+        outer.addWidget(rebuild_button)
+        outer.addWidget(apply_button)
+        self.setLayout(outer)
+        self.apply_button = apply_button
+
+        # Preferred 715px tall, capped to the screen's usable height.
+        screen = (parent.screen() if parent is not None else None) or QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry().height() if screen is not None else 715
+        self.resize(420, max(320, min(715, avail - 60)))
 
     def apply_settings(self, close: bool = True):
         """Apply settings to parent MainWindow and persist them.
