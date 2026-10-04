@@ -1,0 +1,38 @@
+# workers.py — QObject workers that run on their own QThread (ui/threads.py).
+#
+# Each worker exposes slots the GUI calls through queued signals, and reports
+# back only through its own signals (delivered on the GUI thread). Slots are
+# boundaries: whatever happens inside, the GUI must hear back, so each one
+# ends by emitting its result even on an unexpected error.
+
+import logging
+import threading
+
+from PySide6.QtCore import QObject, Signal, Slot
+
+from lorebook.core.build import BuildReport, refresh_and_build
+
+logger = logging.getLogger(__name__)
+
+
+class BuildWorker(QObject):
+    """Runs core.build.refresh_and_build for a list of games.
+
+    Cancellation is a threading.Event the GUI sets directly (thread-safe);
+    a queued "cancel" signal couldn't be delivered while the job is running.
+    """
+
+    status = Signal(str)
+    progress = Signal(int)       # 0–100, or -1 for indeterminate
+    done = Signal(object)        # BuildReport
+
+    @Slot(object, object)
+    def run(self, games: list[str], cancel_event: threading.Event) -> None:
+        try:
+            report = refresh_and_build(
+                games, cancel_event=cancel_event, status=self.status.emit, progress=self.progress.emit
+            )
+        except Exception:  # noqa: BLE001 — boundary: the GUI must always get done()
+            logger.exception("Database build job failed")
+            report = BuildReport(failed=list(games), cancelled=cancel_event.is_set())
+        self.done.emit(report)

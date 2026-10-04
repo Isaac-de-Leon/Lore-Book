@@ -1,5 +1,6 @@
 # app.py — GUI application entry point (also exposed as the `lorebook-ui` script).
 
+import logging
 import os
 import sys
 
@@ -31,7 +32,16 @@ def main() -> int:
     w = MainWindow()
     w.show()
     QTimer.singleShot(0, w.start_camera)
-    return app.exec()
+    rc = app.exec()
+    if not w.stop_workers():
+        # A worker is still inside a long blocking call (e.g. a network request
+        # with a long timeout). Letting Python tear down its running QThread
+        # would abort the process, so exit directly instead: settings are
+        # saved and every data file write is atomic, so nothing is lost.
+        logging.getLogger(__name__).warning("Exiting with a worker thread still busy")
+        logging.shutdown()
+        os._exit(rc)
+    return rc
 
 
 if __name__ == "__main__":

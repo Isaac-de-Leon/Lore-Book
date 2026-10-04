@@ -30,18 +30,15 @@ from PySide6.QtWidgets import (
 )
 
 from lorebook import __version__
+from lorebook.core.build import BuildReport
 from lorebook.core.card_database import (
     GameDatabase,
-    build_feature_database,
-    list_image_files,
 )
 from lorebook.core.card_names import name_for
 from lorebook.core.card_prices import (
-    RATES_FILE,
     clear_price_cache,
     format_price,
     price_for,
-    prices_stale,
     rate_for,
 )
 from lorebook.core.csv_manager import split_filename, update_cardlist
@@ -53,7 +50,6 @@ from lorebook.core.game_types import (
     game_type_from_name,
     is_foil_only_card,
 )
-from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import (
     card_motion_gate,
     crop_to_card,
@@ -63,7 +59,6 @@ from lorebook.core.image_utils import (
 )
 from lorebook.core.matching import MatchIndex
 from lorebook.core.paths import data_path
-from lorebook.core.price_fetcher import download_card_prices, download_currency_rates
 from lorebook.core.settings import AppSettings
 from lorebook.hardware.camera import open_capture
 from lorebook.ui.collection_view import CollectionView
@@ -71,6 +66,8 @@ from lorebook.ui.icons import get_icon
 from lorebook.ui.progress_dialog import BuildProgressDialog
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import DEFAULT_THEME, THEMES, build_stylesheet, theme_tokens
+from lorebook.ui.threads import WorkerThread
+from lorebook.ui.workers import BuildWorker
 
 logger = logging.getLogger(__name__)
 
@@ -169,9 +166,7 @@ class MainWindow(QWidget):
     AMBIGUOUS_GAP = 0.02
 
     # Signals for marshalling background-thread updates onto the main thread.
-    build_status = Signal(str)      # status text for the status label
-    build_done = Signal(bool, object)  # (all builds succeeded, [failed game names])
-    prices_refreshed = Signal()     # price/rate files were rewritten on disk
+    build_requested = Signal(object, object)  # (game folders, cancel Event) → BuildWorker.run
     camera_ready = Signal(int, object)   # (open token, cv2.VideoCapture)
     camera_failed = Signal(int, str)     # (open token, error message)
     scan_done = Signal(int, object)      # (scan token, (matches | None, error | None))
@@ -236,7 +231,8 @@ class MainWindow(QWidget):
         # DB build state (dialog created lazily on first build)
         self._progress_dialog: BuildProgressDialog | None = None
         self._build_cancel_event = threading.Event()
-        self._build_thread: threading.Thread | None = None
+        self._build_running = False
+        self._build = WorkerThread(BuildWorker(), "lorebook-build")
 
         # Scan state: extraction runs on a worker thread; results carry a
         # token so a superseded scan's result is dropped. _matches_game is
@@ -464,9 +460,12 @@ class MainWindow(QWidget):
         self.setLayout(root)
 
         # Signals from background threads → main-thread slots
-        self.build_status.connect(self._on_build_status)
-        self.build_done.connect(self._on_build_done)
-        self.prices_refreshed.connect(self._on_prices_refreshed)
+        build_worker = self._build.worker
+        self.build_requested.connect(build_worker.run)
+        build_worker.status.connect(self._on_build_status)
+        build_worker.progress.connect(self._on_build_progress)
+        build_worker.done.connect(self._on_build_done)
+        self._build.start()
         self.camera_ready.connect(self._on_camera_ready)
         self.camera_failed.connect(self._on_camera_failed)
         self.scan_done.connect(self._on_scan_done)
@@ -478,11 +477,6 @@ class MainWindow(QWidget):
         self.watchdog = QTimer(self)
         self.watchdog.setInterval(1000)
         self.watchdog.timeout.connect(self._watchdog_tick)
-
-        self._db_progress_pct = 0
-        self._db_progress_timer = QTimer(self)
-        self._db_progress_timer.setInterval(100)
-        self._db_progress_timer.timeout.connect(self._tick_db_progress)
 
         # Focus / keyboard
         self.setFocusPolicy(Qt.StrongFocus)
@@ -550,9 +544,19 @@ class MainWindow(QWidget):
         self.stop_camera()
         self._build_cancel_event.set()
         self._scan_token += 1
-        if self._build_thread is not None and self._build_thread.is_alive():
-            self._build_thread.join(timeout=2.0)
+        self.stop_workers()
         super().closeEvent(event)
+
+    def stop_workers(self, timeout_ms: int = 3000) -> bool:
+        """Stop every worker thread; True if all finished in time.
+
+        A worker stuck in a long blocking call (e.g. a network request) can
+        outlive the timeout — app.main then exits without destroying it.
+        """
+        return all([w.stop(timeout_ms) for w in self._workers()])
+
+    def _workers(self) -> list[WorkerThread]:
+        return [self._build]
 
     # ------------------------------------------------------------------ DB build
 
@@ -572,8 +576,8 @@ class MainWindow(QWidget):
             return
 
         # One build at a time — Settings → Rebuild while the startup build is
-        # still running must not spawn a second worker thread.
-        if self._build_thread is not None and self._build_thread.is_alive():
+        # still running just re-shows its progress dialog.
+        if self._build_running:
             if self._progress_dialog is not None:
                 self._progress_dialog.show()
                 self._progress_dialog.raise_()
@@ -590,130 +594,8 @@ class MainWindow(QWidget):
         self._progress_dialog.set_status(f"Building {folders[0]} database, please wait…")
         self._progress_dialog.show()
 
-        self._db_progress_pct = 0
-        self._build_thread = threading.Thread(
-            target=self._build_all_games_worker,
-            args=(folders, self._build_cancel_event),
-            daemon=True,
-        )
-        self._build_thread.start()
-        self._db_progress_timer.start()
-
-    def _build_all_games_worker(self, folders: list[str], cancel_event: threading.Event) -> None:
-        """Build every game's feature DB sequentially in one background thread.
-
-        Runs off the main thread and must NOT touch Qt widgets directly — all
-        UI updates go through signals (build_status, build_done) which Qt
-        delivers on the main thread. The active database path global is left
-        alone; each build gets its db_path explicitly. cancel_event stops the
-        build between images/batches/games; partial caches stay valid.
-        """
-        start_time = time.time()
-        failed: list[str] = []
-        refreshed_prices = False
-
-        def progress_callback(pct: int, current_file: str | None) -> None:
-            self._db_progress_pct = pct
-            if current_file:
-                self.build_status.emit(f"Processing {current_file}…")
-
-        # Refresh the shared USD exchange rates once per run when stale. A
-        # failure never blocks anything — non-USD display falls back to USD.
-        if prices_stale(path=RATES_FILE):
-            try:
-                download_currency_rates()
-                refreshed_prices = True
-            # Boundary (this whole worker): a refresh/download step may fail in
-            # any way — offline, source down, format change — and must never
-            # block the DB build or kill the thread (build_done must arrive).
-            except Exception as e:  # noqa: BLE001
-                self.logger.warning("Currency-rate refresh failed (continuing): %s", e)
-
-        for game_name in folders:
-            if cancel_event.is_set():
-                break
-            game_path = os.path.join(BASE_DATABASE_PATH, game_name)
-            # -1 = indeterminate: the download phase only reports text lines
-            self._db_progress_pct = -1
-
-            # Download any newly released card images first (no-op for games
-            # without a registered fetcher). A fetch failure — offline, source
-            # down, format change — must never block the build itself.
-            try:
-                self.build_status.emit(f"Checking for new {game_name} card images…")
-                stats = download_new_images(
-                    game_name,
-                    out_dir=game_path,
-                    progress_callback=self.build_status.emit,
-                    cancel_event=cancel_event,
-                )
-                if stats and stats.downloaded:
-                    self.logger.info(
-                        "Downloaded %s new %s images (%s failed)", stats.downloaded, game_name, stats.failed
-                    )
-                    self.build_status.emit(
-                        f"Downloaded {stats.downloaded} new {game_name} card images"
-                    )
-            except Exception as e:  # noqa: BLE001 — worker boundary, see above
-                self.logger.warning("Image fetch for %s failed (continuing build): %s", game_name, e)
-
-            # Refresh market prices when the cached file is missing or older
-            # than a day (no-op for games without a registered price source).
-            # Same failure contract as the image fetch: warn and move on.
-            if prices_stale(game_name):
-                try:
-                    self.build_status.emit(f"Updating {game_name} card prices…")
-                    count = download_card_prices(game_name)
-                    if count is not None:
-                        self.logger.info("Refreshed %s %s price entries", count, game_name)
-                        refreshed_prices = True
-                except Exception as e:  # noqa: BLE001 — worker boundary, see above
-                    self.logger.warning("Price fetch for %s failed (continuing build): %s", game_name, e)
-
-            self.build_status.emit(f"Building {game_name} database…")
-            self._db_progress_pct = 0
-
-            # Single attempt: build_feature_database already catches and logs
-            # its own errors (returning what it has), so retrying never helped.
-            if not os.path.isdir(game_path):
-                self.logger.error("Game folder not found: %s", game_path)
-                failed.append(game_name)
-                continue
-            if not list_image_files(game_path):
-                # Nothing to build (no images, and none downloaded) — not a failure.
-                self.logger.info("No images for %s — skipped", game_name)
-                self.build_status.emit(f"No images for {game_name} — skipped")
-                continue
-            self.logger.info("Building DB for %s at %s", game_name, game_path)
-            try:
-                db = build_feature_database(
-                    progress_callback=progress_callback,
-                    db_path=game_path,
-                    cancel_event=cancel_event,
-                )
-            except Exception:  # noqa: BLE001 — worker boundary: fail this game, build the rest
-                self.logger.exception("Database build for %s failed", game_name)
-                failed.append(game_name)
-                self.build_status.emit(f"Error building {game_name} database")
-                continue
-            # A cancelled build legitimately returns few/no entries.
-            if cancel_event.is_set():
-                break
-            if not db:
-                self.logger.error("Database build for %s produced no entries", game_name)
-                failed.append(game_name)
-                self.build_status.emit(f"Error building {game_name} database")
-            else:
-                self.logger.info("DB ready for %s: %s entries", game_name, len(db))
-
-        elapsed = time.time() - start_time
-        cancelled = cancel_event.is_set()
-        self.logger.info(
-            "DB builds finished in %.1fs (%s failed%s)", elapsed, len(failed), ', cancelled' if cancelled else ''
-        )
-        if refreshed_prices:
-            self.prices_refreshed.emit()
-        self.build_done.emit(not failed and not cancelled, failed)
+        self._build_running = True
+        self.build_requested.emit(folders, self._build_cancel_event)
 
     def _on_build_status(self, text: str) -> None:
         """Main-thread slot: route worker status lines into the progress dialog."""
@@ -725,38 +607,30 @@ class MainWindow(QWidget):
         self.logger.info("Database build cancel requested")
         self._build_cancel_event.set()
 
-    def _on_build_done(self, success: bool, failed: list[str]) -> None:
+    def _on_build_progress(self, pct: int) -> None:
+        if self._progress_dialog is not None:
+            self._progress_dialog.set_progress(pct)
+
+    def _on_build_done(self, report: BuildReport) -> None:
         """Main-thread slot: finalize UI after the background build finishes."""
-        self._db_progress_timer.stop()
+        self._build_running = False
         if self._progress_dialog is not None:
             self._progress_dialog.hide()
-        if self._build_cancel_event.is_set():
+        if report.cancelled:
             self.match_label.setText("Database build cancelled.")
-        elif success:
+        elif report.ok:
             self.match_label.setText("All databases ready. Scan a card to begin.")
         else:
             # The progress dialog is hidden now — don't let the failure vanish with it.
             self.match_label.setText(
-                f"Database build failed for {', '.join(failed)} — see logs/card_scanner.log."
+                f"Database build failed for {', '.join(report.failed)} — see logs/card_scanner.log."
             )
         # The in-memory vectors may be stale after a rebuild — reload on next scan
         self.game_db.invalidate()
+        # Price/rate files may have been rewritten: re-read and re-render.
         clear_price_cache()
-
-    def _on_prices_refreshed(self) -> None:
-        """Main-thread slot: re-read price files and re-render the current match."""
-        clear_price_cache()
-        if self.last_matches:
+        if report.prices_refreshed and self.last_matches:
             self._show_match_at(self.current_match_idx)
-
-    def _tick_db_progress(self) -> None:
-        """Poll _db_progress_pct and update the dialog's progress bar.
-
-        The timer keeps running until _on_build_done — a single game hitting
-        100% must not kill progress display for the games after it.
-        """
-        if self._progress_dialog is not None:
-            self._progress_dialog.set_progress(int(getattr(self, "_db_progress_pct", 0)))
 
     # ------------------------------------------------------------------ camera
 

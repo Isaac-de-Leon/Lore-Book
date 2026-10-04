@@ -11,7 +11,7 @@ def _write_names(tmp_path, game, mapping):
     (tmp_path / f"card_names_{game}.json").write_text(json.dumps(mapping), encoding="utf-8")
 
 
-def test_name_lookup(tmp_path, monkeypatch):
+def test_names(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_names(tmp_path, "Lorcana", {"9-41": "Elsa", "010-018": "Scrooge"})
     _write_names(tmp_path, "Riftbound", {"OGN-23c": "Jinx"})
@@ -29,6 +29,9 @@ def test_name_lookup(tmp_path, monkeypatch):
     (tmp_path / "card_names_Broken.json").write_text("{not json", encoding="utf-8")
     assert load_card_names("Broken") == {}
 
+    # --- fetch-script mappers
+    _fetch_mappers()
+
 
 def _load_fetch_module():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,7 +43,7 @@ def _load_fetch_module():
     return mod
 
 
-def test_fetch_mappers():
+def _fetch_mappers():
     mod = _load_fetch_module()
     data = {"cards": [
         {"setCode": "9", "number": 41, "fullName": "Elsa - Spirit of Winter"},
