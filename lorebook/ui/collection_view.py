@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -33,6 +33,8 @@ class CollectionView(QWidget):
     sortable table, and an "Export CSV…" (save-a-copy) button. The CSV on
     disk stays the single source of truth — this widget never writes to it.
     """
+
+    cleared = Signal(str)  # game whose collection CSV was emptied
 
     def __init__(self, initial_game: str | None = None, parent=None):
         super().__init__(parent)
@@ -189,10 +191,7 @@ class CollectionView(QWidget):
         clear_collection(game)
         self.logger.info("Cleared collection CSV for %s", game)
         # The scanner's single-level Undo now points at rows that no longer
-        # exist — disable it rather than let it "undo" into the empty file.
-        win = self.window()
-        if hasattr(win, "undo_btn"):
-            win.undo_btn.setEnabled(False)
-            win._last_add = None
+        # exist — whoever owns it should disable it.
+        self.cleared.emit(game)
         self.refresh()
         self.summary_label.setText("Collection cleared.")

@@ -8,11 +8,15 @@
 import contextlib
 import logging
 import threading
+from dataclasses import dataclass
 
 import cv2
+import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from lorebook.core.build import BuildReport, refresh_and_build
+from lorebook.core.features import extract_features, get_extractor
+from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import open_capture
 
 logger = logging.getLogger(__name__)
@@ -138,3 +142,43 @@ class CameraWorker(QObject):
         if not self._frame_pending.is_set():
             self._frame_pending.set()
             self.frame_ready.emit(frame)
+
+
+@dataclass
+class ScanResult:
+    game: str
+    matches: list[tuple[str, float]] | None   # None: extraction failed
+    error: str | None = None
+
+
+class ScanWorker(QObject):
+    """Feature extraction + matching on a long-lived thread.
+
+    Requests carry a token; the GUI drops results whose token is stale (a
+    newer scan started). Model use is additionally serialized by
+    features._model_lock, so a scan during a DB build waits for the current
+    batch instead of racing it.
+    """
+
+    done = Signal(int, object)     # (token, ScanResult)
+
+    @Slot()
+    def warm_up(self) -> None:
+        """Load the model now so the first scan doesn't stall (optional)."""
+        try:
+            get_extractor("keras").ensure_ready()
+        except Exception as e:  # noqa: BLE001 — optional warm-up; the scan reports real errors
+            logger.warning("Background model load failed (will retry on scan): %s", e)
+
+    @Slot(int, object, object, float, str)
+    def scan(self, token: int, img_bgr: np.ndarray, index: MatchIndex, threshold: float, game: str) -> None:
+        """Uses the index it was handed, so a game switch mid-scan can't mix games."""
+        try:
+            features = extract_features(img_bgr)
+            matches = index.find(features, threshold=threshold) if features is not None else None
+            result = ScanResult(game, matches)
+        # Boundary: the GUI stays in "Scanning…" until done() arrives.
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Scan failed")
+            result = ScanResult(game, None, str(e))
+        self.done.emit(token, result)
