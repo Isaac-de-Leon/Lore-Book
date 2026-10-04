@@ -18,6 +18,8 @@ from lorebook.core.image_fetcher import (
     riftbound_targets,
 )
 
+PAGE1 = f"{RIFTBOUND_FALLBACK_URL}?limit=100&page=1"
+
 
 def _card(set_code, number, url="http://img/x.jpg"):
     return {"setCode": set_code, "number": number, "images": {"full": url}}
@@ -27,342 +29,225 @@ def _tiny_jpg() -> bytes:
     """A real, decodable JPG so the webp re-encode path can run."""
     import cv2
 
-    img = np.full((8, 8, 3), 128, dtype=np.uint8)
-    ok, buf = cv2.imencode(".jpg", img)
+    ok, buf = cv2.imencode(".jpg", np.full((8, 8, 3), 128, dtype=np.uint8))
     assert ok
     return buf.tobytes()
 
 
-class TestCodeNormalization:
-    def test_pad_zero_pads_numeric_codes(self):
-        assert _pad("9") == "009"
-        assert _pad("41") == "041"
-        assert _pad("009") == "009"
+def _record(monkeypatch, responses):
+    """Stub _fetch_json: log (url, headers) calls, reply from `responses`
+    (a callable or a static value)."""
+    calls = []
 
-    def test_pad_leaves_promo_codes_alone(self):
-        assert _pad("P1") == "P1"
-        assert _pad("Q1") == "Q1"
+    def fake(url, headers=None):
+        calls.append((url, headers or {}))
+        return responses(url) if callable(responses) else responses
 
-    def test_norm_makes_padding_insensitive(self):
-        assert _norm("009") == _norm("9")
-        assert _norm("000") == "0"
+    monkeypatch.setattr(image_fetcher, "_fetch_json", fake)
+    return calls
 
 
-class TestLorcanaTargets:
-    def test_parses_cards(self):
-        data = {"cards": [_card("9", 41), _card("1", 1, "http://img/1.jpg")]}
-        assert list(lorcana_targets(data)) == [
-            ("9", "41", "http://img/x.jpg"),
-            ("1", "1", "http://img/1.jpg"),
+def test_lorcana_targets_and_code_normalization():
+    assert [_pad(c) for c in ("9", "41", "009", "P1")] == ["009", "041", "009", "P1"]
+    assert _norm("009") == _norm("9") and _norm("000") == "0"
+
+    data = {"cards": [
+        _card("9", 41), _card("1", 1, "http://img/1.jpg"),
+        {"setCode": "9", "number": 41},                         # no images
+        {"setCode": "", "number": 1, "images": {"full": "u"}},  # no set
+        {"setCode": "9", "images": {"full": "u"}},              # no number
+    ]}
+    assert list(lorcana_targets(data)) == [
+        ("9", "41", "http://img/x.jpg"),
+        ("1", "1", "http://img/1.jpg"),
+    ]
+    assert list(lorcana_targets(None)) == list(lorcana_targets({})) == []
+
+    # Promos share their home set's setCode/number (Zeus "18/P3" vs Scrooge
+    # "18/204", both setCode 10) — the image must be main-set art.
+    promo = dict(_card("10", 18, "http://img/promo.jpg"), fullIdentifier="18/P3 · EN · 10")
+    main = dict(_card("10", 18, "http://img/main.jpg"), fullIdentifier="18/204 · EN · 10")
+    only_promo = dict(_card("10", 99, "http://img/only.jpg"), fullIdentifier="99/P3 · EN · 10")
+    for cards in ([promo, main, only_promo], [main, promo, only_promo]):
+        targets = {(s, n): u for s, n, u in lorcana_targets({"cards": cards})}
+        assert targets[("10", "18")] == "http://img/main.jpg"
+        assert targets[("10", "99")] == "http://img/only.jpg"  # promo-only key kept
+
+
+def test_riftbound_targets():
+    riot = {"sets": [{"id": "OGN", "cards": [
+        {"set": "OGN", "collectorNumber": 1,
+         "art": {"fullUrl": "http://img/full.jpg", "thumbnailUrl": "http://img/thumb.jpg"}},
+        {"set": "OGN", "collectorNumber": 2, "art": {"thumbnailUrl": "http://img/thumb.jpg"}},
+    ]}]}
+    assert list(riftbound_targets(riot)) == [
+        ("OGN", "1", "http://img/full.jpg"),
+        ("OGN", "2", "http://img/thumb.jpg"),   # thumbnail only without full art
+    ]
+
+    # Riftcodex ships lowercase set ids; codes are uppercased to match OGN-001.
+    cards = [
+        {"set_id": "ogn", "collector_number": "23c", "media": {"image_url": "http://img/23c.png"}},
+        {"set": "OGN", "number": 24, "image_url": "http://img/24.png"},
+        {"set": "OGN", "number": 24, "image_url": "http://img/dupe.png"},  # first occurrence wins
+        {"set": "OGN", "collectorNumber": 1},                        # no image
+        {"collectorNumber": 2, "image_url": "u"},                    # no set
+        {"set": "OGN", "image_url": "u"},                            # no number
+        {"set": "OGN", "collectorNumber": 3, "image": {"x": "y"}},   # non-string url
+        {"set": {"id": "OGN"}, "number": 4, "image_url": "u"},       # nested set object
+        "not-a-dict",
+    ]
+    for data in (cards, {"cards": cards}, {"total": 2, "items": cards}):
+        assert list(riftbound_targets(data)) == [
+            ("OGN", "23c", "http://img/23c.png"),
+            ("OGN", "24", "http://img/24.png"),
         ]
-
-    def test_skips_incomplete_cards(self):
-        data = {"cards": [
-            {"setCode": "9", "number": 41},                      # no images
-            {"setCode": "", "number": 1, "images": {"full": "u"}},  # no set
-            {"setCode": "9", "images": {"full": "u"}},           # no number
-        ]}
-        assert list(lorcana_targets(data)) == []
-
-    def test_tolerates_none_and_empty(self):
-        assert list(lorcana_targets(None)) == []
-        assert list(lorcana_targets({})) == []
-
-    def test_main_set_printing_beats_promo_regardless_of_order(self):
-        # Promos share their home set's setCode/number (Zeus "18/P3" vs
-        # Scrooge "18/204", both setCode 10) — the image must be main-set art.
-        promo = dict(_card("10", 18, "http://img/promo.jpg"),
-                     fullIdentifier="18/P3 · EN · 10")
-        main = dict(_card("10", 18, "http://img/main.jpg"),
-                    fullIdentifier="18/204 · EN · 10")
-        only_promo = dict(_card("10", 99, "http://img/only.jpg"),
-                          fullIdentifier="99/P3 · EN · 10")
-        for cards in ([promo, main, only_promo], [main, promo, only_promo]):
-            targets = dict(((s, n), u) for s, n, u in lorcana_targets({"cards": cards}))
-            assert targets[("10", "18")] == "http://img/main.jpg"
-            assert targets[("10", "99")] == "http://img/only.jpg"  # promo-only key kept
+    for empty in (None, {}, {"sets": []}):
+        assert list(riftbound_targets(empty)) == []
 
 
-class TestRiftboundTargets:
-    def test_parses_riot_content_shape(self):
-        data = {"sets": [{"id": "OGN", "cards": [
-            {"set": "OGN", "collectorNumber": 1,
-             "art": {"fullUrl": "http://img/full.jpg", "thumbnailUrl": "http://img/thumb.jpg"}},
-        ]}]}
-        assert list(riftbound_targets(data)) == [("OGN", "1", "http://img/full.jpg")]
+def test_riftbound_source_selection(monkeypatch):
+    riot_data = {"sets": [{"cards": []}]}
+    monkeypatch.setenv("RIOT_API_KEY", "RGAPI-test")
+    calls = _record(monkeypatch, riot_data)
+    assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == riot_data
+    assert calls == [(RIFTBOUND_RIOT_URL, {"X-Riot-Token": "RGAPI-test"})]
 
-    def test_riot_thumbnail_used_only_without_full(self):
-        data = {"sets": [{"cards": [
-            {"set": "OGN", "collectorNumber": 2, "art": {"thumbnailUrl": "http://img/thumb.jpg"}},
-        ]}]}
-        assert list(riftbound_targets(data)) == [("OGN", "2", "http://img/thumb.jpg")]
+    # A Riot URL override keeps the token...
+    url = "https://europe.api.riotgames.com/riftbound/content/v1/contents?locale=en"
+    calls = _record(monkeypatch, riot_data)
+    _fetch_riftbound(url)
+    assert calls == [(url, {"X-Riot-Token": "RGAPI-test"})]
+    # ...a non-Riot override is paginated and never gets the token.
+    calls = _record(monkeypatch, [{"id": 1}])
+    _fetch_riftbound("https://mirror.example/cards")
+    assert calls == [("https://mirror.example/cards?limit=100&page=1", {})]
 
-    def test_parses_riftcodex_shape(self):
-        cards = [
-            # Riftcodex ships lowercase set ids; codes are uppercased to match
-            # the OGN-001 filename convention.
-            {"set_id": "ogn", "collector_number": "23c", "media": {"image_url": "http://img/23c.png"}},
-            {"set": "OGN", "number": 24, "image_url": "http://img/24.png"},
-        ]
-        for data in (cards, {"cards": cards}, {"total": 2, "items": cards}):
-            assert list(riftbound_targets(data)) == [
-                ("OGN", "23c", "http://img/23c.png"),
-                ("OGN", "24", "http://img/24.png"),
-            ]
+    # Riot failure falls back to Riftcodex.
+    def riot_403(u):
+        if u.startswith(RIFTBOUND_FALLBACK_URL):
+            return [{"id": 1}]
+        raise OSError("403 Forbidden")
 
-    def test_skips_incomplete_cards(self):
-        data = [
-            {"set": "OGN", "collectorNumber": 1},                        # no image
-            {"collectorNumber": 2, "image_url": "u"},                    # no set
-            {"set": "OGN", "image_url": "u"},                            # no number
-            {"set": "OGN", "collectorNumber": 3, "image": {"x": "y"}},   # non-string url
-            {"set": {"id": "OGN"}, "number": 4, "image_url": "u"},       # nested set object
-            "not-a-dict",
-        ]
-        assert list(riftbound_targets(data)) == []
+    calls = _record(monkeypatch, riot_403)
+    assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}]
+    assert [c[0] for c in calls] == [RIFTBOUND_RIOT_URL, PAGE1]
 
-    def test_tolerates_none_and_empty(self):
-        assert list(riftbound_targets(None)) == []
-        assert list(riftbound_targets({})) == []
-        assert list(riftbound_targets({"sets": []})) == []
-
-    def test_dedupes_on_first_occurrence(self):
-        data = [
-            {"set": "OGN", "number": 1, "image_url": "http://img/first.png"},
-            {"set": "OGN", "number": 1, "image_url": "http://img/second.png"},
-        ]
-        assert list(riftbound_targets(data)) == [("OGN", "1", "http://img/first.png")]
+    # No key: straight to Riftcodex.
+    monkeypatch.delenv("RIOT_API_KEY")
+    calls = _record(monkeypatch, [{"id": 1}])
+    assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}]
+    assert calls == [(PAGE1, {})]
 
 
-class TestFetchRiftbound:
-    """Source selection and pagination, with _fetch_json stubbed (no network)."""
+def test_riftbound_pagination(monkeypatch):
+    monkeypatch.delenv("RIOT_API_KEY", raising=False)
 
-    def _record(self, monkeypatch, responses):
-        """Stub _fetch_json: log (url, headers) calls, reply from `responses`
-        (a callable or a static value)."""
-        calls = []
-
-        def fake(url, headers=None):
-            calls.append((url, headers or {}))
-            return responses(url) if callable(responses) else responses
-
-        monkeypatch.setattr(image_fetcher, "_fetch_json", fake)
-        return calls
-
-    def test_key_set_uses_riot_endpoint_with_token(self, monkeypatch):
-        monkeypatch.setenv("RIOT_API_KEY", "RGAPI-test")
-        riot_data = {"sets": [{"cards": []}]}
-        calls = self._record(monkeypatch, riot_data)
-        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == riot_data
-        assert calls == [(RIFTBOUND_RIOT_URL, {"X-Riot-Token": "RGAPI-test"})]
-
-    def test_no_key_falls_back_to_riftcodex(self, monkeypatch):
-        monkeypatch.delenv("RIOT_API_KEY", raising=False)
-        cards = [{"id": 1}]
-        calls = self._record(monkeypatch, cards)
-        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == cards
-        assert calls == [(f"{RIFTBOUND_FALLBACK_URL}?limit=100&page=1", {})]
-
-    def test_riot_failure_falls_back_to_riftcodex(self, monkeypatch):
-        monkeypatch.setenv("RIOT_API_KEY", "RGAPI-test")
-        cards = [{"id": 1}]
-
+    def paged(pages, total=None):
         def responses(url):
-            if url.startswith(RIFTBOUND_FALLBACK_URL):
-                return cards
-            raise OSError("403 Forbidden")
+            body = {"items": pages.get(int(url.rsplit("page=", 1)[1]), [])}
+            if total is not None:
+                body["total"] = total
+            return body
+        return responses
 
-        calls = self._record(monkeypatch, responses)
-        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == cards
-        assert [c[0] for c in calls] == [
-            RIFTBOUND_RIOT_URL,
-            f"{RIFTBOUND_FALLBACK_URL}?limit=100&page=1",
-        ]
+    # Collects until total; total (not page size) decides when to stop.
+    page1 = [{"id": i} for i in range(100)]
+    calls = _record(monkeypatch, paged({1: page1, 2: [{"id": 100}]}, total=101))
+    assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == page1 + [{"id": 100}]
+    assert len(calls) == 2
+    calls = _record(monkeypatch, paged({1: [{"id": 1}, {"id": 2}], 2: [{"id": 3}]}, total=3))
+    assert len(_fetch_riftbound(RIFTBOUND_RIOT_URL)) == 3 and len(calls) == 2
 
-    def test_url_override_is_fetched_as_is(self, monkeypatch):
-        monkeypatch.setenv("RIOT_API_KEY", "RGAPI-test")
-        calls = self._record(monkeypatch, [{"id": 1}])
-        _fetch_riftbound("https://mirror.example/cards")
-        # paginated like the fallback, and no token leak off-Riot
-        assert calls == [("https://mirror.example/cards?limit=100&page=1", {})]
+    # Server ignoring page=: the repeated page is detected and dropped.
+    calls = _record(monkeypatch, {"total": 500, "items": page1})
+    assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == page1
+    assert len(calls) == 2
 
-    def test_riot_url_override_keeps_token(self, monkeypatch):
-        monkeypatch.setenv("RIOT_API_KEY", "RGAPI-test")
-        data = {"sets": []}
-        calls = self._record(monkeypatch, data)
-        url = "https://europe.api.riotgames.com/riftbound/content/v1/contents?locale=en"
-        assert _fetch_riftbound(url) == data
-        assert calls == [(url, {"X-Riot-Token": "RGAPI-test"})]
+    # No total: an empty page ends it.
+    calls = _record(monkeypatch, paged({1: [{"id": 1}]}))
+    assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}]
+    assert len(calls) == 2
 
-    def test_pagination_collects_until_total(self, monkeypatch):
-        monkeypatch.delenv("RIOT_API_KEY", raising=False)
-        page1 = [{"id": i} for i in range(100)]
-        page2 = [{"id": 100}]
-
-        def responses(url):
-            return {"total": 101, "items": page2 if "page=2" in url else page1}
-
-        calls = self._record(monkeypatch, responses)
-        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == page1 + page2
-        assert len(calls) == 2
-        assert "limit=100&page=1" in calls[0][0]
-
-    def test_pagination_survives_a_capped_page_size(self, monkeypatch):
-        # The API may serve fewer items than limit= asks for; total, not page
-        # size, decides when to stop.
-        monkeypatch.delenv("RIOT_API_KEY", raising=False)
-        pages = {1: [{"id": 1}, {"id": 2}], 2: [{"id": 3}]}
-
-        def responses(url):
-            page_no = int(url.rsplit("page=", 1)[1])
-            return {"total": 3, "items": pages.get(page_no, [])}
-
-        calls = self._record(monkeypatch, responses)
-        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}, {"id": 2}, {"id": 3}]
-        assert len(calls) == 2
-
-    def test_pagination_stops_when_page_param_is_ignored(self, monkeypatch):
-        monkeypatch.delenv("RIOT_API_KEY", raising=False)
-        page = [{"id": i} for i in range(100)]  # same first id every time
-        calls = self._record(monkeypatch, {"total": 500, "items": page})
-        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == page
-        assert len(calls) == 2  # second (repeated) page detected and dropped
-
-    def test_pagination_stops_on_empty_page_without_total(self, monkeypatch):
-        monkeypatch.delenv("RIOT_API_KEY", raising=False)
-        pages = {1: {"items": [{"id": 1}]}, 2: {"items": []}}
-
-        def responses(url):
-            return pages[int(url.rsplit("page=", 1)[1])]
-
-        calls = self._record(monkeypatch, responses)
-        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}]
-        assert len(calls) == 2
-
-    def test_pagination_tolerates_bare_list_and_cards_wrapper(self, monkeypatch):
-        monkeypatch.delenv("RIOT_API_KEY", raising=False)
-        calls = self._record(monkeypatch, [{"id": 1}])
-        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}]
-        assert len(calls) == 1  # bare list means no further pages
-
-        calls = self._record(monkeypatch, {"total": 1, "cards": [{"id": 1}]})
+    # Bare list and {"cards": ...} wrapper are single pages.
+    for body in ([{"id": 1}], {"total": 1, "cards": [{"id": 1}]}):
+        calls = _record(monkeypatch, body)
         assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [{"id": 1}]
         assert len(calls) == 1
 
 
-class TestDownloadNewImages:
-    @pytest.fixture(autouse=True)
-    def _no_network(self, monkeypatch):
-        """Every test runs with the card list and image bytes stubbed."""
-        self.jpg = _tiny_jpg()
-        monkeypatch.setitem(
-            image_fetcher.GAMES,
-            "lorcana",
-            ("stub://cards", lambda url: self.data, lorcana_targets),
-        )
-        monkeypatch.setattr(image_fetcher, "_download", lambda url: self.jpg)
-        self.data = {"cards": [_card("9", 41), _card("9", 42)]}
+def test_download_new_images(tmp_path, monkeypatch):
+    jpg = _tiny_jpg()
+    data = {"cards": [_card("9", 41), _card("9", 42), _card("10", 1)]}
+    monkeypatch.setitem(image_fetcher.GAMES, "lorcana", ("stub://cards", lambda url: data, lorcana_targets))
+    monkeypatch.setattr(image_fetcher, "_download", lambda url: jpg)
 
-    def test_unsupported_game_returns_none(self, tmp_path):
-        assert download_new_images("NotAGame", out_dir=str(tmp_path)) is None
+    def run(sub, **kw):
+        out = tmp_path / sub
+        out.mkdir()
+        kw.setdefault("sets", ["009"])  # set filter is padding-insensitive
+        return out, download_new_images("Lorcana", out_dir=str(out), delay=0, **kw)
 
-    def test_downloads_with_padded_names(self, tmp_path):
-        stats = download_new_images("Lorcana", out_dir=str(tmp_path), delay=0)
-        assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
-        assert sorted(p.name for p in tmp_path.iterdir()) == ["009-041.webp", "009-042.webp"]
-        # webp files start with the RIFF magic
-        assert (tmp_path / "009-041.webp").read_bytes()[:4] == b"RIFF"
+    assert download_new_images("NotAGame", out_dir=str(tmp_path)) is None
 
-    def test_jpg_format_keeps_source_bytes(self, tmp_path):
-        stats = download_new_images("Lorcana", out_dir=str(tmp_path), fmt="jpg", delay=0)
-        assert stats.downloaded == 2
-        assert (tmp_path / "009-041.jpg").read_bytes() == self.jpg
+    out, stats = run("webp")
+    assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
+    assert sorted(p.name for p in out.iterdir()) == ["009-041.webp", "009-042.webp"]
+    assert (out / "009-041.webp").read_bytes()[:4] == b"RIFF"
 
-    def test_skips_existing_files(self, tmp_path):
-        (tmp_path / "009-041.webp").write_bytes(b"already here")
-        stats = download_new_images("Lorcana", out_dir=str(tmp_path), delay=0)
-        assert stats == FetchStats(downloaded=1, skipped=1, failed=0)
-        assert (tmp_path / "009-041.webp").read_bytes() == b"already here"
+    out, stats = run("jpg", fmt="jpg", limit=1)
+    assert stats.downloaded == 1
+    assert [p.read_bytes() for p in out.iterdir()] == [jpg]  # source bytes kept
 
-    def test_force_redownloads(self, tmp_path):
-        (tmp_path / "009-041.webp").write_bytes(b"stale")
-        stats = download_new_images("Lorcana", out_dir=str(tmp_path), force=True, delay=0)
-        assert stats.downloaded == 2
-        assert (tmp_path / "009-041.webp").read_bytes() != b"stale"
+    out = tmp_path / "existing"
+    out.mkdir()
+    (out / "009-041.webp").write_bytes(b"already here")
+    stats = download_new_images("Lorcana", out_dir=str(out), sets=["9"], delay=0)
+    assert stats == FetchStats(downloaded=1, skipped=1, failed=0)
+    assert (out / "009-041.webp").read_bytes() == b"already here"
+    stats = download_new_images("Lorcana", out_dir=str(out), sets=["9"], force=True, delay=0)
+    assert stats.downloaded == 2
+    assert (out / "009-041.webp").read_bytes() != b"already here"
 
-    def test_set_filter_is_padding_insensitive(self, tmp_path):
-        self.data["cards"].append(_card("10", 1))
-        stats = download_new_images("Lorcana", out_dir=str(tmp_path), sets=["009"], delay=0)
-        assert stats.downloaded == 2
-        assert not (tmp_path / "010-001.webp").exists()
+    messages = []
+    out, stats = run("dry", dry_run=True, progress_callback=messages.append)
+    assert stats.downloaded == 2 and list(out.iterdir()) == []
+    assert any("would fetch 009-041.webp" in m for m in messages)
 
-    def test_dry_run_writes_nothing(self, tmp_path):
-        messages = []
-        stats = download_new_images(
-            "Lorcana", out_dir=str(tmp_path), dry_run=True, delay=0,
-            progress_callback=messages.append,
-        )
-        assert stats.downloaded == 2
-        assert list(tmp_path.iterdir()) == []
-        assert any("would fetch 009-041.webp" in m for m in messages)
+    # Cancel set mid-flight takes effect before the next image; pre-set does nothing.
+    cancel = threading.Event()
 
-    def test_per_image_failure_is_counted_not_raised(self, tmp_path, monkeypatch):
-        def boom(url):
-            raise OSError("connection reset")
-        monkeypatch.setattr(image_fetcher, "_download", boom)
-        stats = download_new_images("Lorcana", out_dir=str(tmp_path), delay=0)
-        assert stats == FetchStats(downloaded=0, skipped=0, failed=2)
-        assert list(tmp_path.iterdir()) == []
-
-    def test_card_list_failure_raises(self, tmp_path, monkeypatch):
-        def boom(url):
-            raise OSError("offline")
-        monkeypatch.setitem(
-            image_fetcher.GAMES, "lorcana", ("stub://cards", boom, lorcana_targets)
-        )
-        with pytest.raises(OSError):
-            download_new_images("Lorcana", out_dir=str(tmp_path), delay=0)
-
-    def test_limit_caps_downloads(self, tmp_path):
-        stats = download_new_images("Lorcana", out_dir=str(tmp_path), limit=1, delay=0)
-        assert stats.downloaded == 1
-
-    def test_cancel_stops_between_downloads(self, tmp_path, monkeypatch):
-        cancel = threading.Event()
-
-        def download_then_cancel(url):
-            cancel.set()  # set mid-flight: takes effect before the next image
-            return self.jpg
-
-        monkeypatch.setattr(image_fetcher, "_download", download_then_cancel)
-        messages = []
-        stats = download_new_images(
-            "Lorcana", out_dir=str(tmp_path), delay=0,
-            progress_callback=messages.append, cancel_event=cancel,
-        )
-        assert stats.downloaded == 1
-        assert [p.name for p in tmp_path.iterdir()] == ["009-041.webp"]
-        assert any("cancelled" in m.lower() for m in messages)
-
-    def test_preset_cancel_downloads_nothing(self, tmp_path):
-        cancel = threading.Event()
+    def download_then_cancel(url):
         cancel.set()
-        stats = download_new_images(
-            "Lorcana", out_dir=str(tmp_path), delay=0, cancel_event=cancel
-        )
-        assert stats.downloaded == 0
-        assert list(tmp_path.iterdir()) == []
+        return jpg
 
-    def test_riftbound_downloads_with_padded_names(self, tmp_path, monkeypatch):
-        cards = [
-            {"set": "OGN", "collectorNumber": 1, "art": {"fullUrl": "http://img/1.jpg"}},
-            {"set": "OGN", "collector_number": "23c", "media": {"image_url": "http://img/23c.jpg"}},
-        ]
-        monkeypatch.setitem(
-            image_fetcher.GAMES,
-            "riftbound",
-            ("stub://cards", lambda url: cards, riftbound_targets),
-        )
-        stats = download_new_images("Riftbound", out_dir=str(tmp_path), delay=0)
-        assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
-        assert sorted(p.name for p in tmp_path.iterdir()) == ["OGN-001.webp", "OGN-23c.webp"]
+    monkeypatch.setattr(image_fetcher, "_download", download_then_cancel)
+    messages = []
+    out, stats = run("cancel", cancel_event=cancel, progress_callback=messages.append)
+    assert stats.downloaded == 1 and [p.name for p in out.iterdir()] == ["009-041.webp"]
+    assert any("cancelled" in m.lower() for m in messages)
+    out, stats = run("precancel", cancel_event=cancel)
+    assert stats.downloaded == 0 and list(out.iterdir()) == []
+
+    # A per-image failure is counted; a card-list failure raises.
+    def boom(url):
+        raise OSError("offline")
+
+    monkeypatch.setattr(image_fetcher, "_download", boom)
+    out, stats = run("fail")
+    assert stats == FetchStats(downloaded=0, skipped=0, failed=2)
+    monkeypatch.setitem(image_fetcher.GAMES, "lorcana", ("stub://cards", boom, lorcana_targets))
+    with pytest.raises(OSError):
+        run("listfail")
+
+    # Riftbound shapes download with padded names too.
+    rift = [
+        {"set": "OGN", "collectorNumber": 1, "art": {"fullUrl": "http://img/1.jpg"}},
+        {"set": "OGN", "collector_number": "23c", "media": {"image_url": "http://img/23c.jpg"}},
+    ]
+    monkeypatch.setitem(image_fetcher.GAMES, "riftbound", ("stub://cards", lambda url: rift, riftbound_targets))
+    monkeypatch.setattr(image_fetcher, "_download", lambda url: jpg)
+    out = tmp_path / "rift"
+    stats = download_new_images("Riftbound", out_dir=str(out), delay=0)
+    assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
+    assert sorted(p.name for p in out.iterdir()) == ["OGN-001.webp", "OGN-23c.webp"]

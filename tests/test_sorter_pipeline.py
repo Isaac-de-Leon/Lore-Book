@@ -103,162 +103,93 @@ def _make_pipeline(camera, extractor, transport, *, rules=None, game="Lorcana", 
     )
 
 
-class TestPipelineRouting:
-    def test_each_card_routed_to_expected_bin(self):
-        camera = ArrayCameraSource(_frames(2))
-        extractor = SequenceExtractor([_unit(0), _unit(1)])  # → 001-001, 008-002
-        transport = MockTransport()
+def test_routing():
+    camera = ArrayCameraSource(_frames(4))
+    # 001-001, 008-002, then no match and an extraction failure
+    extractor = SequenceExtractor([_unit(0), _unit(1), _unit(500), None])
+    transport = MockTransport()
 
-        outcomes = _make_pipeline(camera, extractor, transport).run()
+    outcomes = _make_pipeline(camera, extractor, transport).run()
 
-        assert [o.bin for o in outcomes] == ["bin-1", "bin-8"]
-        assert [o.filename for o in outcomes] == ["001-001.webp", "008-002.webp"]
-        assert all(o.matched for o in outcomes)
-        assert transport.history == ["bin-1", "bin-8"]
-        assert transport.routed["bin-1"] == 1 and transport.routed["bin-8"] == 1
-        assert transport.cards_advanced == 2
-        assert transport.homed is True
+    assert [o.bin for o in outcomes] == ["bin-1", "bin-8", "reject", "reject"]
+    assert [o.filename for o in outcomes] == ["001-001.webp", "008-002.webp", None, None]
+    assert [o.matched for o in outcomes] == [True, True, False, False]
+    assert transport.history == ["bin-1", "bin-8", "reject", "reject"]
+    assert transport.routed["bin-1"] == 1 and transport.routed["reject"] == 2
+    assert transport.cards_advanced == 4
+    assert transport.homed is True
 
-    @pytest.mark.parametrize("vector", [_unit(500), None],
-                             ids=["no-match", "extraction-failure"])
-    def test_unidentified_card_routes_to_reject(self, vector):
-        camera = ArrayCameraSource(_frames())
-        extractor = SequenceExtractor([vector])
+    camera = ArrayCameraSource(_frames(5))
+    outcomes = _make_pipeline(camera, SequenceExtractor([_unit(0)] * 5), MockTransport()).run(max_cards=2)
+    assert len(outcomes) == 2
 
-        outcomes = _make_pipeline(camera, extractor, MockTransport()).run()
 
-        assert outcomes[0].bin == "reject"
-        assert outcomes[0].matched is False
-        assert outcomes[0].filename is None
-
-    @pytest.mark.parametrize("rule, foil", [
-        (Rule(bin="foils", foil=True), True),      # foil-only rule
-        (Rule(bin="keep", game="Lorcana"), False),  # game-only catch-all
-    ], ids=["foil-rule", "game-rule"])
-    def test_unmatched_card_not_captured_by_rule(self, monkeypatch, rule, foil):
-        """An unidentified card must go to reject even when a broad rule would match it."""
-        monkeypatch.setattr("lorebook.sorter.pipeline.is_probably_foil", lambda *a, **k: foil)
-        camera = ArrayCameraSource(_frames())
-        extractor = SequenceExtractor([_unit(500)])  # orthogonal to all refs → no match
+def test_foil_and_broad_rules(monkeypatch):
+    """Foil rules apply to matched cards; an unidentified card goes to reject
+    even when a broad rule (foil-only, game-only) would otherwise match it."""
+    monkeypatch.setattr("lorebook.sorter.pipeline.is_probably_foil", lambda *a, **k: True)
+    for rule in (Rule(bin="foils", foil=True), Rule(bin="foils", game="Lorcana")):
         rules = SortRules(rules=[rule], reject_bin="reject")
-
-        outcomes = _make_pipeline(camera, extractor, MockTransport(), rules=rules).run()
-
-        assert outcomes[0].matched is False
-        assert outcomes[0].bin == "reject"
-
-    def test_foil_rule_applied(self, monkeypatch):
-        monkeypatch.setattr("lorebook.sorter.pipeline.is_probably_foil", lambda *a, **k: True)
-        camera = ArrayCameraSource(_frames())
-        extractor = SequenceExtractor([_unit(0)])
-        rules = SortRules(rules=[Rule(bin="foils", foil=True)], reject_bin="reject")
-
-        outcomes = _make_pipeline(camera, extractor, MockTransport(), rules=rules).run()
-        assert outcomes[0].bin == "foils"
-        assert outcomes[0].is_foil is True
-
-    def test_max_cards_limits_run(self):
-        camera = ArrayCameraSource(_frames(5))
-        extractor = SequenceExtractor([_unit(0)] * 5)
-
-        outcomes = _make_pipeline(camera, extractor, MockTransport()).run(max_cards=2)
-        assert len(outcomes) == 2
-
-
-class TestPipelineCsv:
-    def _run(self, tmp_path, monkeypatch, vectors, **kwargs):
-        """Run a pipeline over len(vectors) frames in tmp_path; return outcomes."""
-        monkeypatch.chdir(tmp_path)
-        camera = ArrayCameraSource(_frames(len(vectors)))
-        extractor = SequenceExtractor(vectors)
-        return _make_pipeline(camera, extractor, MockTransport(), **kwargs).run()
-
-    def test_dry_run_does_not_write_csv(self, tmp_path, monkeypatch):
-        self._run(tmp_path, monkeypatch, [_unit(0)], dry_run=True)
-        assert not os.path.exists(tmp_path / "LorcanaList.csv")
-
-    def test_no_dry_run_writes_csv(self, tmp_path, monkeypatch):
-        self._run(tmp_path, monkeypatch, [_unit(0)], dry_run=False)  # → 001-001.webp
-
-        rows = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
-        assert rows[0] == ["Set Number", "Card Number", "Variant", "Count"]
-        assert ["001", "001", "normal", "1"] in rows
-
-    def test_repeat_cards_accumulate_in_one_row(self, tmp_path, monkeypatch):
-        """Batched CSV writes still record every card, merged into one row."""
-        self._run(tmp_path, monkeypatch, [_unit(0)] * 3, dry_run=False)
-
-        rows = list(csv.reader((tmp_path / "LorcanaList.csv").open(encoding="utf-8")))
-        assert ["001", "001", "normal", "3"] in rows
-
-    def test_flush_interval_writes_mid_run(self, tmp_path, monkeypatch):
-        """The CSV is flushed every csv_flush_interval cards, not only at the end."""
-        monkeypatch.chdir(tmp_path)
         camera = ArrayCameraSource(_frames(2))
-        extractor = SequenceExtractor([_unit(0), _unit(1)])
-        pipeline = _make_pipeline(
-            camera, extractor, MockTransport(), dry_run=False, csv_flush_interval=1
-        )
-
-        pipeline.process_one(camera.read())
-        assert (tmp_path / "LorcanaList.csv").exists()  # flushed after 1 card
-
-    def test_new_game_gets_its_own_csv(self, tmp_path, monkeypatch):
-        """A game beyond Lorcana/Riftbound writes <Game>List.csv, not LorcanaList.csv."""
-        outcomes = self._run(tmp_path, monkeypatch, [_unit(0)], game="Pokemon", dry_run=False)
-
-        assert outcomes[0].bin == "bin-1"
-        assert not os.path.exists(tmp_path / "LorcanaList.csv")
-        rows = list(csv.reader((tmp_path / "PokemonList.csv").open(encoding="utf-8")))
-        assert ["001", "001", "normal", "1"] in rows
+        extractor = SequenceExtractor([_unit(0), _unit(500)])
+        outcomes = _make_pipeline(camera, extractor, MockTransport(), rules=rules).run()
+        assert [(o.bin, o.matched, o.is_foil) for o in outcomes][0] == ("foils", True, True)
+        assert (outcomes[1].bin, outcomes[1].matched) == ("reject", False)
 
 
-class TestCropToFocus:
-    @pytest.mark.parametrize("crop", [True, False], ids=["cropped", "full-frame"])
-    def test_extractor_sees_expected_frame(self, crop):
-        from lorebook.core.image_utils import focus_rect
+def test_csv_writes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
 
-        camera = ArrayCameraSource(_frames(shape=(720, 1280, 3)))
+    def run(vectors, **kwargs):
+        camera = ArrayCameraSource(_frames(len(vectors)))
+        return _make_pipeline(camera, SequenceExtractor(vectors), MockTransport(), **kwargs).run()
+
+    run([_unit(0)], dry_run=True)
+    assert not os.path.exists("LorcanaList.csv")
+
+    # Batched CSV writes still record every card, merged into one row.
+    run([_unit(0)] * 3, dry_run=False)
+    rows = list(csv.reader(open("LorcanaList.csv", encoding="utf-8")))
+    assert rows[0] == ["Set Number", "Card Number", "Variant", "Count"]
+    assert ["001", "001", "normal", "3"] in rows
+
+    # A game beyond Lorcana/Riftbound writes <Game>List.csv.
+    outcomes = run([_unit(0)], game="Pokemon", dry_run=False)
+    assert outcomes[0].bin == "bin-1"
+    assert ["001", "001", "normal", "1"] in list(csv.reader(open("PokemonList.csv", encoding="utf-8")))
+
+    # The CSV is flushed every csv_flush_interval cards, not only at the end.
+    camera = ArrayCameraSource(_frames(2))
+    pipeline = _make_pipeline(
+        camera, SequenceExtractor([_unit(0), _unit(1)]), MockTransport(),
+        game="Riftbound", dry_run=False, csv_flush_interval=1,
+    )
+    pipeline.process_one(camera.read())
+    assert os.path.exists("RiftboundList.csv")
+
+
+def test_cameras_and_crop(tmp_path):
+    import cv2
+
+    from lorebook.core.image_utils import focus_rect
+
+    _, _, fw, fh = focus_rect(720, 1280)
+    for crop, expected in ((True, (fh, fw, 3)), (False, (720, 1280, 3))):
         extractor = ShapeExtractor()
+        camera = ArrayCameraSource(_frames(shape=(720, 1280, 3)))
         _make_pipeline(camera, extractor, MockTransport(), crop_to_focus=crop).run()
+        assert extractor.shapes == [expected]
 
-        _, _, fw, fh = focus_rect(720, 1280)
-        assert extractor.shapes == [(fh, fw, 3) if crop else (720, 1280, 3)]
-
-
-class TestMockCameraSource:
-    def test_reads_images_from_folder(self, tmp_path):
-        import cv2
-
-        for name in ("a.png", "b.png"):
-            cv2.imwrite(str(tmp_path / name), np.zeros((4, 4, 3), np.uint8))
-        cam = MockCameraSource(str(tmp_path))
-
+    # MockCameraSource skips many unreadable files iteratively (the old
+    # recursive skip would blow the stack at scale), then ends the feed.
+    for i in range(50):
+        (tmp_path / f"bad{i:03d}.png").write_text("not an image")
+    cv2.imwrite(str(tmp_path / "zzz-good.png"), np.zeros((4, 4, 3), np.uint8))
+    for source in (str(tmp_path), sorted(str(p) for p in tmp_path.iterdir())):
+        cam = MockCameraSource(source)
         assert cam.read() is not None
-        assert cam.read() is not None
-        assert cam.read() is None  # feed exhausted
-
-    def test_skips_unreadable_files_without_recursion(self, tmp_path):
-        import cv2
-
-        # Many corrupt "images" followed by one valid one: must skip them all
-        # iteratively (the old recursive skip would blow the stack at scale).
-        paths = []
-        for i in range(50):
-            bad = tmp_path / f"bad{i:03d}.png"
-            bad.write_text("not an image")
-            paths.append(str(bad))
-        good = tmp_path / "zzz-good.png"
-        cv2.imwrite(str(good), np.zeros((4, 4, 3), np.uint8))
-        paths.append(str(good))
-
-        cam = MockCameraSource(paths)
-        assert cam.read() is not None  # the good frame, after skipping 50
         assert cam.read() is None
 
-    def test_all_unreadable_with_loop_terminates(self, tmp_path):
-        bad = tmp_path / "bad.png"
-        bad.write_text("not an image")
-
-        cam = MockCameraSource([str(bad)], loop=True)
-        assert cam.read() is None  # one full pass, then clean end — no infinite recursion
+    # All unreadable with loop=True: one full pass, then a clean end.
+    cam = MockCameraSource([str(tmp_path / "bad000.png")], loop=True)
+    assert cam.read() is None
