@@ -79,7 +79,7 @@ def test_game_type_and_file_naming(tmp_path):
     assert _cache_path("") == "DBCardCache_default.db"
 
 
-def test_game_folder_discovery(tmp_path):
+def test_game_folders_and_set_filter(tmp_path):
     for name in ("Lorcana", "MTG", "__pycache__", ".hidden", "logs"):
         (tmp_path / name).mkdir()
     (tmp_path / "notes.txt").touch()
@@ -91,10 +91,8 @@ def test_game_folder_discovery(tmp_path):
     assert resolve_game_folder(" Lorcana ", str(tmp_path)) == "Lorcana"
     assert resolve_game_folder("pokemon", str(tmp_path)) is None
 
-
-def test_set_filter_round_trip():
+    # Set filter: "all sets" is stored as [] so later sets are included...
     sets = ["001", "002", "003"]
-    # "All sets" is stored as [] so later sets are included automatically...
     assert sets_to_store(sets, sets) == []
     assert sets_to_store([], []) == []
     # ...and shows every set ticked, so the tree doesn't read as "game off".

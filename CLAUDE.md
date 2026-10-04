@@ -46,7 +46,7 @@ Lore-Book/
 │       ├── collection_view.py # Collection page: CSV table, Export CSV, Clear…
 │       └── main_window.py     # MainWindow: sidebar nav, Scanner/Collection pages, camera
 │
-├── .github/workflows/tests.yml # CI: pytest on every push/PR (no TF needed)
+├── .github/workflows/tests.yml # CI: lint+mypy, pytest on Linux+Windows, headless Qt smoke test (no TF needed)
 ├── configs/
 │   └── sort_rules.example.json # Example multi-bin sort rules
 ├── scripts/
@@ -79,7 +79,8 @@ Lore-Book/
     ├── test_image_fetcher.py
     ├── test_camera.py
     ├── test_sorter_rules.py
-    └── test_sorter_pipeline.py
+    ├── test_sorter_pipeline.py
+    └── test_gui_smoke.py      # headless Qt (skipped without PySide6; CI's gui job runs it)
 ```
 
 ### Module responsibilities

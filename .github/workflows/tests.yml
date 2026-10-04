@@ -4,29 +4,55 @@ on:
   push:
   pull_request:
 
+# Light CI: the suite stubs TensorFlow/Keras (tests/conftest.py) and sklearn
+# is optional in lorebook.core.matching, so jobs install the pinned dev tools
+# plus numpy/opencv at the versions requirements.txt locks.
+env:
+  LIGHT_DEPS: -r requirements-dev.txt numpy==2.0.2 opencv-python-headless==4.11.0.86
+
 jobs:
-  pytest:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      # The suite stubs TensorFlow/Keras (tests/conftest.py) and sklearn is
-      # optional in lorebook.core.matching, so only the light deps are needed:
-      # pinned dev tools + numpy/opencv at the versions requirements.txt locks.
-      - name: Install test dependencies
-        run: pip install -r requirements-dev.txt numpy==2.0.2 opencv-python-headless==4.11.0.86
-
-      # The Qt UI can't run headless in CI, so the linter is the only
-      # automated check over lorebook/ui/.
+      - run: pip install ${{ env.LIGHT_DEPS }}
       - name: Lint
         run: ruff check .
-
       - name: Type check
         run: mypy
 
+  test:
+    # Windows is where the app is actually used; Linux covers the Pi sorter.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ${{ env.LIGHT_DEPS }}
       - name: Run tests
         run: python -m pytest tests/ -v
+
+  gui:
+    # Headless Qt smoke test (tests/test_gui_smoke.py; skipped in the jobs
+    # above, which don't install PySide6).
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Qt runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - run: pip install ${{ env.LIGHT_DEPS }} PySide6==6.8.3
+      - name: GUI smoke test
+        run: python -m pytest tests/test_gui_smoke.py -v
