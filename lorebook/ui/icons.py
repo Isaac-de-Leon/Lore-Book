@@ -6,13 +6,12 @@
 # an icon with any color; pass checked_color to give a checkable button
 # (e.g. sidebar nav) a different tint in its checked state.
 
-from typing import Dict, Optional, Tuple
 
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
-_ICONS: Dict[str, str] = {
+_ICONS: dict[str, str] = {
     "book": (
         '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>'
         '<path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'
@@ -82,7 +81,7 @@ _SVG = (
 
 _RENDER_SIZES = (16, 20, 24, 32, 48, 64)
 
-_cache: Dict[Tuple[str, str, Optional[str]], QIcon] = {}
+_cache: dict[tuple[str, str, str | None], QIcon] = {}
 
 
 def _render(body: str, color: str, size: int) -> QPixmap:
@@ -96,7 +95,7 @@ def _render(body: str, color: str, size: int) -> QPixmap:
     return pm
 
 
-def get_icon(name: str, color: str, checked_color: Optional[str] = None) -> QIcon:
+def get_icon(name: str, color: str, checked_color: str | None = None) -> QIcon:
     """Return a QIcon for name tinted with color (cached).
 
     checked_color, if given, is used for the QIcon.On state — checkable

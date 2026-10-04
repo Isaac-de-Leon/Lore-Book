@@ -5,7 +5,6 @@ import logging
 import os
 import stat
 import tempfile
-from typing import List, Optional, Tuple
 
 from lorebook.core.game_types import (
     LORCANA_CSV,
@@ -17,8 +16,10 @@ from lorebook.core.game_types import (
     is_foil_only_card,
 )
 
+logger = logging.getLogger(__name__)
 
-def split_filename(matchedFilename: str) -> Tuple[str, str]:
+
+def split_filename(matchedFilename: str) -> tuple[str, str]:
     """
     Split a card image filename into (set_code, card_code).
 
@@ -34,7 +35,7 @@ def split_filename(matchedFilename: str) -> Tuple[str, str]:
             return "", base
         return parts[0], "-".join(parts[1:])
     except Exception as e:
-        logging.error(f"Error splitting filename {matchedFilename}: {e}")
+        logger.error("Error splitting filename %s: %s", matchedFilename, e)
         return "", matchedFilename
 
 
@@ -43,9 +44,9 @@ _split_filename = split_filename
 
 
 def get_available_sets(
-    game_type: Optional[GameType] = None,
-    db_path: Optional[str] = None,
-) -> List[str]:
+    game_type: GameType | None = None,
+    db_path: str | None = None,
+) -> list[str]:
     """
     Return a sorted list of all set codes found in db_path (or the current databasePath).
 
@@ -72,7 +73,7 @@ class CsvReadError(OSError):
     """
 
 
-def _normalize_existing_rows(csv_path: str, strict: bool = False) -> List[List[str]]:
+def _normalize_existing_rows(csv_path: str, strict: bool = False) -> list[list[str]]:
     """
     Read a CSV and normalize every row to exactly 4 columns:
     [Set Number, Card Number, Variant, Count].
@@ -83,12 +84,12 @@ def _normalize_existing_rows(csv_path: str, strict: bool = False) -> List[List[s
     error) raises CsvReadError when strict, else is logged and yields the
     rows read so far — fine for display, never for read-modify-write.
     """
-    rows: List[List[str]] = []
+    rows: list[list[str]] = []
     if not os.path.exists(csv_path):
         return rows
     try:
         # utf-8-sig: Excel re-saves CSVs with a byte-order mark
-        with open(csv_path, "r", newline="", encoding="utf-8-sig") as f:
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
             reader = csv.reader(f)
             first = True
             for row in reader:
@@ -108,11 +109,11 @@ def _normalize_existing_rows(csv_path: str, strict: bool = False) -> List[List[s
     except Exception as e:
         if strict:
             raise CsvReadError(f"Could not read {csv_path}: {e}") from e
-        logging.error(f"Error reading CSV file {csv_path}: {e}")
+        logger.error("Error reading CSV file %s: %s", csv_path, e)
         return rows
 
 
-def read_collection_rows(game: str, strict: bool = False) -> List[List[str]]:
+def read_collection_rows(game: str, strict: bool = False) -> list[list[str]]:
     """
     Return the collection rows for a game as normalized 4-column lists
     [Set Number, Card Number, Variant, Count]. Missing file → []. With
@@ -132,7 +133,7 @@ def clear_collection(game: str) -> None:
     _write_rows_4col(csv_for_game(game), [])
 
 
-def _write_rows_4col(csv_path: str, rows: List[List[str]]) -> None:
+def _write_rows_4col(csv_path: str, rows: list[list[str]]) -> None:
     """
     Write rows to CSV with a 4-column header.
 
@@ -175,7 +176,7 @@ def _csv_for_game_type(game_type: GameType) -> str:
 
 def update_cardlist_batch(
     cards,
-    game: Optional[str] = None,
+    game: str | None = None,
     allow_negative: bool = False,
 ) -> None:
     """
@@ -199,7 +200,7 @@ def update_cardlist_batch(
         try:
             count = int(count)
         except (TypeError, ValueError):
-            logging.warning(f"Non-numeric count {count!r} for {matchedFilename}; recording 1")
+            logger.warning("Non-numeric count %r for %s; recording 1", count, matchedFilename)
             count = 1
         if count == 0 or (count < 0 and not allow_negative):
             continue
@@ -237,7 +238,7 @@ def update_cardlist(
     matchedFilename: str,
     is_foil: bool,
     count: int = 1,
-    game: Optional[str] = None,
+    game: str | None = None,
     allow_negative: bool = False,
 ) -> None:
     """

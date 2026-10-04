@@ -3,7 +3,6 @@
 import logging
 import os
 import shutil
-from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -35,7 +34,7 @@ class CollectionView(QWidget):
     disk stays the single source of truth — this widget never writes to it.
     """
 
-    def __init__(self, initial_game: Optional[str] = None, parent=None):
+    def __init__(self, initial_game: str | None = None, parent=None):
         super().__init__(parent)
         self.logger = logging.getLogger(__name__)
 
@@ -158,10 +157,10 @@ class CollectionView(QWidget):
         try:
             shutil.copyfile(source, dest)
             self.summary_label.setText(f"Exported to {dest}")
-            self.logger.info(f"Exported {source} to {dest}")
+            self.logger.info("Exported %s to %s", source, dest)
         except OSError as e:
             self.summary_label.setText(f"Export failed: {e}")
-            self.logger.error(f"Error exporting {source} to {dest}: {e}")
+            self.logger.error("Error exporting %s to %s: %s", source, dest, e)
 
     def _clear_csv(self) -> None:
         """Empty the selected game's collection CSV after an explicit confirm."""
@@ -188,7 +187,7 @@ class CollectionView(QWidget):
         if answer != QMessageBox.Yes:
             return
         clear_collection(game)
-        self.logger.info(f"Cleared collection CSV for {game}")
+        self.logger.info("Cleared collection CSV for %s", game)
         # The scanner's single-level Undo now points at rows that no longer
         # exist — disable it rather than let it "undo" into the empty file.
         win = self.window()

@@ -26,9 +26,11 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Callable, Iterable, Iterator, Optional, Tuple
 from urllib.parse import urlsplit
+
+logger = logging.getLogger(__name__)
 
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
 RIFTBOUND_RIOT_URL = "https://americas.api.riotgames.com/riftbound/content/v1/contents?locale=en"
@@ -46,7 +48,7 @@ class FetchStats:
     failed: int = 0
 
 
-def _fetch_json(url: str, headers: Optional[dict] = None):
+def _fetch_json(url: str, headers: dict | None = None):
     req = urllib.request.Request(url, headers={"User-Agent": _UA, **(headers or {})})
     with urllib.request.urlopen(req, timeout=120) as resp:
         return json.load(resp)
@@ -65,7 +67,7 @@ def _pad(part: str) -> str:
 _SAFE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
 
-def _safe_filename(set_code: str, number: str, ext: str) -> Optional[str]:
+def _safe_filename(set_code: str, number: str, ext: str) -> str | None:
     """'<set>-<number><ext>' for plain codes, or None when either code is unsafe."""
     set_part, num_part = _pad(set_code), _pad(number)
     if not (_SAFE_CODE.fullmatch(set_part) and _SAFE_CODE.fullmatch(num_part)):
@@ -91,7 +93,7 @@ def _is_promo_printing(card: dict) -> bool:
     return bool(denom) and not denom.isdigit()
 
 
-def lorcana_targets(data) -> Iterator[Tuple[str, str, str]]:
+def lorcana_targets(data) -> Iterator[tuple[str, str, str]]:
     """
     Yield (set_code, number, image_url) for every Lorcana card with a full image.
 
@@ -170,13 +172,12 @@ def _fetch_riftbound(url: str):
     key = _riot_api_key()
     if url == RIFTBOUND_RIOT_URL:
         if not key:
-            logging.info(f"RIOT_API_KEY not set; using {RIFTBOUND_FALLBACK_URL}")
+            logger.info("RIOT_API_KEY not set; using %s", RIFTBOUND_FALLBACK_URL)
             return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
         try:
             return _fetch_json(url, headers={"X-Riot-Token": key})
         except Exception as e:
-            logging.warning(f"Riot API fetch failed ({e}); "
-                            f"falling back to {RIFTBOUND_FALLBACK_URL}")
+            logger.warning("Riot API fetch failed (%s); falling back to %s", e, RIFTBOUND_FALLBACK_URL)
             return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
     if _is_riot_host(url):
         return _fetch_json(url, headers={"X-Riot-Token": key} if key else None)
@@ -205,7 +206,7 @@ def _riftbound_cards(data) -> Iterator[dict]:
     yield from (c for c in data or [] if isinstance(c, dict))
 
 
-def riftbound_targets(data) -> Iterator[Tuple[str, str, str]]:
+def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
     """
     Yield (set_code, number, image_url) for every Riftbound card with art.
 
@@ -246,7 +247,7 @@ GAMES = {
 
 def _download(url: str, retries: int = 3, backoff: float = 1.5) -> bytes:
     """Fetch image bytes with a couple of retries on transient failures."""
-    last: Optional[Exception] = None
+    last: Exception | None = None
     for attempt in range(max(1, retries)):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": _UA})
@@ -313,18 +314,18 @@ def _remove_partial_downloads(folder: str) -> None:
 
 def download_new_images(
     game: str,
-    out_dir: Optional[str] = None,
-    progress_callback: Optional[Callable[[str], None]] = None,
-    url: Optional[str] = None,
-    sets: Optional[Iterable[str]] = None,
+    out_dir: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+    url: str | None = None,
+    sets: Iterable[str] | None = None,
     fmt: str = "webp",
     quality: int = 95,
-    limit: Optional[int] = None,
+    limit: int | None = None,
     force: bool = False,
     delay: float = 0.05,
     dry_run: bool = False,
-    cancel_event: Optional[threading.Event] = None,
-) -> Optional[FetchStats]:
+    cancel_event: threading.Event | None = None,
+) -> FetchStats | None:
     """
     Download any missing card images for a game into out_dir.
 
@@ -380,7 +381,7 @@ def download_new_images(
         fname = _safe_filename(set_code, number, ext)
         if fname is None:
             stats.failed += 1
-            logging.warning(f"Skipping card with unsafe code {set_code!r}-{number!r}")
+            logger.warning("Skipping card with unsafe code %r-%r", set_code, number)
             report(f"  SKIPPED unsafe card code {set_code!r}-{number!r}")
             continue
         dest = os.path.join(resolved_out, fname)
@@ -404,7 +405,7 @@ def download_new_images(
             report(f"  {fname}  ({len(payload) // 1024} KB)")
         except Exception as e:
             stats.failed += 1
-            logging.warning(f"Failed to fetch card image {fname}: {e}")
+            logger.warning("Failed to fetch card image %s: %s", fname, e)
             report(f"  FAILED {fname}: {e}")
         if delay:
             time.sleep(delay)

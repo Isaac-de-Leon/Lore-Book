@@ -11,7 +11,6 @@
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -33,7 +32,7 @@ logger = logging.getLogger(__name__)
 class SortOutcome:
     """The result of processing a single card."""
 
-    filename: Optional[str]      # matched reference image name, or None if no match
+    filename: str | None      # matched reference image name, or None if no match
     set_code: str
     card_code: str
     confidence: float
@@ -82,15 +81,15 @@ class SortPipeline:
         camera: CameraSource,
         transport: Transport,
         extractor,
-        feature_db: Dict[str, np.ndarray],
+        feature_db: dict[str, np.ndarray],
         rules: SortRules,
         game: str,
         threshold: float = 0.70,
-        foil_threshold: Optional[float] = None,
+        foil_threshold: float | None = None,
         dry_run: bool = True,
         csv_flush_interval: int = 25,
         crop_to_focus: bool = False,
-        gate: Optional[MotionGate] = None,
+        gate: MotionGate | None = None,
     ):
         self.camera = camera
         self.transport = transport
@@ -201,14 +200,14 @@ class SortPipeline:
             matched=matched,
         )
 
-    def run(self, max_cards: Optional[int] = None) -> List[SortOutcome]:
+    def run(self, max_cards: int | None = None) -> list[SortOutcome]:
         """
         Process cards until the camera feed is exhausted or max_cards is hit.
         With a gate, only frames where a new card has settled are processed.
         Flushes pending CSV rows, releases the camera, and homes the transport
         on completion.
         """
-        outcomes: List[SortOutcome] = []
+        outcomes: list[SortOutcome] = []
         try:
             while max_cards is None or len(outcomes) < max_cards:
                 frame = self.camera.read()

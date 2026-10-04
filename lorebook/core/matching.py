@@ -1,9 +1,10 @@
 # matching.py — Vector normalization and cosine-similarity matching.
 
 import logging
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 try:
     from sklearn.preprocessing import normalize as sk_normalize
@@ -52,14 +53,14 @@ def _cosine_score(a: np.ndarray, b: np.ndarray) -> float:
 
 def find_best_matches(
     inputFeatures: np.ndarray,
-    featureDB: Dict[str, np.ndarray],
+    featureDB: dict[str, np.ndarray],
     threshold: float = 0.70,
-) -> List[Tuple[str, float]]:
+) -> list[tuple[str, float]]:
     """Return all DB entries with cosine similarity >= threshold, sorted descending."""
     if inputFeatures is None or inputFeatures.size == 0 or not featureDB:
         return []
     q = l2_normalize(inputFeatures)
-    scored: List[Tuple[str, float]] = []
+    scored: list[tuple[str, float]] = []
     for fname, vec in featureDB.items():
         if vec is None or np.size(vec) == 0:
             continue
@@ -67,7 +68,7 @@ def find_best_matches(
             score = _cosine_score(q, vec)
         except ValueError:
             # One corrupt/unnormalized cache vector must not kill the scan.
-            logging.warning(f"Skipping unnormalized/corrupt DB vector for {fname}")
+            logger.warning("Skipping unnormalized/corrupt DB vector for %s", fname)
             continue
         if score >= threshold:
             scored.append((fname, score))
@@ -86,10 +87,10 @@ class MatchIndex:
     sorted descending, filtered by threshold.
     """
 
-    def __init__(self, featureDB: Dict[str, np.ndarray]):
-        names: List[str] = []
-        vectors: List[np.ndarray] = []
-        dim: Optional[int] = None
+    def __init__(self, featureDB: dict[str, np.ndarray]):
+        names: list[str] = []
+        vectors: list[np.ndarray] = []
+        dim: int | None = None
         for fname, vec in (featureDB or {}).items():
             if vec is None or np.size(vec) == 0:
                 continue
@@ -97,8 +98,8 @@ class MatchIndex:
             if dim is None:
                 dim = v.size
             elif v.size != dim:
-                logging.warning(
-                    f"MatchIndex: skipping {fname} (dim {v.size} != {dim})"
+                logger.warning(
+                    "MatchIndex: skipping %s (dim %s != %s)", fname, v.size, dim
                 )
                 continue
             # Normalize defensively: cache vectors are normalized at
@@ -106,7 +107,7 @@ class MatchIndex:
             # every cosine score computed against the matrix.
             norm = float(np.linalg.norm(v))
             if norm == 0.0 or not np.isfinite(norm):
-                logging.warning(f"MatchIndex: skipping {fname} (zero/invalid norm)")
+                logger.warning("MatchIndex: skipping %s (zero/invalid norm)", fname)
                 continue
             names.append(fname)
             vectors.append(v / norm)
@@ -116,14 +117,14 @@ class MatchIndex:
     def __len__(self) -> int:
         return len(self._names)
 
-    def find(self, inputFeatures: np.ndarray, threshold: float = 0.70) -> List[Tuple[str, float]]:
+    def find(self, inputFeatures: np.ndarray, threshold: float = 0.70) -> list[tuple[str, float]]:
         """Return all entries with cosine similarity >= threshold, sorted descending."""
         if inputFeatures is None or np.size(inputFeatures) == 0 or not self._names:
             return []
         q = l2_normalize(np.asarray(inputFeatures, dtype=np.float32).ravel())
         if q.size != self._matrix.shape[1]:
-            logging.error(
-                f"MatchIndex: query dim {q.size} != index dim {self._matrix.shape[1]}"
+            logger.error(
+                "MatchIndex: query dim %s != index dim %s", q.size, self._matrix.shape[1]
             )
             return []
         scores = self._matrix @ q

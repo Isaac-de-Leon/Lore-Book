@@ -2,9 +2,11 @@
 
 import logging
 import os
+from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, List, Optional
+
+logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTS = (".webp", ".jpg", ".jpeg", ".png")
 BASE_DATABASE_PATH = "Card_Images"
@@ -18,7 +20,7 @@ class GameType(Enum):
     UNKNOWN = "unknown"
 
 
-def game_folders(base: str = BASE_DATABASE_PATH) -> List[str]:
+def game_folders(base: str = BASE_DATABASE_PATH) -> list[str]:
     """Game folder names under Card_Images/, sorted (hidden/cache folders skipped)."""
     try:
         names = os.listdir(base)
@@ -32,7 +34,7 @@ def game_folders(base: str = BASE_DATABASE_PATH) -> List[str]:
     )
 
 
-def resolve_game_folder(key: str, base: str = BASE_DATABASE_PATH) -> Optional[str]:
+def resolve_game_folder(key: str, base: str = BASE_DATABASE_PATH) -> str | None:
     """
     Map a settings key (lowercased folder name, e.g. "mtg") back to the real
     folder name ("MTG"), or None when no such folder exists. Never rebuild
@@ -46,7 +48,7 @@ def resolve_game_folder(key: str, base: str = BASE_DATABASE_PATH) -> Optional[st
     return None
 
 
-def sets_to_store(checked: Iterable[str], available: Iterable[str]) -> List[str]:
+def sets_to_store(checked: Iterable[str], available: Iterable[str]) -> list[str]:
     """
     Set filter to persist for a selected game. Every set ticked is stored as
     [] ("all sets"), so sets released later are included automatically;
@@ -59,7 +61,7 @@ def sets_to_store(checked: Iterable[str], available: Iterable[str]) -> List[str]
     return [s for s in available if s in checked]
 
 
-def sets_to_display(stored: Iterable[str], available: Iterable[str], game_selected: bool) -> List[str]:
+def sets_to_display(stored: Iterable[str], available: Iterable[str], game_selected: bool) -> list[str]:
     """
     Inverse of sets_to_store for the Settings tree: which sets to show ticked.
     A selected game with [] ("all sets") shows every set ticked — the tree
@@ -75,7 +77,7 @@ def sets_to_display(stored: Iterable[str], available: Iterable[str], game_select
     return [s for s in available if s in stored] or available
 
 
-def game_type_from_name(name: Optional[str]) -> "GameType":
+def game_type_from_name(name: str | None) -> "GameType":
     """Resolve a game name (e.g. "Lorcana", "riftbound") to a GameType."""
     try:
         return GameType((name or "").strip().lower())
@@ -83,7 +85,7 @@ def game_type_from_name(name: Optional[str]) -> "GameType":
         return GameType.UNKNOWN
 
 
-def csv_for_game(game_name: Optional[str]) -> str:
+def csv_for_game(game_name: str | None) -> str:
     """
     Return the collection CSV filename for a game folder name.
 
@@ -138,5 +140,5 @@ def get_game_type(filepath: str) -> "GameType":
             return GameType.UNKNOWN
         return game_type_from_name(folder)
     except Exception as e:
-        logging.error(f"Error determining game type for {filepath}: {e}")
+        logger.error("Error determining game type for %s: %s", filepath, e)
         return GameType.UNKNOWN

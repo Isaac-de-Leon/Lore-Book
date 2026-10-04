@@ -13,7 +13,7 @@ import os
 import platform
 import time
 from abc import ABC, abstractmethod
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
 
 import cv2
 import numpy as np
@@ -23,7 +23,7 @@ from lorebook.core.game_types import SUPPORTED_EXTS
 logger = logging.getLogger(__name__)
 
 
-def _backend_candidates() -> List[tuple]:
+def _backend_candidates() -> list[tuple]:
     """Return (flag, name) camera backends to try, in priority order per OS."""
     system = platform.system()
     if system == "Windows":
@@ -63,7 +63,7 @@ def open_capture(camera_index: int = 0, warmup_frames: int = 30) -> cv2.VideoCap
     VideoCapture that is delivering valid frames. Raises RuntimeError if no
     backend can open the camera or it never delivers a frame.
     """
-    last_error: Optional[str] = None
+    last_error: str | None = None
 
     for backend_flag, backend_name in _backend_candidates():
         cap = None
@@ -125,7 +125,7 @@ class CameraSource(ABC):
     """A source of card frames for the sorter pipeline."""
 
     @abstractmethod
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> np.ndarray | None:
         """Return the next BGR frame, or None when the feed is exhausted/failed."""
 
     def flush(self) -> None:
@@ -149,9 +149,9 @@ class OpenCVCameraSource(CameraSource):
     def __init__(self, camera_index: int = 0, max_read_failures: int = 20):
         self.camera_index = camera_index
         self.max_read_failures = max_read_failures
-        self._cap: Optional[cv2.VideoCapture] = open_capture(camera_index)
+        self._cap: cv2.VideoCapture | None = open_capture(camera_index)
 
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> np.ndarray | None:
         if self._cap is None:
             return None
         failures = 0
@@ -198,12 +198,12 @@ class MockCameraSource(CameraSource):
     """
 
     def __init__(self, images: Sequence, loop: bool = False):
-        self._paths: List[str] = self._resolve(images)
+        self._paths: list[str] = self._resolve(images)
         self._loop = loop
         self._idx = 0
 
     @staticmethod
-    def _resolve(images: Sequence) -> List[str]:
+    def _resolve(images: Sequence) -> list[str]:
         if isinstance(images, str):
             if os.path.isdir(images):
                 return sorted(
@@ -214,7 +214,7 @@ class MockCameraSource(CameraSource):
             return [images]
         return list(images)
 
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> np.ndarray | None:
         # Iterative skip of unreadable files, bounded to one full pass so a
         # looping feed of all-bad paths ends cleanly instead of spinning.
         skipped = 0

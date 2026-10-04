@@ -9,18 +9,22 @@ import sys
 import numpy as np
 import pytest
 
-# TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
+from lorebook.core.card_database import _cache_path
+from lorebook.core.csv_manager import CsvReadError, read_collection_rows
+from lorebook.core.features import _check_tflite_input_dtype
+from lorebook.core.game_types import game_folders, resolve_game_folder, sets_to_display, sets_to_store
+from lorebook.core.image_utils import CARD_ASPECT, MotionGate, crop_to_card, focus_rect
 
+# TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
 from PhotoMatching import (
     GameType,
-    clear_collection,
-    csv_for_game,
-    update_cardlist,
     _cosine_score,
     _l2_normalize,
     _normalize_existing_rows,
     _split_filename,
     _write_rows_4col,
+    clear_collection,
+    csv_for_game,
     ensure_valid_image,
     find_best_matches,
     foil_score,
@@ -29,12 +33,8 @@ from PhotoMatching import (
     get_game_type,
     is_foil_only_card,
     is_probably_foil,
+    update_cardlist,
 )
-from lorebook.core.card_database import _cache_path
-from lorebook.core.csv_manager import CsvReadError, read_collection_rows
-from lorebook.core.features import _check_tflite_input_dtype
-from lorebook.core.game_types import game_folders, resolve_game_folder, sets_to_display, sets_to_store
-from lorebook.core.image_utils import CARD_ASPECT, MotionGate, crop_to_card, focus_rect
 
 HEADER = ["Set Number", "Card Number", "Variant", "Count"]
 HEADER_BYTES = b"Set Number,Card Number,Variant,Count\r\n"

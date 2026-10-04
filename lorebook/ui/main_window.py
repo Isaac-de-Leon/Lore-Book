@@ -9,7 +9,7 @@ import os
 import sys
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import cv2
 import numpy as np
@@ -47,6 +47,7 @@ from lorebook.core.card_prices import (
     rate_for,
 )
 from lorebook.core.csv_manager import split_filename, update_cardlist
+from lorebook.core.features import extract_features, get_extractor, visualize_activation_overlay
 from lorebook.core.game_types import (
     csv_for_game,
     game_folders,
@@ -54,7 +55,6 @@ from lorebook.core.game_types import (
     is_foil_only_card,
     resolve_game_folder,
 )
-from lorebook.core.features import extract_features, get_extractor, visualize_activation_overlay
 from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import (
     MotionGate,
@@ -71,6 +71,8 @@ from lorebook.ui.icons import get_icon
 from lorebook.ui.progress_dialog import BuildProgressDialog
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import DEFAULT_THEME, THEMES, build_stylesheet, theme_tokens
+
+logger = logging.getLogger(__name__)
 
 SETTINGS_FILE = "ui_settings.json"
 
@@ -114,17 +116,17 @@ def setup_logging(log_file: str = "card_scanner.log") -> None:
         )
         faulthandler.enable(file=_crash_log_file)
     except OSError as e:
-        logging.warning(f"Could not enable native crash logging: {e}")
+        logger.warning("Could not enable native crash logging: %s", e)
 
     # Uncaught Python exceptions land in the main log too (PySide6 prints
     # them to stderr, which is invisible when launched outside a terminal).
     def _log_excepthook(exc_type, exc, tb):
-        logging.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
+        logger.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
         sys.__excepthook__(exc_type, exc, tb)
 
     sys.excepthook = _log_excepthook
 
-    logging.info(f"Logging initialized — {log_path}")
+    logger.info("Logging initialized — %s", log_path)
 
 
 class MainWindow(QWidget):
@@ -178,11 +180,14 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ helpers
 
     @staticmethod
-    def _split_filename(filename: str) -> Tuple[str, str]:
+    def _split_filename(filename: str) -> tuple[str, str]:
         return split_filename(filename)
 
-    def show_error(self, message: str, title: str = "Error", details: Optional[str] = None) -> None:
-        self.logger.error(message + (f": {details}" if details else ""))
+    def show_error(self, message: str, title: str = "Error", details: str | None = None) -> None:
+        if details:
+            self.logger.error("%s: %s", message, details)
+        else:
+            self.logger.error("%s", message)
         QMessageBox.critical(self, title, message)
 
     def set_status(self, message: str, is_error: bool = False, timeout_ms: int = 3500) -> None:
@@ -193,17 +198,17 @@ class MainWindow(QWidget):
         if timeout_ms > 0:
             QTimer.singleShot(timeout_ms, lambda: self.csv_status.setText(""))
 
-    def _active_game_key(self) -> Optional[str]:
+    def _active_game_key(self) -> str | None:
         """Settings key (lowercased folder name) of the selected game, or None."""
         try:
             for key, selected in self.selected_games.items():
                 if selected:
                     return key
         except Exception as e:
-            self.logger.error(f"Error getting active game: {e}")
+            self.logger.error("Error getting active game: %s", e)
         return None
 
-    def get_active_game(self) -> Optional[str]:
+    def get_active_game(self) -> str | None:
         """Return the Card_Images folder name of the selected game, or None.
 
         Resolved against the real folder so names like "MTG" keep their case
@@ -225,7 +230,7 @@ class MainWindow(QWidget):
         self.featureDB = load_cache()
         self._match_index = MatchIndex(self.featureDB)
         self._loaded_game = game_name if self.featureDB else None
-        self.logger.info(f"Loaded {len(self.featureDB)} entries for {game_name}")
+        self.logger.info("Loaded %s entries for %s", len(self.featureDB), game_name)
         return bool(self.featureDB)
 
     # ------------------------------------------------------------------ init
@@ -236,11 +241,11 @@ class MainWindow(QWidget):
         self.resize(1000, 840)
 
         # State
-        self.featureDB: Dict[str, np.ndarray] = load_cache()
+        self.featureDB: dict[str, np.ndarray] = load_cache()
         self._match_index = MatchIndex(self.featureDB)  # vectorized matcher over featureDB
-        self._loaded_game: Optional[str] = None  # game whose featureDB is in memory
-        self.selected_games: Dict[str, bool] = {"lorcana": False, "riftbound": False}
-        self.selected_sets: Dict[str, List[str]] = {"lorcana": [], "riftbound": []}
+        self._loaded_game: str | None = None  # game whose featureDB is in memory
+        self.selected_games: dict[str, bool] = {"lorcana": False, "riftbound": False}
+        self.selected_sets: dict[str, list[str]] = {"lorcana": [], "riftbound": []}
         self.keep_foil_checked = False
         self.confidence_threshold = 0.90
         self.foil_threshold = 0.08
@@ -253,25 +258,25 @@ class MainWindow(QWidget):
         # min_std suppresses triggers on an empty (near-uniform) focus box
         self._motion_gate = MotionGate(min_std=12.0)
 
-        self.cap: Optional[cv2.VideoCapture] = None
+        self.cap: cv2.VideoCapture | None = None
         # Bumped on every start/stop; camera-open worker results carrying an
         # older token are stale (user hit Stop or restarted) and get discarded.
         self._cam_open_token = 0
-        self.last_frame: Optional[np.ndarray] = None
-        self.last_frame_time: Optional[float] = None
+        self.last_frame: np.ndarray | None = None
+        self.last_frame_time: float | None = None
         self.read_fail_count = 0
         self.max_read_fail = 20
 
-        self.last_matches: List[Tuple[str, float]] = []
+        self.last_matches: list[tuple[str, float]] = []
         self.current_match_idx: int = 0
-        self._last_add: Optional[Tuple[str, bool, int, str]] = None  # (fname, foil, count, game)
+        self._last_add: tuple[str, bool, int, str] | None = None  # (fname, foil, count, game)
         self._foil_locked = False        # Foil checkbox forced on for foil-only rarities
         self._foil_before_lock = False   # user's checkbox state to restore on unlock
 
         # DB build state (dialog created lazily on first build)
-        self._progress_dialog: Optional[BuildProgressDialog] = None
+        self._progress_dialog: BuildProgressDialog | None = None
         self._build_cancel_event = threading.Event()
-        self._build_thread: Optional[threading.Thread] = None
+        self._build_thread: threading.Thread | None = None
 
         # Scan state: extraction runs on a worker thread; results carry a
         # token so a superseded scan's result is dropped. _matches_game is
@@ -279,7 +284,7 @@ class MainWindow(QWidget):
         # it, never whatever Settings says now).
         self._scan_token = 0
         self._scan_busy = False
-        self._matches_game: Optional[str] = None
+        self._matches_game: str | None = None
 
         self.load_settings()
 
@@ -577,7 +582,7 @@ class MainWindow(QWidget):
 
     def load_settings(self) -> None:
         """Load settings from SETTINGS_FILE; fall back to defaults on any error."""
-        defaults: Dict[str, Any] = {
+        defaults: dict[str, Any] = {
             "camera_index": 0,
             "keep_foil_checked": False,
             "confidence_threshold": 0.90,
@@ -603,7 +608,7 @@ class MainWindow(QWidget):
 
         try:
             # utf-8-sig tolerates a BOM (editors/PowerShell often add one)
-            with open(SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
+            with open(SETTINGS_FILE, encoding="utf-8-sig") as f:
                 settings = json.load(f)
 
             for key, default in defaults.items():
@@ -629,7 +634,7 @@ class MainWindow(QWidget):
                             value = default
                     setattr(self, key, value)
                 except Exception as e:
-                    self.logger.error(f"Error loading setting {key}: {e}")
+                    self.logger.error("Error loading setting %s: %s", key, e)
                     setattr(self, key, default)
 
             # Older settings files could select several games; scanning only
@@ -640,7 +645,7 @@ class MainWindow(QWidget):
             self.logger.info("Settings loaded successfully")
 
         except (json.JSONDecodeError, Exception) as e:
-            self.logger.error(f"Error loading settings file: {e}")
+            self.logger.error("Error loading settings file: %s", e)
             apply_defaults()
 
     def save_settings(self) -> None:
@@ -663,7 +668,7 @@ class MainWindow(QWidget):
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(s, f, indent=2)
         except Exception as e:
-            self.logger.error(f"Error saving settings: {e}")
+            self.logger.error("Error saving settings: %s", e)
 
     def closeEvent(self, event):
         self.save_settings()
@@ -686,7 +691,7 @@ class MainWindow(QWidget):
             os.makedirs(card_images_dir, exist_ok=True)
             folders = game_folders(card_images_dir)
         except Exception as e:
-            self.logger.error(f"Error scanning {card_images_dir}: {e}")
+            self.logger.error("Error scanning %s: %s", card_images_dir, e)
             self.match_label.setText("Error scanning Card_Images directory")
             return
 
@@ -722,7 +727,7 @@ class MainWindow(QWidget):
         self._build_thread.start()
         self._db_progress_timer.start()
 
-    def _build_all_games_worker(self, folders: List[str], cancel_event: threading.Event) -> None:
+    def _build_all_games_worker(self, folders: list[str], cancel_event: threading.Event) -> None:
         """Build every game's feature DB sequentially in one background thread.
 
         Runs off the main thread and must NOT touch Qt widgets directly — all
@@ -732,10 +737,10 @@ class MainWindow(QWidget):
         build between images/batches/games; partial caches stay valid.
         """
         start_time = time.time()
-        failed: List[str] = []
+        failed: list[str] = []
         refreshed_prices = False
 
-        def progress_callback(pct: int, current_file: Optional[str]) -> None:
+        def progress_callback(pct: int, current_file: str | None) -> None:
             self._db_progress_pct = pct
             if current_file:
                 self.build_status.emit(f"Processing {current_file}…")
@@ -747,7 +752,7 @@ class MainWindow(QWidget):
                 download_currency_rates()
                 refreshed_prices = True
             except Exception as e:
-                self.logger.warning(f"Currency-rate refresh failed (continuing): {e}")
+                self.logger.warning("Currency-rate refresh failed (continuing): %s", e)
 
         for game_name in folders:
             if cancel_event.is_set():
@@ -769,14 +774,13 @@ class MainWindow(QWidget):
                 )
                 if stats and stats.downloaded:
                     self.logger.info(
-                        f"Downloaded {stats.downloaded} new {game_name} images "
-                        f"({stats.failed} failed)"
+                        "Downloaded %s new %s images (%s failed)", stats.downloaded, game_name, stats.failed
                     )
                     self.build_status.emit(
                         f"Downloaded {stats.downloaded} new {game_name} card images"
                     )
             except Exception as e:
-                self.logger.warning(f"Image fetch for {game_name} failed (continuing build): {e}")
+                self.logger.warning("Image fetch for %s failed (continuing build): %s", game_name, e)
 
             # Refresh market prices when the cached file is missing or older
             # than a day (no-op for games without a registered price source).
@@ -786,10 +790,10 @@ class MainWindow(QWidget):
                     self.build_status.emit(f"Updating {game_name} card prices…")
                     count = download_card_prices(game_name)
                     if count is not None:
-                        self.logger.info(f"Refreshed {count} {game_name} price entries")
+                        self.logger.info("Refreshed %s %s price entries", count, game_name)
                         refreshed_prices = True
                 except Exception as e:
-                    self.logger.warning(f"Price fetch for {game_name} failed (continuing build): {e}")
+                    self.logger.warning("Price fetch for %s failed (continuing build): %s", game_name, e)
 
             self.build_status.emit(f"Building {game_name} database…")
             self._db_progress_pct = 0
@@ -797,15 +801,15 @@ class MainWindow(QWidget):
             # Single attempt: build_feature_database already catches and logs
             # its own errors (returning what it has), so retrying never helped.
             if not os.path.isdir(game_path):
-                self.logger.error(f"Game folder not found: {game_path}")
+                self.logger.error("Game folder not found: %s", game_path)
                 failed.append(game_name)
                 continue
             if not list_image_files(game_path):
                 # Nothing to build (no images, and none downloaded) — not a failure.
-                self.logger.info(f"No images for {game_name} — skipped")
+                self.logger.info("No images for %s — skipped", game_name)
                 self.build_status.emit(f"No images for {game_name} — skipped")
                 continue
-            self.logger.info(f"Building DB for {game_name} at {game_path}")
+            self.logger.info("Building DB for %s at %s", game_name, game_path)
             db = build_feature_database(
                 progress_callback=progress_callback,
                 db_path=game_path,
@@ -815,17 +819,16 @@ class MainWindow(QWidget):
             if cancel_event.is_set():
                 break
             if not db:
-                self.logger.error(f"Database build for {game_name} produced no entries")
+                self.logger.error("Database build for %s produced no entries", game_name)
                 failed.append(game_name)
                 self.build_status.emit(f"Error building {game_name} database")
             else:
-                self.logger.info(f"DB ready for {game_name}: {len(db)} entries")
+                self.logger.info("DB ready for %s: %s entries", game_name, len(db))
 
         elapsed = time.time() - start_time
         cancelled = cancel_event.is_set()
         self.logger.info(
-            f"DB builds finished in {elapsed:.1f}s "
-            f"({len(failed)} failed{', cancelled' if cancelled else ''})"
+            "DB builds finished in %.1fs (%s failed%s)", elapsed, len(failed), ', cancelled' if cancelled else ''
         )
         if refreshed_prices:
             self.prices_refreshed.emit()
@@ -841,7 +844,7 @@ class MainWindow(QWidget):
         self.logger.info("Database build cancel requested")
         self._build_cancel_event.set()
 
-    def _on_build_done(self, success: bool, failed: List[str]) -> None:
+    def _on_build_done(self, success: bool, failed: list[str]) -> None:
         """Main-thread slot: finalize UI after the background build finishes."""
         self._db_progress_timer.stop()
         if self._progress_dialog is not None:
@@ -992,7 +995,7 @@ class MainWindow(QWidget):
             if (time.monotonic() - self.last_frame_time) > 3.0:
                 self._fail_and_stop("No frames received for 3 seconds. Camera stopped.")
 
-    def _focus_rect(self, h: int, w: int) -> Tuple[int, int, int, int]:
+    def _focus_rect(self, h: int, w: int) -> tuple[int, int, int, int]:
         """Return (fx, fy, fw, fh) for a 63:88 portrait focus box at ~60% of frame height."""
         return focus_rect(h, w)
 
@@ -1106,7 +1109,7 @@ class MainWindow(QWidget):
         try:
             get_extractor("keras").ensure_ready()
         except Exception as e:
-            self.logger.warning(f"Background model load failed (will retry on scan): {e}")
+            self.logger.warning("Background model load failed (will retry on scan): %s", e)
 
     def _set_scan_busy(self, busy: bool) -> None:
         self._scan_busy = busy
@@ -1122,14 +1125,14 @@ class MainWindow(QWidget):
         self._set_scan_busy(False)
         game, matches, error = result
         if error is not None:
-            self.logger.error(f"Scan failed: {error}")
+            self.logger.error("Scan failed: %s", error)
         if matches is None:
             self.match_label.setText("Could not extract features from image.")
             self.add_csv_btn.setEnabled(False)
             return
 
         matches = self._filter_matches(matches, game)
-        self.logger.info(f"Found {len(matches)} matches after filtering")
+        self.logger.info("Found %s matches after filtering", len(matches))
 
         if not matches:
             self.match_label.setText("No match found.")
@@ -1197,10 +1200,10 @@ class MainWindow(QWidget):
                 # setPixmap clears any placeholder text automatically
                 self._show_on_label(self.image_label, img, fill=False)
                 return
-            self.logger.error(f"Failed to load image: {match_path}")
+            self.logger.error("Failed to load image: %s", match_path)
         self.image_label.setText("—")
 
-    def _apply_foil_lock(self, set_code: str, card_code: str, active_game: Optional[str]) -> None:
+    def _apply_foil_lock(self, set_code: str, card_code: str, active_game: str | None) -> None:
         """
         Force the Foil checkbox on (and lock it) while a foil-only rarity
         (Lorcana Enchanted/Epic/Iconic) is displayed — those cards have no
@@ -1228,7 +1231,7 @@ class MainWindow(QWidget):
         if self.last_matches:
             self._show_match_at(self.current_match_idx + 1)
 
-    def _filter_matches(self, matches: List[Tuple[str, float]], game: Optional[str]) -> List[Tuple[str, float]]:
+    def _filter_matches(self, matches: list[tuple[str, float]], game: str | None) -> list[tuple[str, float]]:
         """Keep only matches in the selected sets of the game they were scanned for."""
         if not matches or not game:
             return matches or []
@@ -1276,7 +1279,7 @@ class MainWindow(QWidget):
         try:
             update_cardlist(fname, is_foil, cnt, game=active_game)
         except OSError as e:  # unreadable or locked (e.g. open in Excel) — file untouched
-            self.logger.error(f"Could not add {fname} to {target_file}: {e}")
+            self.logger.error("Could not add %s to %s: %s", fname, target_file, e)
             self.set_status(f"Not added — {target_file} could not be updated (open in another program?)",
                             is_error=True, timeout_ms=8000)
             return
@@ -1294,7 +1297,7 @@ class MainWindow(QWidget):
         try:
             update_cardlist(fname, is_foil, -cnt, game=game, allow_negative=True)
         except OSError as e:  # keep _last_add so the user can retry
-            self.logger.error(f"Could not undo {fname}: {e}")
+            self.logger.error("Could not undo %s: %s", fname, e)
             self.set_status("Undo failed — the collection file could not be updated.",
                             is_error=True, timeout_ms=8000)
             return

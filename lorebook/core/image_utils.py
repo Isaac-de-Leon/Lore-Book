@@ -1,16 +1,18 @@
 # image_utils.py — Image validation and foil detection utilities.
 
 import logging
-from typing import Optional, Tuple, overload
+from typing import overload
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Standard TCG card aspect ratio (63mm × 88mm portrait).
 CARD_ASPECT = 63 / 88.0
 
 
-def focus_rect(h: int, w: int, height_frac: float = 0.6) -> Tuple[int, int, int, int]:
+def focus_rect(h: int, w: int, height_frac: float = 0.6) -> tuple[int, int, int, int]:
     """
     Return (fx, fy, fw, fh) for a centered 63:88 portrait card box sized to
     height_frac of the frame height. Shared by the GUI focus overlay and the
@@ -27,7 +29,7 @@ def focus_rect(h: int, w: int, height_frac: float = 0.6) -> Tuple[int, int, int,
 def crop_to_card(img_bgr: None, height_frac: float = ...) -> None: ...
 @overload
 def crop_to_card(img_bgr: np.ndarray, height_frac: float = ...) -> np.ndarray: ...
-def crop_to_card(img_bgr: Optional[np.ndarray], height_frac: float = 0.6) -> Optional[np.ndarray]:
+def crop_to_card(img_bgr: np.ndarray | None, height_frac: float = 0.6) -> np.ndarray | None:
     """
     Crop a frame to the centered card focus box (see focus_rect).
 
@@ -45,7 +47,7 @@ def crop_to_card(img_bgr: Optional[np.ndarray], height_frac: float = 0.6) -> Opt
     return img_bgr
 
 
-def motion_sample(frame_bgr: Optional[np.ndarray], size: int = 64) -> Optional[np.ndarray]:
+def motion_sample(frame_bgr: np.ndarray | None, size: int = 64) -> np.ndarray | None:
     """
     Small grayscale sample of the card focus box for MotionGate.update().
 
@@ -80,14 +82,14 @@ class MotionGate:
         self.steady_frames = max(1, steady_frames)
         self.diff_threshold = diff_threshold
         self.min_std = min_std
-        self._prev: Optional[np.ndarray] = None
+        self._prev: np.ndarray | None = None
         self._steady = 0
         self._armed = False  # motion must be seen before a trigger
 
     def reset(self) -> None:
         self._prev, self._steady, self._armed = None, 0, False
 
-    def update(self, gray: Optional[np.ndarray]) -> bool:
+    def update(self, gray: np.ndarray | None) -> bool:
         """Feed the next frame; True exactly when a fresh card has settled."""
         if gray is None or np.size(gray) == 0:
             return False
@@ -112,7 +114,7 @@ class MotionGate:
         return float(np.std(gray)) >= self.min_std
 
 
-def ensure_valid_image(img_bgr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+def ensure_valid_image(img_bgr: np.ndarray | None) -> np.ndarray | None:
     """Validate and normalize an input image to 3-channel BGR format."""
     if img_bgr is None or img_bgr.size == 0:
         return None
@@ -140,7 +142,7 @@ def foil_score(img_bgr: np.ndarray) -> float:
         contrast = float(np.mean(np.abs(cv2.Laplacian(gray, cv2.CV_32F)))) / 255.0
         return float(np.clip(0.7 * bright_ratio + 0.3 * contrast, 0.0, 1.0))
     except Exception as e:
-        logging.error(f"Error calculating foil score: {e}")
+        logger.error("Error calculating foil score: %s", e)
         return 0.0
 
 

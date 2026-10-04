@@ -5,12 +5,14 @@ import logging
 import os
 import sqlite3
 import threading
-from typing import Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
 
 import cv2
 import numpy as np
 
 from lorebook.core.game_types import BASE_DATABASE_PATH, SUPPORTED_EXTS
+
+logger = logging.getLogger(__name__)
 
 # Current active database path — changed via set_database_path().
 databasePath: str = os.path.join(BASE_DATABASE_PATH, "Lorcana")
@@ -54,10 +56,10 @@ def _init_db(path: str) -> None:
                 conn.execute(f"ALTER TABLE features ADD COLUMN {column} INTEGER")
 
 
-Stamp = Tuple[int, int]  # (st_mtime_ns, st_size) of a source image
+Stamp = tuple[int, int]  # (st_mtime_ns, st_size) of a source image
 
 
-def _file_stamp(path: str) -> Optional[Stamp]:
+def _file_stamp(path: str) -> Stamp | None:
     try:
         st = os.stat(path)
     except OSError:
@@ -65,7 +67,7 @@ def _file_stamp(path: str) -> Optional[Stamp]:
     return st.st_mtime_ns, st.st_size
 
 
-def _load_stamps(cache_file: str) -> Dict[str, Optional[Stamp]]:
+def _load_stamps(cache_file: str) -> dict[str, Stamp | None]:
     """{filename: (mtime_ns, size) or None for legacy rows} from the cache."""
     if not os.path.exists(cache_file):
         return {}
@@ -77,11 +79,11 @@ def _load_stamps(cache_file: str) -> Dict[str, Optional[Stamp]]:
                 for name, mtime, size in conn.execute("SELECT filename, mtime_ns, size FROM features")
             }
     except Exception as e:
-        logging.error(f"Error reading cache stamps from {cache_file}: {e}")
+        logger.error("Error reading cache stamps from %s: %s", cache_file, e)
         return {}
 
 
-def _save_stamps(cache_file: str, stamps: Dict[str, Stamp]) -> None:
+def _save_stamps(cache_file: str, stamps: dict[str, Stamp]) -> None:
     """Record stamps for existing rows (backfills legacy NULLs)."""
     if not stamps or not os.path.exists(cache_file):
         return
@@ -92,26 +94,26 @@ def _save_stamps(cache_file: str, stamps: Dict[str, Stamp]) -> None:
                 [(m, sz, name) for name, (m, sz) in stamps.items()],
             )
     except Exception as e:
-        logging.error(f"Error saving cache stamps to {cache_file}: {e}")
+        logger.error("Error saving cache stamps to %s: %s", cache_file, e)
 
 
-def load_cache(db_path: Optional[str] = None) -> Dict[str, np.ndarray]:
+def load_cache(db_path: str | None = None) -> dict[str, np.ndarray]:
     """Load the feature cache from the SQLite database for the given (or current) database path."""
     path = _cache_path(db_path or databasePath)
     if not os.path.exists(path):
         return {}
     try:
-        result: Dict[str, np.ndarray] = {}
+        result: dict[str, np.ndarray] = {}
         with sqlite3.connect(path) as conn:
             for filename, blob in conn.execute("SELECT filename, vector FROM features"):
                 result[filename] = np.frombuffer(blob, dtype=np.float32).copy()
         return result
     except Exception as e:
-        logging.error(f"Unexpected error loading cache from {path}: {e}")
+        logger.error("Unexpected error loading cache from %s: %s", path, e)
         return {}
 
 
-def _remove_cache_entries(cache_file: str, filenames: List[str]) -> None:
+def _remove_cache_entries(cache_file: str, filenames: list[str]) -> None:
     """Delete cache rows whose source images no longer exist on disk."""
     if not filenames or not os.path.exists(cache_file):
         return
@@ -121,10 +123,10 @@ def _remove_cache_entries(cache_file: str, filenames: List[str]) -> None:
                 "DELETE FROM features WHERE filename = ?", [(n,) for n in filenames]
             )
     except Exception as e:
-        logging.error(f"Error pruning stale cache entries from {cache_file}: {e}")
+        logger.error("Error pruning stale cache entries from %s: %s", cache_file, e)
 
 
-def list_image_files(folder: str) -> List[str]:
+def list_image_files(folder: str) -> list[str]:
     """Return sorted list of supported image filenames in folder."""
     if not os.path.isdir(folder):
         return []
@@ -141,18 +143,18 @@ _list_image_files = list_image_files
 _BATCH_SIZE = 32
 
 
-def _read_image(filename: str, db_path: str) -> Tuple[str, Optional[np.ndarray]]:
+def _read_image(filename: str, db_path: str) -> tuple[str, np.ndarray | None]:
     """Load one image for the build pipeline (thread-safe: no globals, no TF)."""
     return filename, cv2.imread(os.path.join(db_path, filename), cv2.IMREAD_COLOR)
 
 
 def build_feature_database(
-    progress_callback: Optional[Callable[[int, Optional[str]], None]] = None,
-    max_workers: Optional[int] = None,
-    db_path: Optional[str] = None,
+    progress_callback: Callable[[int, str | None], None] | None = None,
+    max_workers: int | None = None,
+    db_path: str | None = None,
     extractor=None,
-    cancel_event: Optional[threading.Event] = None,
-) -> Dict[str, np.ndarray]:
+    cancel_event: threading.Event | None = None,
+) -> dict[str, np.ndarray]:
     """
     Build or update the feature database for db_path (defaults to databasePath).
 
@@ -165,10 +167,10 @@ def build_feature_database(
     so far are still written to the cache, so the next build resumes from them.
     """
     resolved = db_path or databasePath
-    featureDB: Dict[str, np.ndarray] = {}
+    featureDB: dict[str, np.ndarray] = {}
     try:
         featureDB = load_cache(resolved)
-        logging.info(f"Loaded {len(featureDB)} cached entries from {resolved}")
+        logger.info("Loaded %s cached entries from %s", len(featureDB), resolved)
 
         current_files = list_image_files(resolved)
 
@@ -181,7 +183,7 @@ def build_feature_database(
             for name in stale:
                 featureDB.pop(name, None)
             _remove_cache_entries(_cache_path(resolved), stale)
-            logging.info(f"Pruned {len(stale)} stale cache entries from {resolved}")
+            logger.info("Pruned %s stale cache entries from %s", len(stale), resolved)
 
         # Re-extract images replaced under the same name (e.g. re-downloaded
         # with --force): their recorded size/mtime no longer match the file.
@@ -197,7 +199,7 @@ def build_feature_database(
             for name in changed:
                 featureDB.pop(name, None)
             _remove_cache_entries(cache_file, changed)
-            logging.info(f"Re-extracting {len(changed)} changed images in {resolved}")
+            logger.info("Re-extracting %s changed images in %s", len(changed), resolved)
         _save_stamps(cache_file, {
             f: stamp for f in featureDB
             if stored.get(f) is None and (stamp := disk.get(f)) is not None
@@ -205,7 +207,7 @@ def build_feature_database(
 
         new_files = [f for f in current_files if f not in featureDB]
         total = len(new_files)
-        logging.info(f"Processing {total} new files in {resolved}")
+        logger.info("Processing %s new files in %s", total, resolved)
 
         if total == 0:
             if progress_callback:
@@ -220,7 +222,7 @@ def build_feature_database(
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             for start in range(0, total, _BATCH_SIZE):
                 if cancel_event is not None and cancel_event.is_set():
-                    logging.info(f"Build cancelled after {done}/{total} files in {resolved}")
+                    logger.info("Build cancelled after %s/%s files in %s", done, total, resolved)
                     break
                 chunk = new_files[start:start + _BATCH_SIZE]
                 loaded = list(pool.map(lambda f: _read_image(f, resolved), chunk))
@@ -229,7 +231,7 @@ def build_feature_database(
                 for fname, img in loaded:
                     if img is None:
                         failed += 1
-                        logging.warning(f"Could not read image {fname}")
+                        logger.warning("Could not read image %s", fname)
                     else:
                         readable.append((fname, img))
 
@@ -240,7 +242,7 @@ def build_feature_database(
                         successful += 1
                     else:
                         failed += 1
-                        logging.warning(f"Feature extraction failed for {fname}")
+                        logger.warning("Feature extraction failed for %s", fname)
 
                 done += len(chunk)
                 if progress_callback:
@@ -260,19 +262,19 @@ def build_feature_database(
                     "VALUES (?, ?, ?, ?)",
                     rows,
                 )
-            logging.info(f"Saved {len(featureDB)} entries to {cache_file}")
+            logger.info("Saved %s entries to %s", len(featureDB), cache_file)
         except Exception as e:
-            logging.error(f"Error saving cache to {cache_file}: {e}")
+            logger.error("Error saving cache to %s: %s", cache_file, e)
 
-        logging.info(f"Build complete: {successful} ok, {failed} failed")
+        logger.info("Build complete: %s ok, %s failed", successful, failed)
         return featureDB
 
     except Exception as e:
-        logging.error(f"Error building feature database: {e}")
+        logger.error("Error building feature database: %s", e)
         return featureDB
 
 
-def clear_from_cache(filename: str, db_path: Optional[str] = None) -> None:
+def clear_from_cache(filename: str, db_path: str | None = None) -> None:
     """Remove a single entry from the SQLite cache (useful after deleting an image)."""
     path = _cache_path(db_path or databasePath)
     if not os.path.exists(path):
@@ -280,6 +282,6 @@ def clear_from_cache(filename: str, db_path: Optional[str] = None) -> None:
     try:
         with sqlite3.connect(path) as conn:
             conn.execute("DELETE FROM features WHERE filename = ?", (filename,))
-        logging.info(f"Cleared {filename} from {path}")
+        logger.info("Cleared %s from %s", filename, path)
     except Exception as e:
-        logging.error(f"Error clearing cache entry {filename}: {e}")
+        logger.error("Error clearing cache entry %s: %s", filename, e)

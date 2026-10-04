@@ -10,19 +10,22 @@
 # produce are interchangeable and cache-compatible (see scripts/check_parity.py).
 
 import os
+
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # respect a user-set level
 
 import logging
 import threading
 import warnings
-from typing import List, Optional, Sequence, Union
+from collections.abc import Sequence
 
 import cv2
 import numpy as np
 
 from lorebook.core.image_utils import ensure_valid_image
 from lorebook.core.matching import l2_normalize
+
+logger = logging.getLogger(__name__)
 
 # TensorFlow/Keras are imported lazily (only when the "keras" backend or the
 # heatmap overlay is actually used) so importing this module — and the "tflite"
@@ -97,7 +100,7 @@ def models_loaded() -> bool:
     return _feat_model is not None and _act_model is not None
 
 
-def _preprocess_to_batch(img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray]:
+def _preprocess_to_batch(img_or_path: np.ndarray | str) -> np.ndarray | None:
     """
     Load/validate an image and return a (1, 224, 224, 3) preprocessed float32 batch.
 
@@ -107,7 +110,7 @@ def _preprocess_to_batch(img_or_path: Union[np.ndarray, str]) -> Optional[np.nda
     if isinstance(img_or_path, str):
         img = cv2.imread(img_or_path, cv2.IMREAD_COLOR)
         if img is None:
-            logging.error(f"Could not read image file: {img_or_path}")
+            logger.error("Could not read image file: %s", img_or_path)
             return None
     else:
         img = img_or_path
@@ -122,11 +125,11 @@ def _preprocess_to_batch(img_or_path: Union[np.ndarray, str]) -> Optional[np.nda
     return _mobilenet_preprocess(batch)
 
 
-def _finalize(features: np.ndarray) -> Optional[np.ndarray]:
+def _finalize(features: np.ndarray) -> np.ndarray | None:
     """Flatten, validate the 1280-dim shape, and L2-normalize a raw feature vector."""
     features = np.asarray(features).flatten().astype(np.float32)
     if features.size != 1280:
-        logging.error(f"Unexpected feature dimension: {features.size}")
+        logger.error("Unexpected feature dimension: %s", features.size)
         return None
     return l2_normalize(features)
 
@@ -138,7 +141,7 @@ class _KerasExtractor:
         """Load the model now, raising on failure, so callers can fail fast."""
         _get_models()
 
-    def extract(self, img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray]:
+    def extract(self, img_or_path: np.ndarray | str) -> np.ndarray | None:
         try:
             batch = _preprocess_to_batch(img_or_path)
             if batch is None:
@@ -148,10 +151,10 @@ class _KerasExtractor:
                 features = feat_model.predict(batch, verbose=0)
             return _finalize(features)
         except Exception as e:
-            logging.error(f"Error extracting features (keras): {e}")
+            logger.error("Error extracting features (keras): %s", e)
             return None
 
-    def extract_batch(self, images: Sequence) -> List[Optional[np.ndarray]]:
+    def extract_batch(self, images: Sequence) -> list[np.ndarray | None]:
         """
         Extract features for many images with a single predict call.
 
@@ -161,7 +164,7 @@ class _KerasExtractor:
         one thread (concurrent predicts on a shared model are not guaranteed
         thread-safe).
         """
-        results: List[Optional[np.ndarray]] = [None] * len(images)
+        results: list[np.ndarray | None] = [None] * len(images)
         rows, positions = [], []
         for i, img in enumerate(images):
             batch = _preprocess_to_batch(img)
@@ -177,7 +180,7 @@ class _KerasExtractor:
             for pos, row in zip(positions, features):
                 results[pos] = _finalize(row)
         except Exception as e:
-            logging.error(f"Error extracting batch features (keras): {e}")
+            logger.error("Error extracting batch features (keras): %s", e)
         return results
 
 
@@ -200,7 +203,7 @@ def _check_tflite_input_dtype(dtype, model_path: str) -> None:
 class _TFLiteExtractor:
     """MobileNetV2 feature extractor backed by a .tflite Interpreter (lazy-loaded)."""
 
-    def __init__(self, model_path: Optional[str] = None):
+    def __init__(self, model_path: str | None = None):
         self._explicit_model_path = model_path
         self._interpreter = None
         self._in_index = None
@@ -242,7 +245,7 @@ class _TFLiteExtractor:
         self._out_index = out_detail["index"]
         return interp
 
-    def extract(self, img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray]:
+    def extract(self, img_or_path: np.ndarray | str) -> np.ndarray | None:
         try:
             interp = self._ensure_interpreter()
             batch = _preprocess_to_batch(img_or_path)
@@ -253,10 +256,10 @@ class _TFLiteExtractor:
             features = interp.get_tensor(self._out_index)
             return _finalize(features)
         except Exception as e:
-            logging.error(f"Error extracting features (tflite): {e}")
+            logger.error("Error extracting features (tflite): %s", e)
             return None
 
-    def extract_batch(self, images: Sequence) -> List[Optional[np.ndarray]]:
+    def extract_batch(self, images: Sequence) -> list[np.ndarray | None]:
         """API parity with the keras extractor; the tflite interpreter is
         fixed at batch size 1, so this is a plain loop (no speedup)."""
         return [self.extract(img) for img in images]
@@ -283,7 +286,7 @@ def get_extractor(backend: str = "keras"):
     return _extractors[key]
 
 
-def extract_features(img_or_path: Union[np.ndarray, str]) -> Optional[np.ndarray]:
+def extract_features(img_or_path: np.ndarray | str) -> np.ndarray | None:
     """
     Extract a normalized 1280-dim feature vector from an image or file path.
 

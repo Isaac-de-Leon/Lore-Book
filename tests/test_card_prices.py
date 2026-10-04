@@ -3,7 +3,7 @@
 import importlib.util
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -35,7 +35,7 @@ def _fresh_cache(tmp_path, monkeypatch):
 
 
 def _iso_now(hours_ago: float = 0.0) -> str:
-    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
+    return (datetime.now(UTC) - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
 
 
 def _write_prices(tmp_path, game, prices, fetched_at=None):

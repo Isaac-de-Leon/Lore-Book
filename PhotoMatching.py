@@ -21,11 +21,11 @@ from lorebook.core.card_database import (
 from lorebook.core.csv_manager import (
     _normalize_existing_rows,
     _split_filename,
-    split_filename,
     _write_rows_4col,
     clear_collection,
     get_available_sets,
     read_collection_rows,
+    split_filename,
     update_cardlist,
     update_cardlist_batch,
 )

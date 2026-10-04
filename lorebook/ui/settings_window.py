@@ -2,7 +2,6 @@
 
 import logging
 import os
-from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
@@ -143,7 +142,7 @@ class SettingsWindow(QDialog):
                     set_item.setCheckState(0, Qt.Checked if set_code in ticked else Qt.Unchecked)
                     set_item.setData(0, Qt.UserRole, set_code)
             except Exception as e:
-                self.logger.warning(f"Error getting sets for {game_name}: {e}")
+                self.logger.warning("Error getting sets for %s: %s", game_name, e)
 
         # One active game at a time: ticking a game (or any of its sets)
         # unticks the others, so the dialog never shows a selection that
@@ -217,9 +216,9 @@ class SettingsWindow(QDialog):
 
         # Collect game / set selections from tree — every game folder, not
         # just the built-in two, so new games are selectable too.
-        selected_games: Dict[str, bool] = {}
-        selected_sets: Dict[str, List[str]] = {}
-        active_folder: Optional[str] = None
+        selected_games: dict[str, bool] = {}
+        selected_sets: dict[str, list[str]] = {}
+        active_folder: str | None = None
         for i in range(self.set_tree.topLevelItemCount()):
             root = self.set_tree.topLevelItem(i)
             folder = root.text(0)
@@ -236,7 +235,7 @@ class SettingsWindow(QDialog):
             if selected and active_folder is None:
                 active_folder = folder
 
-        self.logger.info(f"Applying settings — games: {selected_games}, sets: {selected_sets}")
+        self.logger.info("Applying settings — games: %s, sets: %s", selected_games, selected_sets)
         parent.selected_games = selected_games
         parent.selected_sets = selected_sets
 

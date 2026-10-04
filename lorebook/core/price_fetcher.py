@@ -18,8 +18,8 @@ import logging
 import os
 import tempfile
 import urllib.request
-from datetime import datetime, timezone
-from typing import Callable, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from lorebook.core.card_prices import (
     RATES_FILE,
@@ -27,6 +27,8 @@ from lorebook.core.card_prices import (
     clear_price_cache,
     prices_file_for,
 )
+
+logger = logging.getLogger(__name__)
 
 LORCANA_URL = "https://api.lorcast.com/v0"
 RATES_URL = "https://api.frankfurter.dev/v1/latest?base=USD"
@@ -40,7 +42,7 @@ def _fetch_json(url: str):
         return json.load(resp)
 
 
-def _as_price(value) -> Optional[float]:
+def _as_price(value) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -73,7 +75,7 @@ def lorcana_prices(cards) -> dict:
     return out
 
 
-def _fetch_lorcana(base_url: str, progress_callback: Optional[Callable[[str], None]] = None) -> list:
+def _fetch_lorcana(base_url: str, progress_callback: Callable[[str], None] | None = None) -> list:
     """
     Fetch every card from the Lorcast API, set by set. Any per-set failure
     propagates so a partial result never replaces a complete prices file
@@ -105,7 +107,7 @@ GAMES = {
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _write_json_atomic(path: str, payload: dict) -> None:
@@ -128,10 +130,10 @@ def _write_json_atomic(path: str, payload: dict) -> None:
     clear_price_cache()
 
 
-def download_card_prices(game: str, out_path: Optional[str] = None,
-                         url: Optional[str] = None,
-                         progress_callback: Optional[Callable[[str], None]] = None
-                         ) -> Optional[int]:
+def download_card_prices(game: str, out_path: str | None = None,
+                         url: str | None = None,
+                         progress_callback: Callable[[str], None] | None = None
+                         ) -> int | None:
     """
     Fetch current market prices for a game and write card_prices_<Game>.json.
     Returns the number of priced cards, or None for games without a
@@ -140,7 +142,7 @@ def download_card_prices(game: str, out_path: Optional[str] = None,
     """
     key = str(game).strip().lower()
     if key not in GAMES:
-        logging.info(f"No price source registered for {game!r} — skipping price fetch.")
+        logger.info("No price source registered for %r — skipping price fetch.", game)
         return None
     default_url, fetcher, mapper = GAMES[key]
 
@@ -148,12 +150,12 @@ def download_card_prices(game: str, out_path: Optional[str] = None,
     prices = mapper(cards)
     out = out_path or prices_file_for(str(game).strip())
     _write_json_atomic(out, {"fetched_at": _now_iso(), "prices": prices})
-    logging.info(f"Wrote {len(prices)} {game} price entries to {out}")
+    logger.info("Wrote %s %s price entries to %s", len(prices), game, out)
     return len(prices)
 
 
-def download_currency_rates(out_path: Optional[str] = None,
-                            url: Optional[str] = None) -> int:
+def download_currency_rates(out_path: str | None = None,
+                            url: str | None = None) -> int:
     """
     Fetch daily USD exchange rates for the supported display currencies and
     write currency_rates.json. Returns the number of rates written; raises on
@@ -174,5 +176,5 @@ def download_currency_rates(out_path: Optional[str] = None,
 
     out = out_path or RATES_FILE
     _write_json_atomic(out, {"fetched_at": _now_iso(), "base": "USD", "rates": rates})
-    logging.info(f"Wrote {len(rates)} currency rates to {out}")
+    logger.info("Wrote %s currency rates to %s", len(rates), out)
     return len(rates)

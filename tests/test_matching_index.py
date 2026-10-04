@@ -3,7 +3,7 @@
 
 import numpy as np
 
-from lorebook.core.matching import MatchIndex, l2_normalize, find_best_matches
+from lorebook.core.matching import MatchIndex, find_best_matches, l2_normalize
 
 
 def _random_db(n=50, dim=64, seed=7):

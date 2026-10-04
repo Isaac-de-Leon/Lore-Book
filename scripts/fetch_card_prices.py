@@ -16,12 +16,16 @@ import sys
 
 try:
     from lorebook.core.price_fetcher import (
-        GAMES, download_card_prices, download_currency_rates,
+        GAMES,
+        download_card_prices,
+        download_currency_rates,
     )
 except ImportError:  # running from a checkout without `pip install -e .`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from lorebook.core.price_fetcher import (
-        GAMES, download_card_prices, download_currency_rates,
+        GAMES,
+        download_card_prices,
+        download_currency_rates,
     )
 
 

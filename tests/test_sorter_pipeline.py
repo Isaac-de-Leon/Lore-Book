@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 # TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
-
 from lorebook.hardware.camera import CameraSource, MockCameraSource
 from lorebook.hardware.transport import MockTransport
 from lorebook.sorter.pipeline import SortPipeline

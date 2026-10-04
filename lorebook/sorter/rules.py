@@ -9,7 +9,6 @@
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +28,10 @@ class Rule:
     """
 
     bin: str
-    game: Optional[str] = None
-    set_code: Optional[str] = None
-    foil: Optional[bool] = None
-    min_confidence: Optional[float] = None
+    game: str | None = None
+    set_code: str | None = None
+    foil: bool | None = None
+    min_confidence: float | None = None
 
     def matches(self, *, game: str, set_code: str, is_foil: bool, confidence: float) -> bool:
         if self.game is not None and self.game.lower() != (game or "").lower():
@@ -50,7 +49,7 @@ class Rule:
 class SortRules:
     """An ordered rule set with a fallthrough bin for anything unmatched."""
 
-    rules: List[Rule] = field(default_factory=list)
+    rules: list[Rule] = field(default_factory=list)
     reject_bin: str = "reject"
 
 
@@ -105,7 +104,7 @@ def load_rules(path: str) -> SortRules:
           ]
         }
     """
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     rules = [_rule_from_dict(r) for r in data.get("rules", [])]
     reject_bin = data.get("reject_bin", "reject")
