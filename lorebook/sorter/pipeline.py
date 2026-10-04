@@ -19,7 +19,7 @@ import numpy as np
 from lorebook.core.card_names import name_for
 from lorebook.core.card_prices import format_price, price_for
 from lorebook.core.csv_manager import split_filename, update_cardlist_batch
-from lorebook.core.image_utils import crop_to_card, is_probably_foil
+from lorebook.core.image_utils import MotionGate, crop_to_card, is_probably_foil, motion_sample
 from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import CameraSource
 from lorebook.hardware.transport import Transport
@@ -68,6 +68,11 @@ class SortPipeline:
                      applies. Use for live-camera frames where the card sits
                      centered against background; leave off when replaying
                      already-cropped reference images.
+        gate:        optional MotionGate for live cameras. Without it every
+                     frame is a new card (right for folder replays, where each
+                     image is one card). With it, a frame is only processed
+                     once a card has been placed and settled, so a card left
+                     under the camera is recorded once — not once per frame.
     """
 
     def __init__(
@@ -84,6 +89,7 @@ class SortPipeline:
         dry_run: bool = True,
         csv_flush_interval: int = 25,
         crop_to_focus: bool = False,
+        gate: Optional[MotionGate] = None,
     ):
         self.camera = camera
         self.transport = transport
@@ -96,6 +102,7 @@ class SortPipeline:
         self.dry_run = dry_run
         self.csv_flush_interval = max(1, csv_flush_interval)
         self.crop_to_focus = crop_to_focus
+        self.gate = gate
         self._pending: Counter = Counter()  # (filename, is_foil) -> count
         self._index = MatchIndex(feature_db)  # one matmul per card instead of a dict scan
 
@@ -185,7 +192,8 @@ class SortPipeline:
 
     def run(self, max_cards: Optional[int] = None) -> List[SortOutcome]:
         """
-        Process frames until the camera feed is exhausted or max_cards is hit.
+        Process cards until the camera feed is exhausted or max_cards is hit.
+        With a gate, only frames where a new card has settled are processed.
         Flushes pending CSV rows, releases the camera, and homes the transport
         on completion.
         """
@@ -195,6 +203,10 @@ class SortPipeline:
                 frame = self.camera.read()
                 if frame is None:
                     break
+                # Live feeds: wait for a freshly settled card. Skipped frames
+                # don't count toward max_cards.
+                if self.gate is not None and not self.gate.update(motion_sample(frame)):
+                    continue
                 outcomes.append(self.process_one(frame))
         finally:
             self.flush_csv()

@@ -41,6 +41,19 @@ def crop_to_card(img_bgr: Optional[np.ndarray], height_frac: float = 0.6) -> Opt
     return img_bgr
 
 
+def motion_sample(frame_bgr: Optional[np.ndarray], size: int = 64) -> Optional[np.ndarray]:
+    """
+    Small grayscale sample of the card focus box for MotionGate.update().
+
+    Shared by the GUI's auto-scan and the sorter's live-camera trigger so
+    both decide "a card has settled" from the same pixels.
+    """
+    if frame_bgr is None or np.size(frame_bgr) == 0:
+        return None
+    small = cv2.resize(crop_to_card(frame_bgr), (size, size), interpolation=cv2.INTER_AREA)
+    return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if small.ndim == 3 else small
+
+
 class MotionGate:
     """
     Fires once per card placed under the camera.

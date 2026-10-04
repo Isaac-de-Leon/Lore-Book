@@ -13,6 +13,7 @@ import sys
 
 from lorebook.core.card_database import load_cache, set_database_path
 from lorebook.core.features import get_extractor
+from lorebook.core.image_utils import MotionGate
 from lorebook.hardware.camera import MockCameraSource, OpenCVCameraSource
 from lorebook.hardware.transport import MockTransport
 from lorebook.sorter.pipeline import SortPipeline
@@ -40,6 +41,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                            "(default with --source camera).")
     crop.add_argument("--no-crop", dest="crop", action="store_false",
                       help="Match the full frame (default when replaying image files).")
+    p.add_argument("--trigger", choices=["motion", "every-frame"], default=None,
+                   help="When to process a frame: 'motion' waits for a newly placed card to "
+                        "settle (default with --source camera, so a card under the camera is "
+                        "recorded once); 'every-frame' treats each frame as a card (default "
+                        "when replaying image files).")
     dry = p.add_mutually_exclusive_group()
     dry.add_argument("--dry-run", dest="dry_run", action="store_true", default=True,
                      help="Do not write the CSV (default).")
@@ -95,6 +101,13 @@ def main(argv=None) -> int:
     # GUI does. Replayed reference images are already just the card.
     crop_to_focus = args.crop if args.crop is not None else (args.source == "camera")
 
+    # A live camera delivers the same card many times a second; without a
+    # trigger each frame would be routed and recorded as another card.
+    trigger = args.trigger or ("motion" if args.source == "camera" else "every-frame")
+    gate = MotionGate(min_std=12.0) if trigger == "motion" else None
+    if gate is not None:
+        log.info("Waiting for cards: each one is processed once it settles in the focus box.")
+
     pipeline = SortPipeline(
         camera=camera,
         transport=transport,
@@ -106,6 +119,7 @@ def main(argv=None) -> int:
         foil_threshold=args.foil_threshold,
         dry_run=args.dry_run,
         crop_to_focus=crop_to_focus,
+        gate=gate,
     )
 
     outcomes = pipeline.run(max_cards=args.max_cards)

@@ -193,3 +193,29 @@ def test_cameras_and_crop(tmp_path):
     # All unreadable with loop=True: one full pass, then a clean end.
     cam = MockCameraSource([str(tmp_path / "bad000.png")], loop=True)
     assert cam.read() is None
+
+
+def test_live_camera_gate_records_each_card_once(tmp_path, monkeypatch):
+    """A live feed repeats the same card every frame; the motion gate must
+    turn "card placed, sits for 30 frames" into exactly one sorted card."""
+    from lorebook.core.image_utils import MotionGate
+
+    monkeypatch.chdir(tmp_path)
+    rng = np.random.default_rng(3)
+    mat = np.full((360, 640, 3), 40, np.uint8)               # empty, uniform mat
+    card1 = rng.integers(0, 255, (360, 640, 3), dtype=np.uint8)
+    card2 = rng.integers(0, 255, (360, 640, 3), dtype=np.uint8)
+    feed = [mat] * 5 + [card1] * 30 + [mat] * 5 + [card2] * 30 + [mat] * 5
+
+    def run(gate):
+        extractor = SequenceExtractor([_unit(0), _unit(1)] * len(feed))
+        return _make_pipeline(ArrayCameraSource(feed), extractor, MockTransport(),
+                              dry_run=False, gate=gate).run()
+
+    outcomes = run(MotionGate(min_std=12.0))
+    assert [o.filename for o in outcomes] == ["001-001.webp", "008-002.webp"]
+    rows = list(csv.reader(open("LorcanaList.csv", encoding="utf-8")))
+    assert ["001", "001", "normal", "1"] in rows and ["008", "002", "normal", "1"] in rows
+
+    # Without a gate (folder-replay behavior) every frame counts as a card.
+    assert len(run(None)) == len(feed)

@@ -84,7 +84,7 @@ Lore-Book/
 | File | What it owns |
 |------|-------------|
 | `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, `game_folders()`/`resolve_game_folder()` (Card_Images discovery, case-preserving), `sets_to_store()`/`sets_to_display()` (set-filter semantics), constants |
-| `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` (auto-scan) |
+| `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` + `motion_sample` (GUI auto-scan and sorter live-camera trigger) |
 | `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
 | `lorebook/core/card_prices.py` | `price_for()`, `format_price()`, `rate_for()`, `prices_stale()`, `clear_price_cache()` — optional market prices from `card_prices_<Game>.json` + `currency_rates.json` (display only) |
 | `lorebook/core/price_fetcher.py` | `download_card_prices()` (Lorcast → TCGplayer USD prices; `GAMES` registry), `download_currency_rates()` (Frankfurter/ECB). Auto-run by the GUI when files are >24 h old; CLI: `scripts/fetch_card_prices.py` |
@@ -148,6 +148,10 @@ python -m lorebook.sorter --game Lorcana --source camera --no-dry-run
 ```
 Live-camera runs crop each frame to the centered card focus box (same crop as the GUI)
 before matching; folder replays don't. Override with `--crop` / `--no-crop`.
+Live-camera runs also wait for each card to be placed and settle (`MotionGate`, the same
+trigger as the GUI's auto-scan), so a card left under the camera is recorded once rather
+than once per frame; folder replays treat every image as a card. Override with
+`--trigger motion|every-frame`.
 `python PhotoMatching.py --sort …` is an equivalent alias. On a Raspberry Pi, install
 `pip install .[sorter]` (tflite-runtime instead of full TensorFlow), generate the model
 once on a desktop with `python scripts/convert_to_tflite.py`, copy it over, and run with

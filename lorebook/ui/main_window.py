@@ -55,7 +55,13 @@ from lorebook.core.game_types import (
 )
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_fetcher import download_new_images
-from lorebook.core.image_utils import MotionGate, crop_to_card, focus_rect, is_probably_foil
+from lorebook.core.image_utils import (
+    MotionGate,
+    crop_to_card,
+    focus_rect,
+    is_probably_foil,
+    motion_sample,
+)
 from lorebook.core.matching import MatchIndex
 from lorebook.core.price_fetcher import download_card_prices, download_currency_rates
 from lorebook.hardware.camera import open_capture
@@ -975,8 +981,7 @@ class MainWindow(QWidget):
             self.last_frame = frame.copy()
 
             if self.auto_scan:
-                small = cv2.resize(crop_to_card(frame), (64, 64), interpolation=cv2.INTER_AREA)
-                if self._motion_gate.update(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)):
+                if self._motion_gate.update(motion_sample(frame)):
                     self.capture_and_match()
 
             overlay = frame.copy()
