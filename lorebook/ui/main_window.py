@@ -1,8 +1,6 @@
 # main_window.py — MainWindow: camera preview, card matching, CSV export.
 
-import contextlib
 import faulthandler
-import gc
 import logging
 import logging.handlers
 import os
@@ -13,7 +11,7 @@ import time
 import cv2
 import numpy as np
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QIntValidator, QPixmap
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -53,21 +51,21 @@ from lorebook.core.game_types import (
 from lorebook.core.image_utils import (
     card_motion_gate,
     crop_to_card,
-    focus_rect,
+    draw_focus_overlay,
     is_probably_foil,
     motion_sample,
 )
 from lorebook.core.matching import MatchIndex
 from lorebook.core.paths import data_path
 from lorebook.core.settings import AppSettings
-from lorebook.hardware.camera import open_capture
 from lorebook.ui.collection_view import CollectionView
 from lorebook.ui.icons import get_icon
 from lorebook.ui.progress_dialog import BuildProgressDialog
+from lorebook.ui.qt_images import show_bgr
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import DEFAULT_THEME, THEMES, build_stylesheet, theme_tokens
 from lorebook.ui.threads import WorkerThread
-from lorebook.ui.workers import BuildWorker
+from lorebook.ui.workers import BuildWorker, CameraWorker
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +165,8 @@ class MainWindow(QWidget):
 
     # Signals for marshalling background-thread updates onto the main thread.
     build_requested = Signal(object, object)  # (game folders, cancel Event) → BuildWorker.run
-    camera_ready = Signal(int, object)   # (open token, cv2.VideoCapture)
-    camera_failed = Signal(int, str)     # (open token, error message)
+    camera_start_requested = Signal(int)     # camera index → CameraWorker.start
+    camera_stop_requested = Signal()         # → CameraWorker.stop
     scan_done = Signal(int, object)      # (scan token, (matches | None, error | None))
 
     # ------------------------------------------------------------------ helpers
@@ -213,14 +211,11 @@ class MainWindow(QWidget):
         # min_std suppresses triggers on an empty (near-uniform) focus box
         self._motion_gate = card_motion_gate()
 
-        self.cap: cv2.VideoCapture | None = None
-        # Bumped on every start/stop; camera-open worker results carrying an
-        # older token are stale (user hit Stop or restarted) and get discarded.
-        self._cam_open_token = 0
+        # Camera: opened and read on its own thread (CameraWorker); the GUI
+        # keeps only the latest frame and when it arrived (for the watchdog).
+        self._camera = WorkerThread(CameraWorker(), "lorebook-camera")
         self.last_frame: np.ndarray | None = None
         self.last_frame_time: float | None = None
-        self.read_fail_count = 0
-        self.max_read_fail = 20
 
         self.last_matches: list[tuple[str, float]] = []
         self.current_match_idx: int = 0
@@ -466,14 +461,16 @@ class MainWindow(QWidget):
         build_worker.progress.connect(self._on_build_progress)
         build_worker.done.connect(self._on_build_done)
         self._build.start()
-        self.camera_ready.connect(self._on_camera_ready)
-        self.camera_failed.connect(self._on_camera_failed)
+        camera_worker = self._camera.worker
+        self.camera_start_requested.connect(camera_worker.start)
+        self.camera_stop_requested.connect(camera_worker.stop)
+        camera_worker.state_changed.connect(self._on_camera_state)
+        camera_worker.frame_ready.connect(self._on_frame)
+        camera_worker.failed.connect(self._on_camera_failed)
+        self._camera.start()
         self.scan_done.connect(self._on_scan_done)
 
-        # Timers
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._grab_frame)
-
+        # Watchdog: frames stopped arriving (e.g. a driver hung inside read()).
         self.watchdog = QTimer(self)
         self.watchdog.setInterval(1000)
         self.watchdog.timeout.connect(self._watchdog_tick)
@@ -553,10 +550,13 @@ class MainWindow(QWidget):
         A worker stuck in a long blocking call (e.g. a network request) can
         outlive the timeout — app.main then exits without destroying it.
         """
-        return all([w.stop(timeout_ms) for w in self._workers()])
+        stopped = all([w.stop(timeout_ms) for w in self._workers()])
+        if not self._camera.is_running():
+            self._camera.worker.release()  # thread finished: safe to touch from here
+        return stopped
 
     def _workers(self) -> list[WorkerThread]:
-        return [self._build]
+        return [self._camera, self._build]
 
     # ------------------------------------------------------------------ DB build
 
@@ -664,143 +664,65 @@ class MainWindow(QWidget):
         self.camera_btn.style().polish(self.camera_btn)
 
     def start_camera(self) -> None:
-        """Open the camera in a background thread, then start the preview.
-
-        open_capture() (lorebook.hardware.camera, shared with the headless
-        sorter) probes backends and reads warm-up frames — several seconds of
-        blocking work that must stay off the GUI thread or the window sits
-        unpainted. The worker hands the opened capture back via camera_ready/
-        camera_failed; a stale token (Stop or another Start meanwhile) means
-        the result is discarded.
-        """
-        self.stop_camera()
-        cv2.destroyAllWindows()
-
-        self._cam_open_token += 1
-        token = self._cam_open_token
+        """Ask the camera worker to open the camera (a few seconds of backend
+        probing and warm-up, all on the camera thread)."""
+        self.last_frame = None
         self._set_camera_state("starting")
         self.preview_label.setText("Starting camera…")
         self.match_label.setText("Starting camera…")
-
-        threading.Thread(
-            target=self._open_camera_worker,
-            args=(token, self.settings.camera_index),
-            daemon=True,
-        ).start()
-
-    def _open_camera_worker(self, token: int, camera_index: int) -> None:
-        """Background thread: open the camera and report back via signals only."""
-        try:
-            cap = open_capture(camera_index)
-        # Boundary: whatever happens, the UI must hear back (it sits in the
-        # "Starting…" state until camera_ready/camera_failed arrives).
-        except Exception as e:  # noqa: BLE001
-            self.camera_failed.emit(token, str(e))
-            return
-        self.camera_ready.emit(token, cap)
-
-    def _on_camera_ready(self, token: int, cap) -> None:
-        """Main-thread slot: the background open succeeded — start the preview."""
-        if token != self._cam_open_token:
-            # Stop (or a newer Start) happened while this open was in flight.
-            with contextlib.suppress(cv2.error):
-                cap.release()
-            return
-        self.cap = cap
-        self.read_fail_count = 0
-        self.last_frame_time = time.monotonic()
-        self.timer.start(30)
-        self.watchdog.start()
-        self._set_camera_state("running")
-        self.match_label.setText("Camera running …")
-
-    def _on_camera_failed(self, token: int, message: str) -> None:
-        """Main-thread slot: the background open failed."""
-        if token != self._cam_open_token:
-            return
-        self._fail_and_stop(message)
-
-    def _fail_and_stop(self, message: str) -> None:
-        self.stop_camera()
-        QMessageBox.warning(self, "Camera Error", f"{message}\n\nTry a different camera index in Settings.")
+        self.camera_start_requested.emit(self.settings.camera_index)
 
     def stop_camera(self) -> None:
-        """Stop timers and release camera resources."""
-        self._cam_open_token += 1  # invalidate any in-flight background open
-        self.timer.stop()
+        """Ask the camera worker to release the camera; ignore frames from now on."""
+        self.camera_stop_requested.emit()
+        self._show_camera_stopped()
+
+    def _show_camera_stopped(self) -> None:
         self.watchdog.stop()
-        if self.cap is not None:
-            try:
-                with contextlib.suppress(cv2.error):  # a dead camera may refuse
-                    for _ in range(5):
-                        self.cap.grab()
-                    self.cap.release()
-            finally:
-                self.cap = None
         self.last_frame = None
         self.last_frame_time = None
-        self.read_fail_count = 0
         self._set_camera_state("idle")
         self.preview_label.setText("Camera stopped")
-        gc.collect()
+
+    def _on_camera_state(self, state: str) -> None:
+        """Main-thread slot: the camera worker changed state."""
+        if state == "running":
+            self.last_frame_time = time.monotonic()
+            self.watchdog.start()
+            self._set_camera_state("running")
+            self.match_label.setText("Camera running …")
+        elif state == "idle":
+            self._show_camera_stopped()
+        else:
+            self._set_camera_state(state)
+
+    def _on_camera_failed(self, message: str) -> None:
+        """Main-thread slot: the camera couldn't open or stopped delivering frames."""
+        self._show_camera_stopped()
+        QMessageBox.warning(self, "Camera Error", f"{message}\n\nTry a different camera index in Settings.")
 
     def _watchdog_tick(self) -> None:
-        if self.cap is not None and self.last_frame_time is not None:
-            if (time.monotonic() - self.last_frame_time) > 3.0:
-                self._fail_and_stop("No frames received for 3 seconds. Camera stopped.")
+        if self.last_frame_time is not None and (time.monotonic() - self.last_frame_time) > 3.0:
+            self.stop_camera()
+            self._on_camera_failed("No frames received for 3 seconds. Camera stopped.")
 
-    def _focus_rect(self, h: int, w: int) -> tuple[int, int, int, int]:
-        """Return (fx, fy, fw, fh) for a 63:88 portrait focus box at ~60% of frame height."""
-        return focus_rect(h, w)
-
-    def _grab_frame(self) -> None:
-        """Grab a camera frame, draw the focus overlay, and update the preview label."""
-        if not self.cap:
-            return
+    def _on_frame(self, frame: np.ndarray) -> None:
+        """Main-thread slot: a new camera frame — overlay it and show it."""
         try:
-            ret, frame = self.cap.read()
-            if not ret or frame is None or frame.size == 0:
-                self.read_fail_count += 1
-                if self.read_fail_count > self.max_read_fail:
-                    self._fail_and_stop("Camera not delivering frames.")
-                return
-
-            self.read_fail_count = 0
+            if self._camera_state != "running":
+                return  # a frame sent before a Stop/failure arrived late
             self.last_frame_time = time.monotonic()
-
             if self.settings.rotate_display:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
-            self.last_frame = frame.copy()
-
-            if self.settings.auto_scan:
-                if self._motion_gate.update(motion_sample(frame)):
-                    self.capture_and_match()
-
-            overlay = frame.copy()
-            h, w = overlay.shape[:2]
-            fx, fy, fw, fh = self._focus_rect(h, w)
-
-            color, thickness = (0, 255, 0), 2
-            cv2.rectangle(overlay, (fx, fy), (fx + fw, fy + fh), color, thickness)
-            cl = 40  # corner line length
-            for (sx, sy), (ex, ey) in [
-                ((fx, fy), (fx + cl, fy)), ((fx, fy), (fx, fy + cl)),
-                ((fx + fw, fy), (fx + fw - cl, fy)), ((fx + fw, fy), (fx + fw, fy + cl)),
-                ((fx, fy + fh), (fx + cl, fy + fh)), ((fx, fy + fh), (fx, fy + fh - cl)),
-                ((fx + fw, fy + fh), (fx + fw - cl, fy + fh)), ((fx + fw, fy + fh), (fx + fw, fy + fh - cl)),
-            ]:
-                cv2.line(overlay, (sx, sy), (ex, ey), color, thickness)
-
-            preview = visualize_activation_overlay(overlay, blocking=False) if self.settings.debug_mode else overlay
-            self._show_on_label(self.preview_label, preview, fill=True)
-
-        # Boundary: a Qt timer callback — an exception here would escape to
-        # the event loop every 30 ms. Count it like a failed read instead.
-        except Exception as e:  # noqa: BLE001
-            self.logger.debug("Frame processing error: %s", e)
-            self.read_fail_count += 1
-            if self.read_fail_count > self.max_read_fail:
-                self._fail_and_stop(f"Camera error: {e}")
+            self.last_frame = frame
+            if self.settings.auto_scan and self._motion_gate.update(motion_sample(frame)):
+                self.capture_and_match()
+            overlay = draw_focus_overlay(frame)
+            if self.settings.debug_mode:
+                overlay = visualize_activation_overlay(overlay, blocking=False)
+            show_bgr(self.preview_label, overlay, fill=True)
+        finally:
+            self._camera.worker.frame_consumed()  # ready for the next frame
 
     # ------------------------------------------------------------------ matching
 
@@ -955,7 +877,7 @@ class MainWindow(QWidget):
             img = cv2.imread(match_path, cv2.IMREAD_COLOR)
             if img is not None:
                 # setPixmap clears any placeholder text automatically
-                self._show_on_label(self.image_label, img, fill=False)
+                show_bgr(self.image_label, img, fill=False)
                 return
             self.logger.error("Failed to load image: %s", match_path)
         self.image_label.setText("—")
@@ -1078,45 +1000,6 @@ class MainWindow(QWidget):
         self.collection_view.refresh()
 
     # ------------------------------------------------------------------ display helpers
-
-    def _crop_to_fill(self, img_bgr: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
-        """Center-crop img to match target aspect ratio (cover mode)."""
-        if img_bgr is None or img_bgr.size == 0 or target_w <= 0 or target_h <= 0:
-            return np.ascontiguousarray(img_bgr) if img_bgr is not None else img_bgr
-        h, w = img_bgr.shape[:2]
-        if h == 0 or w == 0:
-            return np.ascontiguousarray(img_bgr)
-        if (w / float(h)) > (target_w / float(target_h)):
-            new_w = int(h * target_w / target_h)
-            x0 = max((w - new_w) // 2, 0)
-            cropped = img_bgr[:, x0:x0 + new_w]
-        else:
-            new_h = int(w * target_h / target_w)
-            y0 = max((h - new_h) // 2, 0)
-            cropped = img_bgr[y0:y0 + new_h, :]
-        return np.ascontiguousarray(cropped)
-
-    def _show_on_label(self, label: QLabel, img_bgr: np.ndarray, fill: bool = False) -> None:
-        """Render a BGR image onto a QLabel, optionally crop-to-fill."""
-        if img_bgr is None or img_bgr.size == 0:
-            return
-        if fill:
-            img_bgr = self._crop_to_fill(img_bgr, label.width(), label.height())
-        if img_bgr.ndim == 2:
-            img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
-        elif img_bgr.shape[-1] == 4:
-            img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
-        if img_bgr.dtype != np.uint8 or not img_bgr.flags["C_CONTIGUOUS"]:
-            img_bgr = np.ascontiguousarray(img_bgr, dtype=np.uint8)
-        h, w = img_bgr.shape[:2]
-        qimg = QImage(img_bgr.data, w, h, img_bgr.strides[0], QImage.Format_BGR888)
-        label.setPixmap(
-            QPixmap.fromImage(qimg).scaled(
-                label.size(),
-                Qt.IgnoreAspectRatio if fill else Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-        )
 
     # ------------------------------------------------------------------ scaling
 
