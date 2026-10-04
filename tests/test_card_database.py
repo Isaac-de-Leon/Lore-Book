@@ -97,7 +97,8 @@ def test_batched_build(tmp_path, monkeypatch):
 
     # GameDatabase keeps the vectors and their match index together.
     game_db = GameDatabase(base=str(tmp_path))
-    assert game_db.load("Lorcana") and len(game_db) == len(game_db.index) == 4
+    assert game_db.load("Lorcana")
+    assert len(game_db) == len(game_db.index) == len(load_cache(str(images))) == 5
     assert game_db.game == "Lorcana" and game_db.ensure("Lorcana")
     assert not game_db.ensure("Missing") and game_db.game is None and len(game_db.index) == 0
 
