@@ -13,9 +13,8 @@ requires-python = ">=3.11"
 #   desktop GUI:  pip install -e .[gui]      (or: pip install -r requirements.txt)
 #   Pi sorter:    pip install .[sorter]      (tflite-runtime, no TensorFlow/Qt)
 dependencies = [
-    "numpy",
-    "opencv-python",
-    "pillow",
+    "numpy>=2.0,<3",
+    "opencv-python>=4.11",
 ]
 
 [project.scripts]
@@ -23,12 +22,12 @@ lorebook-ui = "lorebook.ui.app:main"
 lorebook-sort = "lorebook.sorter.__main__:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff", "mypy"]
+dev = ["pytest>=9", "ruff>=0.15", "mypy>=2"]  # exact CI pins: requirements-dev.txt
 # Desktop GUI + keras feature backend (also builds the .tflite model).
 gui = [
-    "tensorflow",
-    "keras",
-    "scikit-learn",
+    "tensorflow>=2.18,<2.19",
+    "keras>=3.9,<4",
+    "scikit-learn>=1.6",
     "PySide6>=6.8,<6.9",  # NumPy-2-safe LTS line; see requirements.txt
 ]
 # Raspberry Pi sorter runtime: lightweight tflite inference without

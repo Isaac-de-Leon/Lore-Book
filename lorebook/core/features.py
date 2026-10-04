@@ -115,11 +115,11 @@ def _preprocess_to_batch(img_or_path: np.ndarray | str) -> np.ndarray | None:
     else:
         img = img_or_path
 
-    img = ensure_valid_image(img)
-    if img is None:
+    valid = ensure_valid_image(img)
+    if valid is None:
         return None
 
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_rgb = cv2.cvtColor(valid, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(img_rgb, (224, 224), interpolation=cv2.INTER_AREA)
     batch = np.expand_dims(resized.astype(np.float32), axis=0)
     return _mobilenet_preprocess(batch)

@@ -1,0 +1,7 @@
+# Development and CI tools, pinned so a new release can't break CI unannounced.
+#   pip install -r requirements.txt -r requirements-dev.txt
+# CI installs only these plus numpy/opencv: the suite stubs TensorFlow/Keras
+# (tests/conftest.py) and the Qt UI is checked separately.
+pytest==9.1.1
+ruff==0.15.20
+mypy==2.4.0

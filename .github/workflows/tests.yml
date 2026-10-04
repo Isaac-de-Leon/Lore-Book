@@ -15,9 +15,10 @@ jobs:
           python-version: "3.11"
 
       # The suite stubs TensorFlow/Keras (tests/conftest.py) and sklearn is
-      # optional in lorebook.core.matching, so only the light deps are needed.
+      # optional in lorebook.core.matching, so only the light deps are needed:
+      # pinned dev tools + numpy/opencv at the versions requirements.txt locks.
       - name: Install test dependencies
-        run: pip install pytest numpy opencv-python-headless ruff mypy
+        run: pip install -r requirements-dev.txt numpy==2.0.2 opencv-python-headless==4.11.0.86
 
       # The Qt UI can't run headless in CI, so the linter is the only
       # automated check over lorebook/ui/.

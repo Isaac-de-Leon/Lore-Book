@@ -22,6 +22,8 @@ Requires Python 3.11+ and a webcam (only at runtime).
 pip install -r requirements.txt
 ```
 
+For development (tests, lint, type check): `pip install -r requirements-dev.txt`.
+
 Get reference card images into `Card_Images/<Game>/`, named `<SetCode>-<CardCode>.<ext>` (e.g. `001-042.webp`) — for Lorcana they can be downloaded automatically:
 
 ```bash

@@ -67,7 +67,8 @@ Lore-Book/
 ├── mobilenetv2_features.tflite # tflite model (gitignored; generate via scripts/)
 ├── ui_settings.json       # Persisted UI preferences (gitignored — per-user state)
 ├── riot.txt               # Riot Games API domain-verification token (leave in place)
-├── requirements.txt
+├── requirements.txt       # Pinned desktop runtime lock (direct deps first, then transitive)
+├── requirements-dev.txt   # Pinned pytest / ruff / mypy (also what CI installs)
 └── tests/                 # No camera / GPU / TF needed (stubbed in conftest.py)
     ├── conftest.py
     ├── test_photo_matching.py
@@ -125,7 +126,8 @@ Lore-Book/
 
 ### Install dependencies
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt                 # run the app
+pip install -r requirements-dev.txt             # + tests, lint, type check
 ```
 
 > **Note:** `tensorflow_intel` in `requirements.txt` carries a `sys_platform == "win32"` marker, so it installs only on Windows — no manual editing needed on Linux/macOS.
@@ -169,7 +171,7 @@ once on a desktop with `python scripts/convert_to_tflite.py`, copy it over, and 
 
 ## Running Tests
 
-Tests live in `tests/` (shared TF/Keras stubbing in `tests/conftest.py`). They cover the pure utility functions, the matching index, and the sorter rules/pipeline with mock hardware, and **do not** require a camera, a GPU, or pre-downloaded model weights (no TF model is loaded).
+Tests live in `tests/` (shared TF/Keras stubbing in `tests/conftest.py`). CI also runs `ruff check .` and `mypy` (config in `pyproject.toml`) — run both before pushing. They cover the pure utility functions, the matching index, and the sorter rules/pipeline with mock hardware, and **do not** require a camera, a GPU, or pre-downloaded model weights (no TF model is loaded).
 
 ```bash
 python -m pytest tests/ -v
