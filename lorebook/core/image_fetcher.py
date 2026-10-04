@@ -236,8 +236,12 @@ def _download(url: str, retries: int = 3, backoff: float = 1.5) -> bytes:
             req = urllib.request.Request(url, headers={"User-Agent": _UA})
             with urllib.request.urlopen(req, timeout=60) as resp:
                 return resp.read()
-        except (urllib.error.URLError, TimeoutError) as e:
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             last = e
+            # A 4xx (missing image, forbidden) won't change on retry; only
+            # timeouts, throttling and server/connection errors are retried.
+            if isinstance(e, urllib.error.HTTPError) and 400 <= e.code < 500 and e.code not in (408, 429):
+                raise
             if attempt < retries - 1:
                 time.sleep(backoff * (attempt + 1))
     raise last

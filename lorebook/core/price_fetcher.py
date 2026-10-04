@@ -16,6 +16,7 @@
 import json
 import logging
 import os
+import tempfile
 import urllib.request
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -110,10 +111,20 @@ def _now_iso() -> str:
 def _write_json_atomic(path: str, payload: dict) -> None:
     # The GUI's main thread may read these files while the build worker
     # writes them — write-then-replace so readers never see a torn file.
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=1, sort_keys=True)
-    os.replace(tmp, path)
+    # A unique temp name per write: concurrent writers (GUI refresh + CLI)
+    # can't clobber each other's temp file, and a failure leaves none behind.
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=1, sort_keys=True)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     clear_price_cache()
 
 

@@ -27,6 +27,7 @@ def _unit(idx: int) -> np.ndarray:
 FEATURE_DB = {
     "001-001.webp": _unit(0),
     "008-002.webp": _unit(1),
+    "013-218.webp": _unit(2),   # Lorcana Enchanted: foil-only rarity
 }
 
 
@@ -36,6 +37,10 @@ class ArrayCameraSource(CameraSource):
     def __init__(self, frames):
         self._frames = list(frames)
         self._i = 0
+        self.flushes = 0
+
+    def flush(self):
+        self.flushes += 1
 
     def read(self):
         if self._i >= len(self._frames):
@@ -135,6 +140,14 @@ def test_foil_and_broad_rules(monkeypatch):
         outcomes = _make_pipeline(camera, extractor, MockTransport(), rules=rules).run()
         assert [(o.bin, o.matched, o.is_foil) for o in outcomes][0] == ("foils", True, True)
         assert (outcomes[1].bin, outcomes[1].matched) == ("reject", False)
+        assert camera.flushes == 2  # stale frames dropped after every advance
+
+    # A foil-only card routes as foil even when detection says it isn't.
+    monkeypatch.setattr("lorebook.sorter.pipeline.is_probably_foil", lambda *a, **k: False)
+    rules = SortRules(rules=[Rule(bin="foils", foil=True)], reject_bin="normal")
+    outcomes = _make_pipeline(ArrayCameraSource(_frames(2)), SequenceExtractor([_unit(2), _unit(0)]),
+                              MockTransport(), rules=rules).run()
+    assert [(o.bin, o.is_foil) for o in outcomes] == [("foils", True), ("normal", False)]
 
 
 def test_csv_writes(tmp_path, monkeypatch):

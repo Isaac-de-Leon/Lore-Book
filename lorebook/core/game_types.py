@@ -120,15 +120,23 @@ def is_foil_only_card(set_code: str, card_code: str, game_type: "GameType") -> b
 
 
 def get_game_type(filepath: str) -> "GameType":
-    """Determine game type based on image file location."""
+    """
+    Determine game type from an image's game folder: the folder right after
+    Card_Images/ in the path, else the file's own parent folder. Ancestors
+    above that are ignored, so a checkout living under e.g. ~/Riftbound/
+    can't make every Lorcana card look like Riftbound.
+    """
     try:
-        abs_path = str(Path(filepath).resolve())
-        path_parts = [p.lower() for p in Path(abs_path).parts]
-        if "riftbound" in path_parts:
-            return GameType.RIFTBOUND
-        elif "lorcana" in path_parts:
-            return GameType.LORCANA
-        return GameType.UNKNOWN
+        parts = list(Path(filepath).parts)
+        lowered = [p.lower() for p in parts]
+        base = BASE_DATABASE_PATH.lower()
+        if base in lowered and lowered.index(base) + 1 < len(parts) - 1:
+            folder = parts[lowered.index(base) + 1]
+        elif len(parts) >= 2:
+            folder = parts[-2]
+        else:
+            return GameType.UNKNOWN
+        return game_type_from_name(folder)
     except Exception as e:
         logging.error(f"Error determining game type for {filepath}: {e}")
         return GameType.UNKNOWN

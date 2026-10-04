@@ -19,6 +19,7 @@ import numpy as np
 from lorebook.core.card_names import name_for
 from lorebook.core.card_prices import format_price, price_for
 from lorebook.core.csv_manager import split_filename, update_cardlist_batch
+from lorebook.core.game_types import game_type_from_name, is_foil_only_card
 from lorebook.core.image_utils import MotionGate, crop_to_card, is_probably_foil, motion_sample
 from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import CameraSource
@@ -149,6 +150,9 @@ class SortPipeline:
             filename, confidence = matches[0]
             set_code, card_code = split_filename(filename)
             matched = True
+            # Foil-only rarities (e.g. Lorcana Enchanted) have no normal
+            # printing: route them as foil, matching what the CSV records.
+            is_foil = is_foil or is_foil_only_card(set_code, card_code, game_type_from_name(self.game))
             bin_id = decide_bin(
                 set_code=set_code,
                 card_code=card_code,
@@ -165,6 +169,9 @@ class SortPipeline:
 
         self.transport.route_to_bin(bin_id)
         self.transport.advance()
+        # Frames buffered while the card was moving show the previous card;
+        # drop them so the next read sees the newly placed one.
+        self.camera.flush()
 
         if matched and not self.dry_run:
             self._pending[(filename, is_foil)] += 1

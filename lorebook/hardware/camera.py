@@ -128,6 +128,10 @@ class CameraSource(ABC):
     def read(self) -> Optional[np.ndarray]:
         """Return the next BGR frame, or None when the feed is exhausted/failed."""
 
+    def flush(self) -> None:
+        """Discard frames buffered before now (called after the card moves).
+        No-op by default — replayed sources have no stale buffer."""
+
     def release(self) -> None:
         """Release any underlying resources. Safe to call multiple times."""
 
@@ -162,6 +166,18 @@ class OpenCVCameraSource(CameraSource):
             self.camera_index, failures,
         )
         return None
+
+    # Many backends ignore CAP_PROP_BUFFERSIZE=1 and queue a few frames.
+    _FLUSH_FRAMES = 4
+
+    def flush(self) -> None:
+        if self._cap is None:
+            return
+        for _ in range(self._FLUSH_FRAMES):
+            try:
+                self._cap.grab()
+            except Exception:
+                break
 
     def release(self) -> None:
         if self._cap is not None:

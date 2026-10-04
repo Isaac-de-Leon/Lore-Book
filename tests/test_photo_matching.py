@@ -4,6 +4,7 @@
 
 import csv
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -54,6 +55,9 @@ def test_game_type_and_file_naming(tmp_path):
         (folder / "001-001.webp").touch()
         assert get_game_type(str(folder / "001-001.webp")) == expected
     assert get_game_type("") == GameType.UNKNOWN
+    # Only the game folder counts — not a "Riftbound" folder the repo lives in.
+    assert get_game_type(os.path.join("Riftbound", "repo", "Card_Images", "Lorcana", "001-001.webp")) \
+        == GameType.LORCANA
 
     assert game_type_from_name("  LORCANA  ") == GameType.LORCANA
     assert game_type_from_name("riftbound") == GameType.RIFTBOUND
@@ -212,7 +216,6 @@ def test_get_extractor():
         get_extractor("onnx")
 
     # Concurrent first use (GUI scan + DB-build worker) builds the model once.
-    import sys
     import threading
     import time
     import unittest.mock
@@ -239,6 +242,18 @@ def test_get_extractor():
     finally:
         mobilenet.side_effect = None
         features._base_model, features._feat_model, features._act_model = saved
+
+    # Importing features must not install process-wide warning filters or
+    # override a TF log level the user already set.
+    import subprocess
+    probe = ("import os, warnings; os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'; "
+             "import lorebook.core.features; "
+             "assert not any(a == 'ignore' and c is UserWarning and m is None and mod is None "
+             "for a, m, c, mod, _ in warnings.filters), 'blanket UserWarning filter'; "
+             "assert os.environ['TF_CPP_MIN_LOG_LEVEL'] == '0', 'log level overridden'")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    result = subprocess.run([sys.executable, "-c", probe], cwd=root, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
     _check_tflite_input_dtype(np.float32, "model.tflite")  # no raise
     for dtype in (np.int8, np.uint8):

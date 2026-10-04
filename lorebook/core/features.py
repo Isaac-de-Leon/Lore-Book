@@ -11,7 +11,7 @@
 
 import os
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # respect a user-set level
 
 import logging
 import threading
@@ -20,8 +20,6 @@ from typing import List, Optional, Sequence, Union
 
 import cv2
 import numpy as np
-
-warnings.filterwarnings("ignore", category=UserWarning)
 
 from lorebook.core.image_utils import ensure_valid_image
 from lorebook.core.matching import _l2_normalize
@@ -75,9 +73,13 @@ def _get_models():
     with _model_lock:
         if _feat_model is not None and _act_model is not None:
             return _feat_model, _act_model  # another thread finished loading first
-        import tensorflow as tf
-        from keras.applications import MobileNetV2
-        from keras.models import Model
+        # Silence TF/Keras import-time UserWarnings here only — never as a
+        # process-wide filter at module import.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=UserWarning)
+            import tensorflow as tf
+            from keras.applications import MobileNetV2
+            from keras.models import Model
 
         logging.getLogger("tensorflow").setLevel(logging.ERROR)
         tf.get_logger().setLevel("ERROR")

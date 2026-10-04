@@ -10,6 +10,7 @@ from lorebook.core.image_fetcher import (
     RIFTBOUND_FALLBACK_URL,
     RIFTBOUND_RIOT_URL,
     FetchStats,
+    _download,
     _fetch_riftbound,
     _norm,
     _pad,
@@ -268,3 +269,21 @@ def test_download_new_images(tmp_path, monkeypatch):
     stats = download_new_images("Riftbound", out_dir=str(out), delay=0)
     assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
     assert sorted(p.name for p in out.iterdir()) == ["OGN-001.webp", "OGN-23c.webp"]
+
+    # A 404 fails at once (no back-off); a 503 is retried.
+    import urllib.error
+
+    sleeps, calls = [], []
+    monkeypatch.setattr(image_fetcher.time, "sleep", sleeps.append)
+    for code, expected_calls in ((404, 1), (503, 3)):
+        calls.clear()
+
+        def fail(req, timeout=None, code=code):
+            calls.append(code)
+            raise urllib.error.HTTPError("http://img/x.jpg", code, "err", {}, None)
+
+        monkeypatch.setattr(image_fetcher.urllib.request, "urlopen", fail)
+        with pytest.raises(urllib.error.HTTPError):
+            _download("http://img/x.jpg")
+        assert len(calls) == expected_calls
+    assert len(sleeps) == 2  # only the 503 backed off

@@ -183,6 +183,13 @@ def test_downloads(tmp_path, monkeypatch):
         download_currency_rates()
     assert rate_for("CAD") == 1.37                      # existing file kept
 
+    # A failed write leaves the old file and no temp file behind.
+    before = sorted(os.listdir(tmp_path))
+    with pytest.raises(TypeError):
+        price_fetcher._write_json_atomic(RATES_FILE, {"bad": object()})
+    assert sorted(os.listdir(tmp_path)) == before
+    assert rate_for("CAD") == 1.37
+
 
 def _load_cli_module():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
