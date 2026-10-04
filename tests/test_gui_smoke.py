@@ -17,7 +17,6 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 def test_settings_and_main_window(tmp_path, monkeypatch):
     import lorebook.ui.main_window as mw
-    from lorebook.ui.settings_window import SettingsWindow
 
     app = QApplication.instance() or QApplication([])
     monkeypatch.chdir(tmp_path)
@@ -33,17 +32,17 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
     assert window.get_active_game() == "Lorcana"
 
     # Apply without changes keeps an "all sets" game selected.
-    SettingsWindow(window).apply_settings()
-    assert window.selected_games["lorcana"] and window.selected_sets["lorcana"] == []
+    window._make_settings_dialog().apply_settings()
+    assert window.settings.selected_games["lorcana"] and window.settings.selected_sets["lorcana"] == []
 
     # A new game folder is selectable, keeps its case, and replaces the old one.
-    dialog = SettingsWindow(window)
+    dialog = window._make_settings_dialog()
     roots = {dialog.set_tree.topLevelItem(i).text(0): dialog.set_tree.topLevelItem(i)
              for i in range(dialog.set_tree.topLevelItemCount())}
     roots["MTG"].setCheckState(0, Qt.Checked)
     dialog.apply_settings()
     assert window.get_active_game() == "MTG"
-    assert not window.selected_games["lorcana"]
+    assert not window.settings.selected_games["lorcana"]
 
     window.close()
     assert window._camera_state == "idle"

@@ -2,6 +2,8 @@
 
 from string import Template
 
+from lorebook.core.settings import DEFAULT_THEME, THEME_NAMES
+
 # Each theme is a flat token → color map. build_stylesheet() substitutes them
 # into the QSS template below; widgets that need theme colors in Python code
 # (e.g. status text) read them via theme_tokens().
@@ -74,7 +76,8 @@ THEMES = {
     },
 }
 
-DEFAULT_THEME = "dark"
+# Theme names/default are owned by the settings model; the palettes must match.
+assert set(THEMES) == set(THEME_NAMES), "styles.THEMES and settings.THEME_NAMES diverged"
 
 
 def theme_tokens(theme: str = DEFAULT_THEME) -> dict:

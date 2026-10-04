@@ -3,14 +3,12 @@
 import contextlib
 import faulthandler
 import gc
-import json
 import logging
 import logging.handlers
 import os
 import sys
 import threading
 import time
-from typing import Any
 
 import cv2
 import numpy as np
@@ -41,7 +39,6 @@ from lorebook.core.card_database import (
 from lorebook.core.card_names import name_for
 from lorebook.core.card_prices import (
     RATES_FILE,
-    SUPPORTED_CURRENCIES,
     clear_price_cache,
     format_price,
     price_for,
@@ -50,14 +47,12 @@ from lorebook.core.card_prices import (
 )
 from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.features import extract_features, get_extractor, visualize_activation_overlay
-from lorebook.core.fileio import atomic_write_json
 from lorebook.core.game_types import (
     BASE_DATABASE_PATH,
     csv_for_game,
     game_folders,
     game_type_from_name,
     is_foil_only_card,
-    resolve_game_folder,
 )
 from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import (
@@ -70,6 +65,7 @@ from lorebook.core.image_utils import (
 from lorebook.core.matching import MatchIndex
 from lorebook.core.paths import data_path
 from lorebook.core.price_fetcher import download_card_prices, download_currency_rates
+from lorebook.core.settings import AppSettings
 from lorebook.hardware.camera import open_capture
 from lorebook.ui.collection_view import CollectionView
 from lorebook.ui.icons import get_icon
@@ -79,7 +75,6 @@ from lorebook.ui.styles import DEFAULT_THEME, THEMES, build_stylesheet, theme_to
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_FILE = data_path("ui_settings.json")
 
 # Held at module level so the faulthandler target file is never GC-closed.
 _crash_log_file = None
@@ -196,30 +191,16 @@ class MainWindow(QWidget):
         QMessageBox.critical(self, title, message)
 
     def set_status(self, message: str, is_error: bool = False, timeout_ms: int = 3500) -> None:
-        tokens = theme_tokens(self.theme)
+        tokens = theme_tokens(self.settings.theme)
         color = tokens["danger"] if is_error else tokens["success"]
         self.csv_status.setStyleSheet(f"color: {color}; padding-left: 8px;")
         self.csv_status.setText(message)
         if timeout_ms > 0:
             QTimer.singleShot(timeout_ms, lambda: self.csv_status.setText(""))
 
-    def _active_game_key(self) -> str | None:
-        """Settings key (lowercased folder name) of the selected game, or None."""
-        for key, selected in self.selected_games.items():
-            if selected:
-                return key
-        return None
-
     def get_active_game(self) -> str | None:
-        """Return the Card_Images folder name of the selected game, or None.
-
-        Resolved against the real folder so names like "MTG" keep their case
-        (falls back to .capitalize() only when the folder is missing).
-        """
-        key = self._active_game_key()
-        if key is None:
-            return None
-        return resolve_game_folder(key) or key.capitalize()
+        """Card_Images folder name of the selected game (real case), or None."""
+        return self.settings.active_game()
 
     def load_game_database(self, game_name: str) -> bool:
         """
@@ -246,17 +227,7 @@ class MainWindow(QWidget):
         self.feature_db: dict[str, np.ndarray] = load_cache()
         self._match_index = MatchIndex(self.feature_db)  # vectorized matcher over feature_db
         self._loaded_game: str | None = None  # game whose feature_db is in memory
-        self.selected_games: dict[str, bool] = {"lorcana": False, "riftbound": False}
-        self.selected_sets: dict[str, list[str]] = {"lorcana": [], "riftbound": []}
-        self.keep_foil_checked = False
-        self.confidence_threshold = 0.90
-        self.foil_threshold = 0.08
-        self.debug_mode = False
-        self.camera_index = 0
-        self.rotate_display = False
-        self.crop_to_focus = True
-        self.auto_scan = False
-        self.theme = DEFAULT_THEME
+        self.settings = AppSettings.load()
         # min_std suppresses triggers on an empty (near-uniform) focus box
         self._motion_gate = card_motion_gate()
 
@@ -287,8 +258,6 @@ class MainWindow(QWidget):
         self._scan_token = 0
         self._scan_busy = False
         self._matches_game: str | None = None
-
-        self.load_settings()
 
         # ── Widgets ──────────────────────────────────────────────────────────
 
@@ -390,7 +359,7 @@ class MainWindow(QWidget):
 
         # Foil / count / add / status
         self.foil_check = QCheckBox("Foil")
-        self.foil_check.setChecked(self.keep_foil_checked)
+        self.foil_check.setChecked(self.settings.keep_foil_checked)
 
         self.count_edit = QLineEdit("1")
         self.count_edit.setFixedWidth(48)
@@ -540,7 +509,7 @@ class MainWindow(QWidget):
             widget.setFocusPolicy(Qt.NoFocus)
         self.count_edit.setFocusPolicy(Qt.StrongFocus)
 
-        self.apply_theme(self.theme)  # stylesheet + icon tints (also scales chrome)
+        self.apply_theme(self.settings.theme)  # stylesheet + icon tints (also scales chrome)
         # Deferred until the event loop runs so the main window paints before
         # the progress dialog appears — showing it here leaves both windows
         # as unpainted white rectangles until the first paint event.
@@ -557,14 +526,14 @@ class MainWindow(QWidget):
         Child dialogs (Settings, build progress) inherit the stylesheet
         automatically, so re-setting it here re-themes them too.
         """
-        self.theme = theme if theme in THEMES else DEFAULT_THEME
-        self.setStyleSheet(build_stylesheet(self.theme))
+        self.settings.theme = theme if theme in THEMES else DEFAULT_THEME
+        self.setStyleSheet(build_stylesheet(self.settings.theme))
         self._apply_icons()
         self._apply_scale()  # re-applies the scan FAB's inline geometry QSS
 
     def _apply_icons(self) -> None:
         """(Re)tint every icon for the current theme."""
-        tokens = theme_tokens(self.theme)
+        tokens = theme_tokens(self.settings.theme)
         text, muted, accent = tokens["text"], tokens["muted"], tokens["accent"]
 
         self.logo_label.setPixmap(get_icon("book", accent).pixmap(26, 26))
@@ -582,98 +551,9 @@ class MainWindow(QWidget):
 
     # ------------------------------------------------------------------ settings
 
-    def load_settings(self) -> None:
-        """Load settings from SETTINGS_FILE; fall back to defaults on any error."""
-        defaults: dict[str, Any] = {
-            "camera_index": 0,
-            "keep_foil_checked": False,
-            "confidence_threshold": 0.90,
-            "foil_threshold": 0.08,
-            "debug_mode": False,
-            "selected_games": {"lorcana": True, "riftbound": False},
-            "selected_sets": {"lorcana": [], "riftbound": []},
-            "rotate_display": False,
-            "crop_to_focus": True,
-            "auto_scan": False,
-            "currency": "USD",
-            "theme": DEFAULT_THEME,
-        }
-
-        def apply_defaults():
-            for k, v in defaults.items():
-                setattr(self, k, v)
-
-        if not os.path.exists(SETTINGS_FILE):
-            self.logger.info("No settings file found — using defaults")
-            apply_defaults()
-            return
-
-        try:
-            # utf-8-sig tolerates a BOM (editors/PowerShell often add one)
-            with open(SETTINGS_FILE, encoding="utf-8-sig") as f:
-                settings = json.load(f)
-            if not isinstance(settings, dict):
-                raise ValueError("settings file is not a JSON object")
-
-            for key, default in defaults.items():
-                try:
-                    value = settings.get(key, default)
-                    if isinstance(default, bool) and not isinstance(value, bool):
-                        value = default
-                    elif isinstance(default, (int, float)) and not isinstance(value, (int, float)):
-                        value = default
-                    elif isinstance(default, dict) and not isinstance(value, dict):
-                        value = default
-                    if key in ("confidence_threshold", "foil_threshold"):
-                        value = max(0.0, min(1.0, float(value)))
-                    elif key == "camera_index":
-                        value = max(0, int(value))
-                    elif key == "currency":
-                        value = str(value).upper()
-                        if value not in SUPPORTED_CURRENCIES:
-                            value = default
-                    elif key == "theme":
-                        value = str(value).lower()
-                        if value not in THEMES:
-                            value = default
-                    setattr(self, key, value)
-                except (TypeError, ValueError) as e:  # uncoercible value: use the default
-                    self.logger.error("Error loading setting %s: %s", key, e)
-                    setattr(self, key, default)
-
-            # Older settings files could select several games; scanning only
-            # ever used the first, so keep just that one.
-            first = next((k for k, v in self.selected_games.items() if v), None)
-            self.selected_games = {k: (k == first) for k in self.selected_games}
-
-            self.logger.info("Settings loaded successfully")
-
-        except (OSError, ValueError) as e:  # unreadable, bad JSON, or not an object
-            self.logger.error("Error loading settings file: %s", e)
-            apply_defaults()
-
     def save_settings(self) -> None:
-        """Persist current settings to SETTINGS_FILE."""
-        s = {
-            "camera_index": self.camera_index,
-            "keep_foil_checked": self.keep_foil_checked,
-            "confidence_threshold": float(self.confidence_threshold),
-            "foil_threshold": float(self.foil_threshold),
-            "debug_mode": self.debug_mode,
-            "selected_games": getattr(self, "selected_games", {}),
-            "selected_sets": getattr(self, "selected_sets", {}),
-            "rotate_display": self.rotate_display,
-            "crop_to_focus": self.crop_to_focus,
-            "auto_scan": self.auto_scan,
-            "currency": getattr(self, "currency", "USD"),
-            "theme": self.theme,
-        }
-        try:
-            # Atomic: a crash mid-save can't leave a truncated settings file
-            # (which would silently reset every preference to defaults).
-            atomic_write_json(SETTINGS_FILE, s, indent=2)
-        except OSError as e:
-            self.logger.error("Error saving settings: %s", e)
+        """Persist the current settings (atomic; see AppSettings.save)."""
+        self.settings.save()
 
     def closeEvent(self, event):
         self.save_settings()
@@ -904,7 +784,7 @@ class MainWindow(QWidget):
     def _set_camera_state(self, state: str) -> None:
         """Sync the camera toggle's text/icon/enabled + [cam=...] QSS state."""
         self._camera_state = state
-        tokens = theme_tokens(self.theme)
+        tokens = theme_tokens(self.settings.theme)
         if state == "starting":
             self.camera_btn.setText("Starting…")
             self.camera_btn.setIcon(get_icon("camera", tokens["muted"]))
@@ -943,7 +823,7 @@ class MainWindow(QWidget):
 
         threading.Thread(
             target=self._open_camera_worker,
-            args=(token, self.camera_index),
+            args=(token, self.settings.camera_index),
             daemon=True,
         ).start()
 
@@ -1027,11 +907,11 @@ class MainWindow(QWidget):
             self.read_fail_count = 0
             self.last_frame_time = time.monotonic()
 
-            if self.rotate_display:
+            if self.settings.rotate_display:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
             self.last_frame = frame.copy()
 
-            if self.auto_scan:
+            if self.settings.auto_scan:
                 if self._motion_gate.update(motion_sample(frame)):
                     self.capture_and_match()
 
@@ -1050,7 +930,7 @@ class MainWindow(QWidget):
             ]:
                 cv2.line(overlay, (sx, sy), (ex, ey), color, thickness)
 
-            preview = visualize_activation_overlay(overlay, blocking=False) if self.debug_mode else overlay
+            preview = visualize_activation_overlay(overlay, blocking=False) if self.settings.debug_mode else overlay
             self._show_on_label(self.preview_label, preview, fill=True)
 
         # Boundary: a Qt timer callback — an exception here would escape to
@@ -1073,7 +953,7 @@ class MainWindow(QWidget):
 
         img_bgr = self.last_frame.copy()
 
-        if self.crop_to_focus:
+        if self.settings.crop_to_focus:
             img_bgr = crop_to_card(img_bgr)
 
         # Release any foil-only lock from the previous match before the fresh
@@ -1081,7 +961,7 @@ class MainWindow(QWidget):
         if self._foil_locked:
             self._foil_locked = False
             self.foil_check.setEnabled(True)
-        self.foil_check.setChecked(self.keep_foil_checked or is_probably_foil(img_bgr, threshold=self.foil_threshold))
+        self.foil_check.setChecked(self.settings.keep_foil_checked or is_probably_foil(img_bgr, threshold=self.settings.foil_threshold))
 
         active_game = self.get_active_game()
         if not active_game:
@@ -1103,7 +983,7 @@ class MainWindow(QWidget):
         self._set_scan_busy(True)
         threading.Thread(
             target=self._scan_worker,
-            args=(self._scan_token, img_bgr, self._match_index, self.confidence_threshold, active_game),
+            args=(self._scan_token, img_bgr, self._match_index, self.settings.confidence_threshold, active_game),
             daemon=True,
         ).start()
 
@@ -1206,7 +1086,7 @@ class MainWindow(QWidget):
         self._apply_foil_lock(set_code, card_code, active_game)
         price = price_for(set_code, card_code, active_game) if active_game else None
         self.match_price_label.setText(
-            format_price(price, self.currency, rate_for(self.currency))
+            format_price(price, self.settings.currency, rate_for(self.settings.currency))
         )
         self.match_pos_label.setText(f"{idx + 1} / {len(self.last_matches)}")
         self.match_label.setText(f"{score:.3f}  {fname}")
@@ -1253,7 +1133,7 @@ class MainWindow(QWidget):
         """Keep only matches in the selected sets of the game they were scanned for."""
         if not matches or not game:
             return matches or []
-        game_selected_sets = self.selected_sets.get(game.lower(), [])
+        game_selected_sets = self.settings.sets_for(game)
         filtered = []
         for fname, score in matches:
             set_code, _ = split_filename(os.path.basename(fname))
@@ -1261,16 +1141,30 @@ class MainWindow(QWidget):
                 filtered.append((fname, score))
         return filtered
 
+    def _make_settings_dialog(self) -> SettingsWindow:
+        dlg = SettingsWindow(self.settings, self)
+        dlg.applied.connect(self._apply_settings)
+        dlg.rebuild_requested.connect(self.start_db_build_in_background)
+        return dlg
+
     def open_settings(self) -> None:
-        dlg = SettingsWindow(self)
-        dlg.exec()
-        if self.last_matches and self.get_active_game() != self._matches_game:
+        self._make_settings_dialog().exec()
+
+    def _apply_settings(self, new: AppSettings) -> None:
+        """Adopt settings from the dialog: re-theme, load the game, persist."""
+        self.settings = new
+        self.apply_theme(new.theme)
+        game = new.active_game()
+        if game is not None:
+            self.load_game_database(game)
+        self.save_settings()
+        if self.last_matches and game != self._matches_game:
             self._clear_results()
             self.match_label.setText("Game changed — scan a card.")
         if self._foil_locked:
-            self._foil_before_lock = self.keep_foil_checked
+            self._foil_before_lock = new.keep_foil_checked
         else:
-            self.foil_check.setChecked(self.keep_foil_checked)
+            self.foil_check.setChecked(new.keep_foil_checked)
 
     def add_to_csv(self) -> None:
         """Write the current match to the game-appropriate CSV."""

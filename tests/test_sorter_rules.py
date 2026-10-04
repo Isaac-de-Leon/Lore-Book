@@ -21,7 +21,7 @@ def _decide(rules, *, set_code="001", card_code="042", game="Lorcana", is_foil=F
     )
 
 
-def test_decide_bin():
+def test_rules(tmp_path):
     assert SortRules().reject_bin == "reject"
     assert _decide(SortRules(rules=[], reject_bin="trash")) == "trash"
 
@@ -43,8 +43,7 @@ def test_decide_bin():
     assert _decide(foil_rules, is_foil=True) == "foils"
     assert _decide(foil_rules, is_foil=False) == "normal"
 
-
-def test_load_rules(tmp_path):
+    # --- load_rules
     p = tmp_path / "rules.json"
     p.write_text(json.dumps({
         "reject_bin": "trash",
