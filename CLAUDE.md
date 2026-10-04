@@ -14,7 +14,7 @@ Lore-Book is a desktop trading-card scanner application. It uses a webcam to pho
 Lore-Book/
 ├── UI.py                  # Entry point — creates app, shows MainWindow
 ├── PhotoMatching.py       # Backward-compat re-export shim + CLI (--build/--match/--sort)
-├── pyproject.toml         # Package metadata (pip install -e .; [sorter] extra for the Pi)
+├── pyproject.toml         # Package metadata (pip install -e .[gui] desktop; .[sorter] for the Pi)
 │
 ├── lorebook/              # Importable package
 │   ├── core/              # Game-agnostic logic (no Qt)
@@ -126,6 +126,10 @@ pip install -r requirements.txt
 
 > **Note:** `tensorflow_intel` in `requirements.txt` carries a `sys_platform == "win32"` marker, so it installs only on Windows — no manual editing needed on Linux/macOS.
 
+Installing as a package instead: the base install (`pip install -e .`) is only the
+lightweight core; add the `gui` extra for the desktop app (`pip install -e .[gui]`) or the
+`sorter` extra on the Pi (`pip install .[sorter]` — tflite-runtime, no TensorFlow or Qt).
+
 ### Build the feature database (first run)
 ```bash
 python PhotoMatching.py --game Lorcana --build
@@ -153,7 +157,7 @@ trigger as the GUI's auto-scan), so a card left under the camera is recorded onc
 than once per frame; folder replays treat every image as a card. Override with
 `--trigger motion|every-frame`.
 `python PhotoMatching.py --sort …` is an equivalent alias. On a Raspberry Pi, install
-`pip install .[sorter]` (tflite-runtime instead of full TensorFlow), generate the model
+`pip install .[sorter]` (tflite-runtime only — no TensorFlow or Qt), generate the model
 once on a desktop with `python scripts/convert_to_tflite.py`, copy it over, and run with
 `--backend tflite`.
 

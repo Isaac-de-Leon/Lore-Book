@@ -44,6 +44,16 @@ def _backend_candidates() -> List[tuple]:
     ]
 
 
+def _auto_exposure_value(backend_flag: int) -> float:
+    """
+    CAP_PROP_AUTO_EXPOSURE value meaning "auto" for a backend. The property
+    passes through to the driver, so the meaning differs: on V4L2 (Linux,
+    Raspberry Pi) 1 is MANUAL exposure and 3 is auto (aperture priority).
+    Other backends keep the value that has worked on Windows/macOS.
+    """
+    return 3 if backend_flag == cv2.CAP_V4L2 else 1
+
+
 def open_capture(camera_index: int = 0, warmup_frames: int = 30) -> cv2.VideoCapture:
     """
     Open a camera, trying platform-appropriate backends in order.
@@ -73,7 +83,7 @@ def open_capture(camera_index: int = 0, warmup_frames: int = 30) -> cv2.VideoCap
                 (cv2.CAP_PROP_FRAME_HEIGHT, 720),
                 (cv2.CAP_PROP_FPS, 30),
                 (cv2.CAP_PROP_AUTOFOCUS, 1),
-                (cv2.CAP_PROP_AUTO_EXPOSURE, 1),
+                (cv2.CAP_PROP_AUTO_EXPOSURE, _auto_exposure_value(backend_flag)),
             ]:
                 try:
                     cap.set(prop, value)

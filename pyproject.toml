@@ -8,14 +8,14 @@ version = "0.1.0"
 description = "Desktop trading-card scanner: webcam capture, MobileNetV2 matching, CSV export for Dreamborn.ink."
 readme = "README.md"
 requires-python = ">=3.11"
+# Base install is the shared, lightweight core (matching, CSV, hardware
+# abstraction). Pick an extra for the runtime:
+#   desktop GUI:  pip install -e .[gui]      (or: pip install -r requirements.txt)
+#   Pi sorter:    pip install .[sorter]      (tflite-runtime, no TensorFlow/Qt)
 dependencies = [
     "numpy",
     "opencv-python",
-    "scikit-learn",
-    "tensorflow",
-    "keras",
     "pillow",
-    "PySide6",
 ]
 
 [project.scripts]
@@ -24,8 +24,15 @@ lorebook-sort = "lorebook.sorter.__main__:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
-# Raspberry Pi sorter runtime: lightweight tflite inference instead of full
-# TensorFlow. Install with `pip install lorebook[sorter]` on the Pi.
+# Desktop GUI + keras feature backend (also builds the .tflite model).
+gui = [
+    "tensorflow",
+    "keras",
+    "scikit-learn",
+    "PySide6>=6.8,<6.9",  # NumPy-2-safe LTS line; see requirements.txt
+]
+# Raspberry Pi sorter runtime: lightweight tflite inference without
+# TensorFlow or Qt. Install with `pip install .[sorter]` on the Pi.
 # A live USB camera works through opencv-python today; `picamera2` would be
 # added here when a CSI ribbon camera backend lands.
 sorter = ["tflite-runtime"]

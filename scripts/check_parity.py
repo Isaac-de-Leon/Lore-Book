@@ -9,11 +9,16 @@ desktop after generating the .tflite model.
     python scripts/check_parity.py path/to/card1.jpg path/to/card2.webp
 """
 import argparse
+import os
 import sys
 
 import numpy as np
 
-from lorebook.core.features import get_extractor
+try:
+    from lorebook.core.features import get_extractor
+except ImportError:  # running from a checkout without `pip install -e .`
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lorebook.core.features import get_extractor
 
 MIN_COSINE = 0.99
 

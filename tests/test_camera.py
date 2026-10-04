@@ -15,11 +15,13 @@ class FakeCapture:
     def __init__(self, *args, **kwargs):
         self.reads = 0
         self.released = False
+        self.props = {}
 
     def isOpened(self):
         return self.opens
 
     def set(self, prop, value):
+        self.props[prop] = value
         return True
 
     def read(self):
@@ -41,6 +43,12 @@ def test_open_capture(monkeypatch):
     cap = open_capture(0, warmup_frames=5)
     assert cap.reads == 6 and not cap.released
     assert open_capture(0, warmup_frames=0).reads == 1
+
+    # "Auto exposure" means 3 on V4L2 (1 is manual there); other backends keep 1.
+    for system, expected in (("Linux", 3), ("Windows", 1)):
+        monkeypatch.setattr(camera_mod.platform, "system", lambda s=system: s)
+        props = open_capture(0, warmup_frames=0).props
+        assert props[camera_mod.cv2.CAP_PROP_AUTO_EXPOSURE] == expected
 
     monkeypatch.setattr(camera_mod.cv2, "VideoCapture", NeverOpensCapture)
     with pytest.raises(RuntimeError):
