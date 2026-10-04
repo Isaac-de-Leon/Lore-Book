@@ -27,7 +27,9 @@ Lore-Book/
 │   │   ├── card_prices.py     # Optional market-price lookup/format (card_prices_<Game>.json, currency_rates.json)
 │   │   ├── price_fetcher.py   # download_card_prices / download_currency_rates — Lorcast + Frankfurter
 │   │   ├── image_fetcher.py   # download_new_images — card art from LorcanaJSON / Riot API (Riftcodex fallback)
-│   │   └── csv_manager.py     # CSV read/write, update_cardlist(_batch), split_filename
+│   │   ├── csv_manager.py     # CSV read/write, update_cardlist(_batch), split_filename
+│   │   ├── fileio.py          # atomic_write(_bytes/_json) — every file write goes through it
+│   │   └── net.py             # fetch_json / fetch_bytes — shared User-Agent, timeouts, retry policy
 │   ├── hardware/          # Hardware abstraction (no Qt; mocks run on any desktop)
 │   │   ├── camera.py          # open_capture, CameraSource, OpenCVCameraSource, MockCameraSource
 │   │   └── transport.py       # Transport interface + MockTransport (gantry TBD)
@@ -92,6 +94,8 @@ Lore-Book/
 | `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
 | `lorebook/core/features.py` | `get_extractor(backend)` (keras/tflite), `extract_features`, `visualize_activation_overlay` |
 | `lorebook/core/card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
+| `lorebook/core/fileio.py` | `atomic_write`, `atomic_write_bytes`, `atomic_write_json` — temp file + `os.replace`, keeps the target's permissions. Use these for any new file write |
+| `lorebook/core/net.py` | `fetch_json`, `fetch_bytes` (retries transient failures; 4xx other than 408/429 is final), `USER_AGENT`. Use these for any new HTTP call |
 | `lorebook/core/csv_manager.py` | `update_cardlist`, `update_cardlist_batch`, `split_filename`, `get_available_sets`, `read_collection_rows` |
 | `lorebook/hardware/camera.py` | `open_capture` (shared with GUI), `CameraSource` + OpenCV/Mock implementations |
 | `lorebook/hardware/transport.py` | `Transport` interface, `MockTransport` (real gantry driver comes later) |

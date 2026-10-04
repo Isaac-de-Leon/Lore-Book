@@ -13,11 +13,7 @@
 # Games without an entry in GAMES are skipped silently (same contract as
 # image_fetcher): their scans simply show no price line.
 
-import json
 import logging
-import os
-import tempfile
-import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -27,19 +23,14 @@ from lorebook.core.card_prices import (
     clear_price_cache,
     prices_file_for,
 )
+from lorebook.core.fileio import atomic_write_json
+from lorebook.core.net import fetch_json as _fetch_json
 
 logger = logging.getLogger(__name__)
 
 LORCANA_URL = "https://api.lorcast.com/v0"
 RATES_URL = "https://api.frankfurter.dev/v1/latest?base=USD"
 
-_UA = "Lore-Book-price-fetcher/1.0 (+https://github.com/; personal collection tool)"
-
-
-def _fetch_json(url: str):
-    req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.load(resp)
 
 
 def _as_price(value) -> float | None:
@@ -115,18 +106,7 @@ def _write_json_atomic(path: str, payload: dict) -> None:
     # writes them — write-then-replace so readers never see a torn file.
     # A unique temp name per write: concurrent writers (GUI refresh + CLI)
     # can't clobber each other's temp file, and a failure leaves none behind.
-    directory = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=directory)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=1, sort_keys=True)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    atomic_write_json(path, payload, ensure_ascii=False, indent=1, sort_keys=True)
     clear_price_cache()
 
 

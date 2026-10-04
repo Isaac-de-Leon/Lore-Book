@@ -13,7 +13,7 @@ import sys
 
 from lorebook.core.card_database import load_cache, set_database_path
 from lorebook.core.features import get_extractor
-from lorebook.core.image_utils import MotionGate
+from lorebook.core.image_utils import card_motion_gate
 from lorebook.hardware.camera import CameraSource, MockCameraSource, OpenCVCameraSource
 from lorebook.hardware.transport import MockTransport
 from lorebook.sorter.pipeline import SortPipeline
@@ -105,7 +105,7 @@ def main(argv=None) -> int:
     # A live camera delivers the same card many times a second; without a
     # trigger each frame would be routed and recorded as another card.
     trigger = args.trigger or ("motion" if args.source == "camera" else "every-frame")
-    gate = MotionGate(min_std=12.0) if trigger == "motion" else None
+    gate = card_motion_gate() if trigger == "motion" else None
     if gate is not None:
         log.info("Waiting for cards: each one is processed once it settles in the focus box.")
 

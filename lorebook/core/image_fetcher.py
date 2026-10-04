@@ -18,17 +18,18 @@
 # personal-collection use only (Card_Images/ is gitignored); nothing is
 # redistributed.
 
-import json
 import logging
 import os
 import re
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from urllib.parse import urlsplit
+
+from lorebook.core.fileio import atomic_write_bytes
+from lorebook.core.net import fetch_bytes as _download
+from lorebook.core.net import fetch_json as _fetch_json
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,6 @@ LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
 RIFTBOUND_RIOT_URL = "https://americas.api.riotgames.com/riftbound/content/v1/contents?locale=en"
 RIFTBOUND_FALLBACK_URL = "https://api.riftcodex.com/api/cards"
 
-# A UA header — the Ravensburger image CDN can 403 an empty urllib agent.
-_UA = "Lore-Book-image-fetcher/1.0 (+https://github.com/; personal collection tool)"
 
 
 @dataclass
@@ -46,12 +45,6 @@ class FetchStats:
     downloaded: int = 0
     skipped: int = 0
     failed: int = 0
-
-
-def _fetch_json(url: str, headers: dict | None = None):
-    req = urllib.request.Request(url, headers={"User-Agent": _UA, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.load(resp)
 
 
 def _pad(part: str) -> str:
@@ -81,7 +74,7 @@ def _norm(part: str) -> str:
     return part if part else "0"
 
 
-def _is_promo_printing(card: dict) -> bool:
+def is_promo_printing(card: dict) -> bool:
     """
     True for promo printings, which share their home set's setCode/number with
     the main-set card in LorcanaJSON (e.g. Zeus "18/P3 · EN · 10" collides with
@@ -110,7 +103,7 @@ def lorcana_targets(data) -> Iterator[tuple[str, str, str]]:
         if not (set_code and number and url):
             continue
         key = (set_code, number)
-        promo = _is_promo_printing(card)
+        promo = is_promo_printing(card)
         if key not in best:
             best[key] = (promo, url)
             order.append(key)
@@ -245,26 +238,6 @@ GAMES = {
 }
 
 
-def _download(url: str, retries: int = 3, backoff: float = 1.5) -> bytes:
-    """Fetch image bytes with a couple of retries on transient failures."""
-    last: Exception | None = None
-    for attempt in range(max(1, retries)):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                return resp.read()
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-            last = e
-            # A 4xx (missing image, forbidden) won't change on retry; only
-            # timeouts, throttling and server/connection errors are retried.
-            if isinstance(e, urllib.error.HTTPError) and 400 <= e.code < 500 and e.code not in (408, 429):
-                raise
-            if attempt < retries - 1:
-                time.sleep(backoff * (attempt + 1))
-    assert last is not None  # the loop runs at least once and only falls through on error
-    raise last
-
-
 def _to_webp(raw: bytes, quality: int) -> bytes:
     """Re-encode source (JPG) bytes to WebP via OpenCV. Raises if cv2/webp is unavailable."""
     import cv2
@@ -281,25 +254,6 @@ def _to_webp(raw: bytes, quality: int) -> bytes:
 
 
 _PART_SUFFIX = ".part"
-
-
-def _write_atomic(dest: str, payload: bytes) -> None:
-    """
-    Write to <dest>.part, then rename into place. An interrupted write
-    (crash, app closed mid-build) leaves only a .part file — never a
-    truncated image under the real name, which later runs would skip forever.
-    """
-    part = dest + _PART_SUFFIX
-    try:
-        with open(part, "wb") as f:
-            f.write(payload)
-        os.replace(part, dest)
-    except BaseException:
-        try:
-            os.remove(part)
-        except OSError:
-            pass
-        raise
 
 
 def _remove_partial_downloads(folder: str) -> None:
@@ -400,7 +354,10 @@ def download_new_images(
         try:
             raw = _download(img_url)
             payload = _to_webp(raw, quality) if fmt == "webp" else raw
-            _write_atomic(dest, payload)
+            # Temp file "<name>.<random>.part", renamed into place when
+            # complete: a killed download never leaves a truncated image
+            # under the real name (which later runs would skip forever).
+            atomic_write_bytes(dest, payload, suffix=_PART_SUFFIX)
             stats.downloaded += 1
             report(f"  {fname}  ({len(payload) // 1024} KB)")
         except Exception as e:

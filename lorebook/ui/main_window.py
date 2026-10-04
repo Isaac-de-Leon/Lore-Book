@@ -48,6 +48,7 @@ from lorebook.core.card_prices import (
 )
 from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.features import extract_features, get_extractor, visualize_activation_overlay
+from lorebook.core.fileio import atomic_write_json
 from lorebook.core.game_types import (
     csv_for_game,
     game_folders,
@@ -57,7 +58,7 @@ from lorebook.core.game_types import (
 )
 from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import (
-    MotionGate,
+    card_motion_gate,
     crop_to_card,
     focus_rect,
     is_probably_foil,
@@ -256,7 +257,7 @@ class MainWindow(QWidget):
         self.auto_scan = False
         self.theme = DEFAULT_THEME
         # min_std suppresses triggers on an empty (near-uniform) focus box
-        self._motion_gate = MotionGate(min_std=12.0)
+        self._motion_gate = card_motion_gate()
 
         self.cap: cv2.VideoCapture | None = None
         # Bumped on every start/stop; camera-open worker results carrying an
@@ -665,9 +666,10 @@ class MainWindow(QWidget):
             "theme": self.theme,
         }
         try:
-            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump(s, f, indent=2)
-        except Exception as e:
+            # Atomic: a crash mid-save can't leave a truncated settings file
+            # (which would silently reset every preference to defaults).
+            atomic_write_json(SETTINGS_FILE, s, indent=2)
+        except OSError as e:
             self.logger.error("Error saving settings: %s", e)
 
     def closeEvent(self, event):

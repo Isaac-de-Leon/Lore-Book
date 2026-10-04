@@ -14,16 +14,19 @@
 
 import argparse
 import json
+import os
 import sys
-import urllib.request
+
+try:
+    from lorebook.core.image_fetcher import is_promo_printing
+    from lorebook.core.net import fetch_json as _fetch_json
+except ImportError:  # running from a checkout without `pip install -e .`
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lorebook.core.image_fetcher import is_promo_printing
+    from lorebook.core.net import fetch_json as _fetch_json
 
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
 RIFTBOUND_URL = "https://riftscribe.gg/api/cards"
-
-
-def _fetch_json(url: str):
-    with urllib.request.urlopen(url, timeout=60) as resp:
-        return json.load(resp)
 
 
 def _fetch_riftbound(url: str):
@@ -51,19 +54,6 @@ def _fetch_riftbound(url: str):
     return cards
 
 
-def _is_promo_printing(card: dict) -> bool:
-    """
-    True for promo printings, which share their home set's setCode/number with
-    the main-set card in LorcanaJSON (e.g. Zeus "18/P3 · EN · 10" collides with
-    Scrooge "18/204 · EN · 10"). The fullIdentifier denominator tells them
-    apart: main-set cards have a numeric one. Must match the image fetcher's
-    rule (lorebook/core/image_fetcher.py) so names describe the downloaded art.
-    """
-    ident = str(card.get("fullIdentifier", ""))
-    denom = ident.split("/", 1)[1].split()[0] if "/" in ident else ""
-    return bool(denom) and not denom.isdigit()
-
-
 def lorcana_names(data) -> dict:
     """
     Map LorcanaJSON allCards.json → {"<setCode>-<number>": fullName}.
@@ -79,7 +69,7 @@ def lorcana_names(data) -> dict:
         if not (set_code and number and name):
             continue
         key = f"{set_code}-{number}"
-        promo = _is_promo_printing(card)
+        promo = is_promo_printing(card)
         if key not in names or (is_promo[key] and not promo):
             names[key] = str(name)
             is_promo[key] = promo

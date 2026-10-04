@@ -3,9 +3,8 @@
 import csv
 import logging
 import os
-import stat
-import tempfile
 
+from lorebook.core.fileio import atomic_write
 from lorebook.core.game_types import (
     LORCANA_CSV,
     RIFTBOUND_CSV,
@@ -140,33 +139,14 @@ def _write_rows_4col(csv_path: str, rows: list[list[str]]) -> None:
     Writes to a temp file in the same directory and atomically replaces the
     target, so a crash mid-write can't destroy the existing collection file.
     """
-    directory = os.path.dirname(os.path.abspath(csv_path))
-    # mkstemp creates the file 0600; carry over the target's existing mode (or
-    # a normal umask-honoring mode for new files) so os.replace doesn't
-    # silently tighten the CSV's permissions.
-    try:
-        mode = stat.S_IMODE(os.stat(csv_path).st_mode)
-    except OSError:
-        umask = os.umask(0)
-        os.umask(umask)
-        mode = 0o666 & ~umask
-    fd, tmp_path = tempfile.mkstemp(prefix=os.path.basename(csv_path) + ".", suffix=".tmp", dir=directory)
-    try:
-        os.chmod(tmp_path, mode)
-        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
-            for r in rows:
-                writer.writerow([r[0], r[1], r[2], r[3]])
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, csv_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    def write(f) -> None:
+        writer = csv.writer(f)
+        writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
+        for r in rows:
+            writer.writerow([r[0], r[1], r[2], r[3]])
+
+    # fsync: the collection is the one file worth surviving a power cut.
+    atomic_write(csv_path, write, newline="", fsync=True)
 
 
 def _csv_for_game_type(game_type: GameType) -> str:

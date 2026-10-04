@@ -114,6 +114,15 @@ class MotionGate:
         return float(np.std(gray)) >= self.min_std
 
 
+def card_motion_gate() -> MotionGate:
+    """The MotionGate tuned for a card on the scanning mat (GUI auto-scan and
+    the sorter's live-camera trigger share it, so they behave the same).
+
+    min_std=12 suppresses triggers on an empty, near-uniform focus box.
+    """
+    return MotionGate(min_std=12.0)
+
+
 def ensure_valid_image(img_bgr: np.ndarray | None) -> np.ndarray | None:
     """Validate and normalize an input image to 3-channel BGR format."""
     if img_bgr is None or img_bgr.size == 0:

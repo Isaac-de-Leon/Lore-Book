@@ -5,7 +5,7 @@ import threading
 import numpy as np
 import pytest
 
-from lorebook.core import image_fetcher
+from lorebook.core import image_fetcher, net
 from lorebook.core.image_fetcher import (
     RIFTBOUND_FALLBACK_URL,
     RIFTBOUND_RIOT_URL,
@@ -283,7 +283,7 @@ def test_download_new_images(tmp_path, monkeypatch):
     import urllib.error
 
     sleeps, calls = [], []
-    monkeypatch.setattr(image_fetcher.time, "sleep", sleeps.append)
+    monkeypatch.setattr(net.time, "sleep", sleeps.append)
     for code, expected_calls in ((404, 1), (503, 3)):
         calls.clear()
 
@@ -291,7 +291,7 @@ def test_download_new_images(tmp_path, monkeypatch):
             calls.append(code)
             raise urllib.error.HTTPError("http://img/x.jpg", code, "err", {}, None)
 
-        monkeypatch.setattr(image_fetcher.urllib.request, "urlopen", fail)
+        monkeypatch.setattr(net.urllib.request, "urlopen", fail)
         with pytest.raises(urllib.error.HTTPError):
             _download("http://img/x.jpg")
         assert len(calls) == expected_calls
