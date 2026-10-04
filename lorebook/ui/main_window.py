@@ -31,10 +31,9 @@ from PySide6.QtWidgets import (
 
 from lorebook import __version__
 from lorebook.core.card_database import (
+    GameDatabase,
     build_feature_database,
     list_image_files,
-    load_cache,
-    set_database_path,
 )
 from lorebook.core.card_names import name_for
 from lorebook.core.card_prices import (
@@ -157,7 +156,7 @@ class MainWindow(QWidget):
         main thread)
       - reading the ``cancel_event`` / ``token`` passed in as worker arguments
     Everything else — widgets (including the progress dialog),
-    feature_db/_match_index, settings, the set_database_path global — is
+    game_db, settings — is
     main-thread-only. Camera-open results carry a generation token checked
     against ``_cam_open_token`` so a Stop/restart discards stale opens;
     scan results likewise carry ``_scan_token``.
@@ -203,18 +202,8 @@ class MainWindow(QWidget):
         return self.settings.active_game()
 
     def load_game_database(self, game_name: str) -> bool:
-        """
-        Make game_name the active database: load its feature cache and rebuild
-        the match index. The single place that owns the feature_db/_match_index/
-        _loaded_game invariant — every game switch must go through here.
-        Returns True if the loaded cache has entries.
-        """
-        set_database_path(game_name)
-        self.feature_db = load_cache()
-        self._match_index = MatchIndex(self.feature_db)
-        self._loaded_game = game_name if self.feature_db else None
-        self.logger.info("Loaded %s entries for %s", len(self.feature_db), game_name)
-        return bool(self.feature_db)
+        """Make game_name the active database. True if its cache has entries."""
+        return self.game_db.load(game_name)
 
     # ------------------------------------------------------------------ init
 
@@ -224,9 +213,7 @@ class MainWindow(QWidget):
         self.resize(1000, 840)
 
         # State
-        self.feature_db: dict[str, np.ndarray] = load_cache()
-        self._match_index = MatchIndex(self.feature_db)  # vectorized matcher over feature_db
-        self._loaded_game: str | None = None  # game whose feature_db is in memory
+        self.game_db = GameDatabase()  # active game's vectors + match index
         self.settings = AppSettings.load()
         # min_std suppresses triggers on an empty (near-uniform) focus box
         self._motion_gate = card_motion_gate()
@@ -752,8 +739,8 @@ class MainWindow(QWidget):
             self.match_label.setText(
                 f"Database build failed for {', '.join(failed)} — see logs/card_scanner.log."
             )
-        # The in-memory feature_db may be stale after a rebuild — force reload on next scan
-        self._loaded_game = None
+        # The in-memory vectors may be stale after a rebuild — reload on next scan
+        self.game_db.invalidate()
         clear_price_cache()
 
     def _on_prices_refreshed(self) -> None:
@@ -969,10 +956,8 @@ class MainWindow(QWidget):
             self.add_csv_btn.setEnabled(False)
             return
 
-        # Reload feature_db only when the active game changed (or after a rebuild)
-        if self._loaded_game != active_game or not self.feature_db:
-            self.load_game_database(active_game)
-        if not self.feature_db:
+        # Reload only when the active game changed (or after a rebuild)
+        if not self.game_db.ensure(active_game):
             self.match_label.setText("No feature database found. Build the DB first.")
             self.add_csv_btn.setEnabled(False)
             return
@@ -983,7 +968,7 @@ class MainWindow(QWidget):
         self._set_scan_busy(True)
         threading.Thread(
             target=self._scan_worker,
-            args=(self._scan_token, img_bgr, self._match_index, self.settings.confidence_threshold, active_game),
+            args=(self._scan_token, img_bgr, self.game_db.index, self.settings.confidence_threshold, active_game),
             daemon=True,
         ).start()
 

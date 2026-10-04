@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from lorebook.core.game_types import BASE_DATABASE_PATH, SUPPORTED_EXTS
+from lorebook.core.matching import MatchIndex
 from lorebook.core.paths import data_path
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,11 @@ database_path: str = os.path.join(BASE_DATABASE_PATH, "Lorcana")
 
 
 def set_database_path(game_name: str) -> None:
-    """Switch the active database folder to a different game."""
+    """Switch the module's default database folder (legacy API).
+
+    Kept for PhotoMatching's CLI and external callers; app code passes
+    db_path explicitly or uses GameDatabase instead.
+    """
     global database_path
     database_path = os.path.join(BASE_DATABASE_PATH, game_name)
     os.makedirs(database_path, exist_ok=True)
@@ -292,3 +297,42 @@ def clear_from_cache(filename: str, db_path: str | None = None) -> None:
         logger.info("Cleared %s from %s", filename, path)
     except sqlite3.Error as e:
         logger.error("Error clearing cache entry %s: %s", filename, e)
+
+
+class GameDatabase:
+    """
+    The active game's reference vectors and match index, loaded together.
+
+    Replaces the old pattern of a module-global "current database path" plus
+    loose feature_db/index/loaded-game fields on the window: one object owns
+    the invariant that the index always matches the loaded vectors. Not
+    thread-safe — the owner (GUI main thread) mutates it; workers only ever
+    get the immutable MatchIndex it hands out.
+    """
+
+    def __init__(self, base: str = BASE_DATABASE_PATH):
+        self._base = base
+        self.game: str | None = None
+        self.vectors: dict[str, np.ndarray] = {}
+        self.index = MatchIndex({})
+
+    def __len__(self) -> int:
+        return len(self.vectors)
+
+    def load(self, game: str) -> bool:
+        """Load game's cache (replacing whatever was loaded). True if non-empty."""
+        self.vectors = load_cache(os.path.join(self._base, game))
+        self.index = MatchIndex(self.vectors)
+        self.game = game if self.vectors else None
+        logger.info("Loaded %s entries for %s", len(self.vectors), game)
+        return bool(self.vectors)
+
+    def ensure(self, game: str) -> bool:
+        """Load game unless it's already loaded (and non-empty). True if non-empty."""
+        if self.game != game or not self.vectors:
+            return self.load(game)
+        return True
+
+    def invalidate(self) -> None:
+        """Force the next ensure() to re-read from disk (e.g. after a rebuild)."""
+        self.game = None

@@ -8,6 +8,7 @@ import numpy as np
 
 import lorebook.core.card_database as card_database
 from lorebook.core.card_database import (
+    GameDatabase,
     _cache_path,
     _init_db,
     build_feature_database,
@@ -93,6 +94,12 @@ def test_batched_build(tmp_path, monkeypatch):
     cv2.imwrite(str(images / "001-003.png"), np.full((6, 6, 3), 90, np.uint8))
     build_feature_database(db_path=str(images), extractor=extractor)
     assert extractor.batch_sizes == [1]
+
+    # GameDatabase keeps the vectors and their match index together.
+    game_db = GameDatabase(base=str(tmp_path))
+    assert game_db.load("Lorcana") and len(game_db) == len(game_db.index) == 4
+    assert game_db.game == "Lorcana" and game_db.ensure("Lorcana")
+    assert not game_db.ensure("Missing") and game_db.game is None and len(game_db.index) == 0
 
 
 def test_cancel(tmp_path, monkeypatch):
