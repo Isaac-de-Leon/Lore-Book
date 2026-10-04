@@ -93,7 +93,7 @@ Lore-Book/
 | `lorebook/core/image_fetcher.py` | `download_new_images()` — fetch missing card art into `Card_Images/<Game>/` (Lorcana: LorcanaJSON; Riftbound: Riot content API when `RIOT_API_KEY` is set, else Riftcodex). Auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py` |
 | `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
 | `lorebook/core/features.py` | `get_extractor(backend)` (keras/tflite), `extract_features`, `visualize_activation_overlay` |
-| `lorebook/core/card_database.py` | `databasePath` global, `set_database_path`, `load_cache`, `build_feature_database` |
+| `lorebook/core/card_database.py` | `database_path` global (old name `databasePath` still readable), `get_database_path`/`set_database_path`, `load_cache`, `build_feature_database` |
 | `lorebook/core/fileio.py` | `atomic_write`, `atomic_write_bytes`, `atomic_write_json` — temp file + `os.replace`, keeps the target's permissions. Use these for any new file write |
 | `lorebook/core/net.py` | `fetch_json`, `fetch_bytes` (retries transient failures; 4xx other than 408/429 is final), `USER_AGENT`. Use these for any new HTTP call |
 | `lorebook/core/csv_manager.py` | `update_cardlist`, `update_cardlist_batch`, `split_filename`, `get_available_sets`, `read_collection_rows` |

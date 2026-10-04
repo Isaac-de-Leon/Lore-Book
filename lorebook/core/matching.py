@@ -52,16 +52,16 @@ def _cosine_score(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def find_best_matches(
-    inputFeatures: np.ndarray,
-    featureDB: dict[str, np.ndarray],
+    input_features: np.ndarray,
+    feature_db: dict[str, np.ndarray],
     threshold: float = 0.70,
 ) -> list[tuple[str, float]]:
     """Return all DB entries with cosine similarity >= threshold, sorted descending."""
-    if inputFeatures is None or inputFeatures.size == 0 or not featureDB:
+    if input_features is None or input_features.size == 0 or not feature_db:
         return []
-    q = l2_normalize(inputFeatures)
+    q = l2_normalize(input_features)
     scored: list[tuple[str, float]] = []
-    for fname, vec in featureDB.items():
+    for fname, vec in feature_db.items():
         if vec is None or np.size(vec) == 0:
             continue
         try:
@@ -87,11 +87,11 @@ class MatchIndex:
     sorted descending, filtered by threshold.
     """
 
-    def __init__(self, featureDB: dict[str, np.ndarray]):
+    def __init__(self, feature_db: dict[str, np.ndarray]):
         names: list[str] = []
         vectors: list[np.ndarray] = []
         dim: int | None = None
-        for fname, vec in (featureDB or {}).items():
+        for fname, vec in (feature_db or {}).items():
             if vec is None or np.size(vec) == 0:
                 continue
             v = np.asarray(vec, dtype=np.float32).ravel()
@@ -117,11 +117,11 @@ class MatchIndex:
     def __len__(self) -> int:
         return len(self._names)
 
-    def find(self, inputFeatures: np.ndarray, threshold: float = 0.70) -> list[tuple[str, float]]:
+    def find(self, input_features: np.ndarray, threshold: float = 0.70) -> list[tuple[str, float]]:
         """Return all entries with cosine similarity >= threshold, sorted descending."""
-        if inputFeatures is None or np.size(inputFeatures) == 0 or not self._names:
+        if input_features is None or np.size(input_features) == 0 or not self._names:
             return []
-        q = l2_normalize(np.asarray(inputFeatures, dtype=np.float32).ravel())
+        q = l2_normalize(np.asarray(input_features, dtype=np.float32).ravel())
         if q.size != self._matrix.shape[1]:
             logger.error(
                 "MatchIndex: query dim %s != index dim %s", q.size, self._matrix.shape[1]

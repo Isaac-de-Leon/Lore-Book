@@ -131,7 +131,7 @@ class SettingsWindow(QDialog):
             # the box is derived from them (Qt auto-tristate).
             game_root.setCheckState(0, Qt.Checked if is_selected else Qt.Unchecked)
 
-            # Pass db_path explicitly — avoids touching the global databasePath
+            # Pass db_path explicitly — avoids touching the global database path
             game_db_path = os.path.join(BASE_DATABASE_PATH, game_name)
             try:
                 game_sets = get_available_sets(db_path=game_db_path)

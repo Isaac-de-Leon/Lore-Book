@@ -18,7 +18,7 @@ from lorebook.core.game_types import (
 logger = logging.getLogger(__name__)
 
 
-def split_filename(matchedFilename: str) -> tuple[str, str]:
+def split_filename(matched_filename: str) -> tuple[str, str]:
     """
     Split a card image filename into (set_code, card_code).
 
@@ -27,7 +27,7 @@ def split_filename(matchedFilename: str) -> tuple[str, str]:
         "ONG-23c-alt.jpg"   → ("ONG", "23c-alt")
         "nosetcode.png"     → ("",    "nosetcode")
     """
-    base = os.path.splitext(os.path.basename(matchedFilename))[0]
+    base = os.path.splitext(os.path.basename(matched_filename))[0]
     parts = base.split("-", maxsplit=2)
     if len(parts) < 2:
         return "", base
@@ -43,14 +43,14 @@ def get_available_sets(
     db_path: str | None = None,
 ) -> list[str]:
     """
-    Return a sorted list of all set codes found in db_path (or the current databasePath).
+    Return a sorted list of all set codes found in db_path (or the current database path).
 
     game_type is accepted for API compatibility but no longer restricts results —
     all set codes present in the folder are returned regardless of format.
     """
-    from lorebook.core.card_database import databasePath, list_image_files
+    from lorebook.core.card_database import get_database_path, list_image_files
 
-    resolved = db_path or databasePath
+    resolved = db_path or get_database_path()
     sets = set()
     for fname in list_image_files(resolved):
         set_code, _ = split_filename(fname)
@@ -158,7 +158,7 @@ def update_cardlist_batch(
     """
     Increment (or insert) rows for many cards with one read+write per CSV file.
 
-    cards: iterable of (matchedFilename, is_foil, count) tuples.
+    cards: iterable of (matched_filename, is_foil, count) tuples.
     game: explicit game folder name; the target file is csv_for_game(game),
     so any game gets its own <Game>List.csv. When None (legacy behavior),
     each card's game is inferred from its filename path: Riftbound paths →
@@ -172,17 +172,17 @@ def update_cardlist_batch(
     """
     target = csv_for_game(game) if game is not None else None
     by_file: dict = {}
-    for matchedFilename, is_foil, count in cards:
+    for matched_filename, is_foil, count in cards:
         try:
             count = int(count)
         except (TypeError, ValueError):
-            logger.warning("Non-numeric count %r for %s; recording 1", count, matchedFilename)
+            logger.warning("Non-numeric count %r for %s; recording 1", count, matched_filename)
             count = 1
         if count == 0 or (count < 0 and not allow_negative):
             continue
-        game_type = game_type_from_name(game) if game is not None else get_game_type(matchedFilename)
+        game_type = game_type_from_name(game) if game is not None else get_game_type(matched_filename)
         target_file = target or _csv_for_game_type(game_type)
-        set_code, card_code = split_filename(matchedFilename)
+        set_code, card_code = split_filename(matched_filename)
         # Foil-only rarities (Lorcana Enchanted/Epic/Iconic) are always recorded
         # as foil — Dreamborn.ink rejects a "normal" row for them.
         variant = "foil" if is_foil or is_foil_only_card(set_code, card_code, game_type) else "normal"
@@ -211,7 +211,7 @@ def update_cardlist_batch(
 
 
 def update_cardlist(
-    matchedFilename: str,
+    matched_filename: str,
     is_foil: bool,
     count: int = 1,
     game: str | None = None,
@@ -221,11 +221,11 @@ def update_cardlist(
     Increment (or insert) a row in the game-appropriate CSV.
 
     When game is None the target file is chosen by inspecting the path of
-    matchedFilename: Riftbound paths → RiftboundList.csv, everything else →
+    matched_filename: Riftbound paths → RiftboundList.csv, everything else →
     LorcanaList.csv. Pass the game folder name explicitly to skip the path
     inference and write to csv_for_game(game). allow_negative permits a
     decrement (see update_cardlist_batch).
     """
     update_cardlist_batch(
-        [(matchedFilename, is_foil, count)], game=game, allow_negative=allow_negative
+        [(matched_filename, is_foil, count)], game=game, allow_negative=allow_negative
     )

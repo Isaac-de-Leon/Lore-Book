@@ -13,7 +13,6 @@
 from lorebook.core.card_database import (
     build_feature_database,
     clear_from_cache,
-    databasePath,
     get_database_path,
     load_cache,
     set_database_path,
@@ -48,6 +47,17 @@ from lorebook.core.game_types import (
 )
 from lorebook.core.image_utils import ensure_valid_image, foil_score, is_probably_foil
 from lorebook.core.matching import MatchIndex, _cosine_score, _l2_normalize, find_best_matches, l2_normalize
+
+
+def __getattr__(name: str):
+    # The active database path changes at runtime (set_database_path), so
+    # read it live instead of re-exporting a copy taken at import time.
+    if name == "databasePath":
+        from lorebook.core import card_database
+
+        return card_database.database_path
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Legacy name aliases
 baseDatabasePath = BASE_DATABASE_PATH

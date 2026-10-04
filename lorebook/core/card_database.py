@@ -15,19 +15,26 @@ from lorebook.core.game_types import BASE_DATABASE_PATH, SUPPORTED_EXTS
 logger = logging.getLogger(__name__)
 
 # Current active database path — changed via set_database_path().
-databasePath: str = os.path.join(BASE_DATABASE_PATH, "Lorcana")
+database_path: str = os.path.join(BASE_DATABASE_PATH, "Lorcana")
 
 
 def set_database_path(game_name: str) -> None:
     """Switch the active database folder to a different game."""
-    global databasePath
-    databasePath = os.path.join(BASE_DATABASE_PATH, game_name)
-    os.makedirs(databasePath, exist_ok=True)
+    global database_path
+    database_path = os.path.join(BASE_DATABASE_PATH, game_name)
+    os.makedirs(database_path, exist_ok=True)
+
+
+def __getattr__(name: str) -> str:
+    # Backward compat (PEP 562): the old camelCase global, always current.
+    if name == "databasePath":
+        return database_path
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get_database_path() -> str:
     """Return the current active database path."""
-    return databasePath
+    return database_path
 
 
 def _cache_path(db_path: str) -> str:
@@ -99,7 +106,7 @@ def _save_stamps(cache_file: str, stamps: dict[str, Stamp]) -> None:
 
 def load_cache(db_path: str | None = None) -> dict[str, np.ndarray]:
     """Load the feature cache from the SQLite database for the given (or current) database path."""
-    path = _cache_path(db_path or databasePath)
+    path = _cache_path(db_path or database_path)
     if not os.path.exists(path):
         return {}
     try:
@@ -156,7 +163,7 @@ def build_feature_database(
     cancel_event: threading.Event | None = None,
 ) -> dict[str, np.ndarray]:
     """
-    Build or update the feature database for db_path (defaults to databasePath).
+    Build or update the feature database for db_path (defaults to database_path).
 
     Processes only images not already in the cache, updates the cache file, and
     returns the full feature dict. Image reads run in a thread pool; feature
@@ -170,9 +177,9 @@ def build_feature_database(
     anything unexpected propagates to the caller (it is not swallowed into a
     silently partial result).
     """
-    resolved = db_path or databasePath
-    featureDB: dict[str, np.ndarray] = load_cache(resolved)
-    logger.info("Loaded %s cached entries from %s", len(featureDB), resolved)
+    resolved = db_path or database_path
+    feature_db: dict[str, np.ndarray] = load_cache(resolved)
+    logger.info("Loaded %s cached entries from %s", len(feature_db), resolved)
 
     current_files = list_image_files(resolved)
 
@@ -180,10 +187,10 @@ def build_feature_database(
     # matching against cards that no longer exist. Only when the folder
     # itself exists — a missing folder (typo'd path, unmounted drive)
     # must not be read as "every image was deleted" and wipe the cache.
-    stale = sorted(set(featureDB) - set(current_files)) if os.path.isdir(resolved) else []
+    stale = sorted(set(feature_db) - set(current_files)) if os.path.isdir(resolved) else []
     if stale:
         for name in stale:
-            featureDB.pop(name, None)
+            feature_db.pop(name, None)
         _remove_cache_entries(_cache_path(resolved), stale)
         logger.info("Pruned %s stale cache entries from %s", len(stale), resolved)
 
@@ -195,26 +202,26 @@ def build_feature_database(
     disk = {f: _file_stamp(os.path.join(resolved, f)) for f in current_files}
     changed = sorted(
         f for f in current_files
-        if f in featureDB and stored.get(f) is not None and stored[f] != disk[f]
+        if f in feature_db and stored.get(f) is not None and stored[f] != disk[f]
     )
     if changed:
         for name in changed:
-            featureDB.pop(name, None)
+            feature_db.pop(name, None)
         _remove_cache_entries(cache_file, changed)
         logger.info("Re-extracting %s changed images in %s", len(changed), resolved)
     _save_stamps(cache_file, {
-        f: stamp for f in featureDB
+        f: stamp for f in feature_db
         if stored.get(f) is None and (stamp := disk.get(f)) is not None
     })
 
-    new_files = [f for f in current_files if f not in featureDB]
+    new_files = [f for f in current_files if f not in feature_db]
     total = len(new_files)
     logger.info("Processing %s new files in %s", total, resolved)
 
     if total == 0:
         if progress_callback:
             progress_callback(100, None)
-        return featureDB
+        return feature_db
 
     if extractor is None:
         from lorebook.core.features import get_extractor  # lazy TF import
@@ -240,7 +247,7 @@ def build_feature_database(
             vectors = extractor.extract_batch([img for _, img in readable]) if readable else []
             for (fname, _), vec in zip(readable, vectors):
                 if vec is not None:
-                    featureDB[fname] = vec
+                    feature_db[fname] = vec
                     successful += 1
                 else:
                     failed += 1
@@ -256,7 +263,7 @@ def build_feature_database(
             # Cast defensively: load_cache reads blobs as float32, so any
             # other dtype here would corrupt the round-trip.
             rows = []
-            for k, v in featureDB.items():
+            for k, v in feature_db.items():
                 m, sz = disk.get(k) or (None, None)
                 rows.append((k, np.asarray(v, dtype=np.float32).tobytes(), m, sz))
             conn.executemany(
@@ -264,18 +271,18 @@ def build_feature_database(
                 "VALUES (?, ?, ?, ?)",
                 rows,
             )
-        logger.info("Saved %s entries to %s", len(featureDB), cache_file)
+        logger.info("Saved %s entries to %s", len(feature_db), cache_file)
     except (sqlite3.Error, OSError) as e:
         logger.error("Error saving cache to %s: %s", cache_file, e)
 
     logger.info("Build complete: %s ok, %s failed", successful, failed)
-    return featureDB
+    return feature_db
 
 
 
 def clear_from_cache(filename: str, db_path: str | None = None) -> None:
     """Remove a single entry from the SQLite cache (useful after deleting an image)."""
-    path = _cache_path(db_path or databasePath)
+    path = _cache_path(db_path or database_path)
     if not os.path.exists(path):
         return
     try:
