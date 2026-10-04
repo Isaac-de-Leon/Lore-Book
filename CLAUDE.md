@@ -228,7 +228,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 ## Common Tasks for Claude
 
 - **Add a feature** — edit the relevant module under `lorebook/core/` for logic, `lorebook/ui/` for UI wiring, `lorebook/sorter/`/`lorebook/hardware/` for the headless sorter.
-- **Fix a CSV parsing bug** — see `_normalize_existing_rows()` and `_write_rows_4col()` in `lorebook/core/csv_manager.py`.
+- **Fix a CSV parsing bug** — see `_normalize_existing_rows()` and `_write_rows_4col()` in `lorebook/core/csv_manager.py`. Writes are read-modify-write: the read is `strict` (an unreadable file raises `CsvReadError` and is left untouched), and the write is an atomic temp-file replace. Keep both properties.
 - **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()` (`lorebook/core/image_utils.py`).
 - **Change match threshold** — core default is `0.70` in `find_best_matches()` / `MatchIndex.find()` (`lorebook/core/matching.py`); the GUI ships a stricter `0.90` default, exposed in Settings as confidence %. See `docs/MATCHING.md` for how the whole pipeline fits together.
 - **Show card names** — run `python scripts/fetch_card_names.py --game <Game>` once; the GUI/sorter pick up `card_names_<Game>.json` automatically (display-only, never written to the CSV).
@@ -236,7 +236,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 - **Get a new set's images** — the GUI's Rebuild Database button auto-downloads missing card art before rebuilding (offline → warning logged, build continues). Lorcana pulls from LorcanaJSON; Riftbound uses the official Riot content API when the `RIOT_API_KEY` env var is set and falls back to the open Riftcodex API otherwise. CLI: `python scripts/fetch_card_images.py --game <Game> [--set <N>] [--dry-run]`. Registered fetchers live in `GAMES` (`lorebook/core/image_fetcher.py`); unregistered games are skipped silently.
 - **Change sort routing** — edit the rules JSON (see `configs/sort_rules.example.json`); the engine is `decide_bin()` in `lorebook/sorter/rules.py`. Unmatched cards always go to `reject_bin`.
 - **Implement the real transport** — subclass `Transport` (`lorebook/hardware/transport.py`); the pipeline needs `route_to_bin`, `advance`, `home`.
-- **Cache issues** — delete `DBCardCache_<game>.db` and rebuild with `--build` flag.
+- **Cache issues** — each cached vector records its image's size and mtime, so replacing an image (same filename) re-extracts it on the next build. For anything else, delete `DBCardCache_<game>.db` and rebuild with `--build` flag.
 
 ---
 

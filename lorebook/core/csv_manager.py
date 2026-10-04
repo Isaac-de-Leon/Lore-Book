@@ -63,49 +63,63 @@ def get_available_sets(
     return sorted(sets)
 
 
-def _normalize_existing_rows(csv_path: str) -> List[List[str]]:
+class CsvReadError(OSError):
+    """An existing collection CSV could not be read.
+
+    Raised (rather than returning the rows read so far) wherever the caller
+    is about to write the file back, so a read failure can never truncate
+    the collection. Subclasses OSError so ``except OSError`` covers it.
+    """
+
+
+def _normalize_existing_rows(csv_path: str, strict: bool = False) -> List[List[str]]:
     """
     Read a CSV and normalize every row to exactly 4 columns:
     [Set Number, Card Number, Variant, Count].
 
     Handles 3-col (count defaults to 0), 4-col, and 5-col rows (5th column
-    is a legacy "Tag" field that is ignored).
+    is a legacy "Tag" field that is ignored). A missing file is an empty
+    collection. A file that exists but can't be read (bad encoding, I/O
+    error) raises CsvReadError when strict, else is logged and yields the
+    rows read so far — fine for display, never for read-modify-write.
     """
     rows: List[List[str]] = []
     if not os.path.exists(csv_path):
         return rows
     try:
-        with open(csv_path, "r", newline="", encoding="utf-8") as f:
+        # utf-8-sig: Excel re-saves CSVs with a byte-order mark
+        with open(csv_path, "r", newline="", encoding="utf-8-sig") as f:
             reader = csv.reader(f)
             first = True
-            for row_num, row in enumerate(reader, 1):
-                try:
-                    if first:
-                        first = False
-                        if row and any("set" in c.lower() for c in row):
-                            continue  # skip header
-                    if not row:
-                        continue
-                    if len(row) >= 4:
-                        # Count is always col[3]; a 5th legacy "Tag" column is ignored
-                        count = row[3] if row[3] != "" else "0"
-                        rows.append([row[0], row[1], row[2], count])
-                    elif len(row) == 3:
-                        rows.append([row[0], row[1], row[2], "0"])
-                except Exception as e:
-                    logging.warning(f"Error processing row {row_num} in {csv_path}: {e}")
+            for row in reader:
+                if first:
+                    first = False
+                    if row and any("set" in c.lower() for c in row):
+                        continue  # skip header
+                if not row:
+                    continue
+                if len(row) >= 4:
+                    # Count is always col[3]; a 5th legacy "Tag" column is ignored
+                    count = row[3] if row[3] != "" else "0"
+                    rows.append([row[0], row[1], row[2], count])
+                elif len(row) == 3:
+                    rows.append([row[0], row[1], row[2], "0"])
         return rows
     except Exception as e:
+        if strict:
+            raise CsvReadError(f"Could not read {csv_path}: {e}") from e
         logging.error(f"Error reading CSV file {csv_path}: {e}")
         return rows
 
 
-def read_collection_rows(game: str) -> List[List[str]]:
+def read_collection_rows(game: str, strict: bool = False) -> List[List[str]]:
     """
     Return the collection rows for a game as normalized 4-column lists
-    [Set Number, Card Number, Variant, Count]. Missing file → [].
+    [Set Number, Card Number, Variant, Count]. Missing file → []. With
+    strict, an unreadable file raises CsvReadError instead of returning
+    a partial list.
     """
-    return _normalize_existing_rows(csv_for_game(game))
+    return _normalize_existing_rows(csv_for_game(game), strict=strict)
 
 
 def clear_collection(game: str) -> None:
@@ -172,6 +186,8 @@ def update_cardlist_batch(
     so any game gets its own <Game>List.csv. When None (legacy behavior),
     each card's game is inferred from its filename path: Riftbound paths →
     RiftboundList.csv, everything else → LorcanaList.csv.
+    Raises CsvReadError if an existing CSV can't be read (the file is left
+    untouched) and OSError if it can't be written (e.g. locked by Excel).
     allow_negative: permit negative counts, which decrement the matching row
     (clamped at 0; a decrement of a card not in the list is a no-op). Off by
     default so scan paths can never accidentally remove cards — only explicit
@@ -196,7 +212,8 @@ def update_cardlist_batch(
         by_file.setdefault(target_file, []).append((set_code, card_code, variant, count))
 
     for target_file, updates in by_file.items():
-        existing = _normalize_existing_rows(target_file)
+        # strict: a read failure must abort, not write back a partial file
+        existing = _normalize_existing_rows(target_file, strict=True)
         changed = False
         for set_code, card_code, variant, count in updates:
             for r in existing:

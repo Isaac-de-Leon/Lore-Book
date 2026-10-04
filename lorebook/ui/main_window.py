@@ -1175,7 +1175,13 @@ class MainWindow(QWidget):
         active_game = self.get_active_game() or "Lorcana"
         target_file = csv_for_game(active_game)
 
-        update_cardlist(fname, is_foil, cnt, game=active_game)
+        try:
+            update_cardlist(fname, is_foil, cnt, game=active_game)
+        except OSError as e:  # unreadable or locked (e.g. open in Excel) — file untouched
+            self.logger.error(f"Could not add {fname} to {target_file}: {e}")
+            self.set_status(f"Not added — {target_file} could not be updated (open in another program?)",
+                            is_error=True, timeout_ms=8000)
+            return
         self._last_add = (fname, is_foil, cnt, active_game)
         self.undo_btn.setEnabled(True)
         self.set_status(f"Added {cnt}× {fname} to {target_file}")
@@ -1187,7 +1193,13 @@ class MainWindow(QWidget):
         if not self._last_add:
             return
         fname, is_foil, cnt, game = self._last_add
-        update_cardlist(fname, is_foil, -cnt, game=game, allow_negative=True)
+        try:
+            update_cardlist(fname, is_foil, -cnt, game=game, allow_negative=True)
+        except OSError as e:  # keep _last_add so the user can retry
+            self.logger.error(f"Could not undo {fname}: {e}")
+            self.set_status("Undo failed — the collection file could not be updated.",
+                            is_error=True, timeout_ms=8000)
+            return
         self._last_add = None
         self.undo_btn.setEnabled(False)
         self.set_status(f"Removed {cnt}× {fname}")

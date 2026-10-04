@@ -70,6 +70,30 @@ def test_batched_build(tmp_path, monkeypatch):
     assert vec.dtype == np.float32 and vec.shape == (4,)
     np.testing.assert_allclose(vec, [1.0, 0.0, 0.0, 0.0])
 
+    # An image replaced under the same name is re-extracted; untouched ones aren't.
+    cv2.imwrite(str(images / "001-002.png"), np.full((6, 6, 3), 200, np.uint8))
+    extractor = RecordingExtractor()
+    build_feature_database(db_path=str(images), extractor=extractor)
+    assert extractor.batch_sizes == [1]
+    extractor = RecordingExtractor()
+    build_feature_database(db_path=str(images), extractor=extractor)
+    assert extractor.batch_sizes == []
+
+    # A cache from before size/mtime were recorded is migrated in place and
+    # trusted (no full rebuild); stamps are backfilled so later edits are seen.
+    cache_file = _cache_path(str(images))
+    with sqlite3.connect(cache_file) as conn:
+        conn.execute("DROP TABLE features")
+        conn.execute("CREATE TABLE features (filename TEXT PRIMARY KEY, vector BLOB NOT NULL)")
+        conn.executemany("INSERT INTO features VALUES (?, ?)",
+                         [(n, vec.tobytes()) for n in db])
+    extractor = RecordingExtractor()
+    assert set(build_feature_database(db_path=str(images), extractor=extractor)) == set(db)
+    assert extractor.batch_sizes == []
+    cv2.imwrite(str(images / "001-003.png"), np.full((6, 6, 3), 90, np.uint8))
+    build_feature_database(db_path=str(images), extractor=extractor)
+    assert extractor.batch_sizes == [1]
+
 
 def test_cancel(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

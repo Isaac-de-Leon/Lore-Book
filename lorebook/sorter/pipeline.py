@@ -122,7 +122,11 @@ class SortPipeline:
         return is_probably_foil(frame, threshold=self.foil_threshold)
 
     def flush_csv(self) -> None:
-        """Write any accumulated matched cards to the CSV in one read+write."""
+        """Write any accumulated matched cards to the CSV in one read+write.
+
+        On failure the pending cards are kept (and the CSV left untouched),
+        so a later flush can retry.
+        """
         if not self._pending:
             return
         update_cardlist_batch(
@@ -209,9 +213,13 @@ class SortPipeline:
                     continue
                 outcomes.append(self.process_one(frame))
         finally:
-            self.flush_csv()
-            self.camera.release()
-            self.transport.home()
+            # Release/home even if the final CSV write fails (e.g. the file
+            # is locked); the write error still propagates afterwards.
+            try:
+                self.flush_csv()
+            finally:
+                self.camera.release()
+                self.transport.home()
 
         logger.info("Sorted %d card(s).", len(outcomes))
         return outcomes

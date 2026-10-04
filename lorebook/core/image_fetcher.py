@@ -258,6 +258,38 @@ def _to_webp(raw: bytes, quality: int) -> bytes:
     return buf.tobytes()
 
 
+_PART_SUFFIX = ".part"
+
+
+def _write_atomic(dest: str, payload: bytes) -> None:
+    """
+    Write to <dest>.part, then rename into place. An interrupted write
+    (crash, app closed mid-build) leaves only a .part file — never a
+    truncated image under the real name, which later runs would skip forever.
+    """
+    part = dest + _PART_SUFFIX
+    try:
+        with open(part, "wb") as f:
+            f.write(payload)
+        os.replace(part, dest)
+    except BaseException:
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        raise
+
+
+def _remove_partial_downloads(folder: str) -> None:
+    """Delete .part leftovers from a previous run that was killed mid-write."""
+    for name in os.listdir(folder):
+        if name.endswith(_PART_SUFFIX):
+            try:
+                os.remove(os.path.join(folder, name))
+            except OSError:
+                pass
+
+
 def download_new_images(
     game: str,
     out_dir: Optional[str] = None,
@@ -317,6 +349,7 @@ def download_new_images(
 
     if not dry_run:
         os.makedirs(resolved_out, exist_ok=True)
+        _remove_partial_downloads(resolved_out)
 
     report(f"{len(targets)} card(s) to consider -> {resolved_out}  (format: {fmt})")
     for set_code, number, img_url in targets:
@@ -326,7 +359,8 @@ def download_new_images(
         fname = f"{_pad(set_code)}-{_pad(number)}{ext}"
         dest = os.path.join(resolved_out, fname)
 
-        if not force and os.path.exists(dest):
+        # A 0-byte file is a failed write, not a card — fetch it again.
+        if not force and os.path.exists(dest) and os.path.getsize(dest) > 0:
             stats.skipped += 1
             continue
         if limit is not None and stats.downloaded >= limit:
@@ -339,8 +373,7 @@ def download_new_images(
         try:
             raw = _download(img_url)
             payload = _to_webp(raw, quality) if fmt == "webp" else raw
-            with open(dest, "wb") as f:
-                f.write(payload)
+            _write_atomic(dest, payload)
             stats.downloaded += 1
             report(f"  {fname}  ({len(payload) // 1024} KB)")
         except Exception as e:

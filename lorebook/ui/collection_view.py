@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from lorebook.core.card_names import name_for
-from lorebook.core.csv_manager import clear_collection, read_collection_rows
+from lorebook.core.csv_manager import CsvReadError, clear_collection, read_collection_rows
 from lorebook.core.game_types import csv_for_game, game_folders
 from lorebook.ui.icons import get_icon
 
@@ -107,7 +107,13 @@ class CollectionView(QWidget):
     def refresh(self) -> None:
         """Reload the table from the selected game's CSV."""
         game = self.current_game()
-        rows = read_collection_rows(game) if game else []
+        try:
+            rows = read_collection_rows(game, strict=True) if game else []
+        except CsvReadError as e:
+            self.logger.error(str(e))
+            self.table.setRowCount(0)
+            self.summary_label.setText(f"Couldn't read {csv_for_game(game)} — check the file.")
+            return
 
         self.table.setSortingEnabled(False)  # sorting mid-fill scrambles rows
         self.table.setRowCount(len(rows))
@@ -162,7 +168,11 @@ class CollectionView(QWidget):
         game = self.current_game()
         if not game:
             return
-        rows = read_collection_rows(game)
+        try:
+            rows = read_collection_rows(game, strict=True)
+        except CsvReadError:
+            self.summary_label.setText(f"Couldn't read {csv_for_game(game)} — not clearing it.")
+            return
         if not rows:
             self.summary_label.setText("Collection is already empty.")
             return

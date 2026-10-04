@@ -229,6 +229,23 @@ def test_download_new_images(tmp_path, monkeypatch):
     out, stats = run("precancel", cancel_event=cancel)
     assert stats.downloaded == 0 and list(out.iterdir()) == []
 
+    # A 0-byte image is a failed write and is fetched again; .part leftovers
+    # from a killed run are cleaned up.
+    monkeypatch.setattr(image_fetcher, "_download", lambda url: jpg)
+    out = tmp_path / "repair"
+    out.mkdir()
+    (out / "009-041.webp").write_bytes(b"")
+    (out / "009-042.webp.part").write_bytes(b"half")
+    stats = download_new_images("Lorcana", out_dir=str(out), sets=["9"], delay=0)
+    assert stats.downloaded == 2
+    assert sorted(p.name for p in out.iterdir()) == ["009-041.webp", "009-042.webp"]
+    assert (out / "009-041.webp").stat().st_size > 0
+
+    # A write that fails midway leaves neither a truncated image nor a .part.
+    monkeypatch.setattr(image_fetcher, "_download", lambda url: "not bytes")  # write() raises
+    out, stats = run("midwrite", fmt="jpg")
+    assert stats.failed == 2 and list(out.iterdir()) == []
+
     # A per-image failure is counted; a card-list failure raises.
     def boom(url):
         raise OSError("offline")

@@ -36,12 +36,63 @@ def _cache_path(db_path: str) -> str:
 
 
 def _init_db(path: str) -> None:
-    """Create the features table if it doesn't already exist."""
+    """Create the features table if needed, migrating older caches in place.
+
+    mtime_ns/size record the image file each vector was extracted from, so a
+    replaced image (same name, new bytes) is re-extracted. Caches written
+    before these columns existed get NULLs, which are trusted and backfilled
+    on the next build rather than forcing a full rebuild.
+    """
     with sqlite3.connect(path) as conn:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS features "
-            "(filename TEXT PRIMARY KEY, vector BLOB NOT NULL)"
+            "(filename TEXT PRIMARY KEY, vector BLOB NOT NULL, mtime_ns INTEGER, size INTEGER)"
         )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(features)")}
+        for column in ("mtime_ns", "size"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE features ADD COLUMN {column} INTEGER")
+
+
+Stamp = Tuple[int, int]  # (st_mtime_ns, st_size) of a source image
+
+
+def _file_stamp(path: str) -> Optional[Stamp]:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+def _load_stamps(cache_file: str) -> Dict[str, Optional[Stamp]]:
+    """{filename: (mtime_ns, size) or None for legacy rows} from the cache."""
+    if not os.path.exists(cache_file):
+        return {}
+    try:
+        _init_db(cache_file)
+        with sqlite3.connect(cache_file) as conn:
+            return {
+                name: (mtime, size) if mtime is not None and size is not None else None
+                for name, mtime, size in conn.execute("SELECT filename, mtime_ns, size FROM features")
+            }
+    except Exception as e:
+        logging.error(f"Error reading cache stamps from {cache_file}: {e}")
+        return {}
+
+
+def _save_stamps(cache_file: str, stamps: Dict[str, Stamp]) -> None:
+    """Record stamps for existing rows (backfills legacy NULLs)."""
+    if not stamps or not os.path.exists(cache_file):
+        return
+    try:
+        with sqlite3.connect(cache_file) as conn:
+            conn.executemany(
+                "UPDATE features SET mtime_ns = ?, size = ? WHERE filename = ?",
+                [(m, sz, name) for name, (m, sz) in stamps.items()],
+            )
+    except Exception as e:
+        logging.error(f"Error saving cache stamps to {cache_file}: {e}")
 
 
 def load_cache(db_path: Optional[str] = None) -> Dict[str, np.ndarray]:
@@ -128,6 +179,26 @@ def build_feature_database(
             _remove_cache_entries(_cache_path(resolved), stale)
             logging.info(f"Pruned {len(stale)} stale cache entries from {resolved}")
 
+        # Re-extract images replaced under the same name (e.g. re-downloaded
+        # with --force): their recorded size/mtime no longer match the file.
+        # Legacy rows without a stamp are trusted and backfilled below.
+        cache_file = _cache_path(resolved)
+        stored = _load_stamps(cache_file)
+        disk = {f: _file_stamp(os.path.join(resolved, f)) for f in current_files}
+        changed = sorted(
+            f for f in current_files
+            if f in featureDB and stored.get(f) is not None and stored[f] != disk[f]
+        )
+        if changed:
+            for name in changed:
+                featureDB.pop(name, None)
+            _remove_cache_entries(cache_file, changed)
+            logging.info(f"Re-extracting {len(changed)} changed images in {resolved}")
+        _save_stamps(cache_file, {
+            f: disk[f] for f in featureDB
+            if stored.get(f) is None and disk.get(f) is not None
+        })
+
         new_files = [f for f in current_files if f not in featureDB]
         total = len(new_files)
         logging.info(f"Processing {total} new files in {resolved}")
@@ -171,18 +242,19 @@ def build_feature_database(
                 if progress_callback:
                     progress_callback(int(done / total * 100), chunk[-1])
 
-        cache_file = _cache_path(resolved)
         try:
             _init_db(cache_file)
             with sqlite3.connect(cache_file) as conn:
                 # Cast defensively: load_cache reads blobs as float32, so any
                 # other dtype here would corrupt the round-trip.
+                rows = []
+                for k, v in featureDB.items():
+                    m, sz = disk.get(k) or (None, None)
+                    rows.append((k, np.asarray(v, dtype=np.float32).tobytes(), m, sz))
                 conn.executemany(
-                    "INSERT OR REPLACE INTO features (filename, vector) VALUES (?, ?)",
-                    [
-                        (k, np.asarray(v, dtype=np.float32).tobytes())
-                        for k, v in featureDB.items()
-                    ],
+                    "INSERT OR REPLACE INTO features (filename, vector, mtime_ns, size) "
+                    "VALUES (?, ?, ?, ?)",
+                    rows,
                 )
             logging.info(f"Saved {len(featureDB)} entries to {cache_file}")
         except Exception as e:

@@ -30,12 +30,13 @@ from PhotoMatching import (
     is_probably_foil,
 )
 from lorebook.core.card_database import _cache_path
-from lorebook.core.csv_manager import read_collection_rows
+from lorebook.core.csv_manager import CsvReadError, read_collection_rows
 from lorebook.core.features import _check_tflite_input_dtype
 from lorebook.core.game_types import game_folders, resolve_game_folder, sets_to_display, sets_to_store
 from lorebook.core.image_utils import CARD_ASPECT, MotionGate, crop_to_card, focus_rect
 
 HEADER = ["Set Number", "Card Number", "Variant", "Count"]
+HEADER_BYTES = b"Set Number,Card Number,Variant,Count\r\n"
 
 
 def _rows(path):
@@ -290,6 +291,24 @@ def test_csv_reading_normalizes_legacy_rows(tmp_path, monkeypatch):
     ]
     assert _normalize_existing_rows("LorcanaList.csv") == expected
     assert read_collection_rows("Lorcana") == expected
+
+    # Excel's byte-order mark doesn't turn the header into a data row.
+    raw = open("LorcanaList.csv", "rb").read()
+    with open("LorcanaList.csv", "wb") as f:
+        f.write(b"\xef\xbb\xbf" + raw)
+    assert read_collection_rows("Lorcana", strict=True) == expected
+
+    # An unreadable file must abort read-modify-write and stay byte-identical,
+    # never be rewritten from the rows read so far.
+    broken = HEADER_BYTES + b"001,001,normal,5\r\n\xff\xfe not utf-8\r\n"
+    with open("RiftboundList.csv", "wb") as f:
+        f.write(broken)
+    with pytest.raises(CsvReadError):
+        read_collection_rows("Riftbound", strict=True)
+    with pytest.raises(OSError):
+        update_cardlist("001-002.webp", is_foil=False, game="Riftbound")
+    assert open("RiftboundList.csv", "rb").read() == broken
+    assert isinstance(read_collection_rows("Riftbound"), list)  # lenient display: no raise
 
 
 def test_write_rows_4col_is_atomic(tmp_path):
