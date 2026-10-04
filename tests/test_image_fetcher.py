@@ -210,6 +210,15 @@ def test_download_new_images(tmp_path, monkeypatch):
     assert stats.downloaded == 2
     assert (out / "009-041.webp").read_bytes() != b"already here"
 
+    # Codes from the downloaded card list become filenames: anything that
+    # could escape the output folder is skipped, never written.
+    data["cards"] += [_card("../../escaped", 1), _card("9", "/etc/x"), _card("..", 2)]
+    out, stats = run("unsafe", sets=None)
+    assert stats.failed == 3
+    assert not (tmp_path.parent / "escaped-001.webp").exists()  # where ../../ would land
+    assert "x" not in {p.stem.split("-")[-1] for p in out.iterdir()}
+    del data["cards"][-3:]
+
     messages = []
     out, stats = run("dry", dry_run=True, progress_callback=messages.append)
     assert stats.downloaded == 2 and list(out.iterdir()) == []

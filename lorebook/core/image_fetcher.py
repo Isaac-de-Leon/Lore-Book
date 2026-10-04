@@ -21,6 +21,7 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -56,6 +57,20 @@ def _pad(part: str) -> str:
     leave non-numeric codes (promos like P1, Q1) untouched."""
     part = str(part).strip()
     return part.zfill(3) if part.isdigit() else part
+
+
+# Set codes and card numbers come from downloaded JSON and become filenames,
+# so only plain codes are accepted: no path separators, drive letters or
+# leading dots (e.g. "../../x" or "/etc/x" would escape Card_Images/).
+_SAFE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def _safe_filename(set_code: str, number: str, ext: str) -> Optional[str]:
+    """'<set>-<number><ext>' for plain codes, or None when either code is unsafe."""
+    set_part, num_part = _pad(set_code), _pad(number)
+    if not (_SAFE_CODE.fullmatch(set_part) and _SAFE_CODE.fullmatch(num_part)):
+        return None
+    return f"{set_part}-{num_part}{ext}"
 
 
 def _norm(part: str) -> str:
@@ -360,7 +375,12 @@ def download_new_images(
         if cancel_event is not None and cancel_event.is_set():
             report("Download cancelled.")
             break
-        fname = f"{_pad(set_code)}-{_pad(number)}{ext}"
+        fname = _safe_filename(set_code, number, ext)
+        if fname is None:
+            stats.failed += 1
+            logging.warning(f"Skipping card with unsafe code {set_code!r}-{number!r}")
+            report(f"  SKIPPED unsafe card code {set_code!r}-{number!r}")
+            continue
         dest = os.path.join(resolved_out, fname)
 
         # A 0-byte file is a failed write, not a card — fetch it again.
