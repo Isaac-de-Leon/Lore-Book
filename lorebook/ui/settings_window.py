@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import List
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -19,7 +19,12 @@ from PySide6.QtWidgets import (
 
 from lorebook.core.card_prices import SUPPORTED_CURRENCIES
 from lorebook.core.csv_manager import get_available_sets
-from lorebook.core.game_types import BASE_DATABASE_PATH
+from lorebook.core.game_types import (
+    BASE_DATABASE_PATH,
+    game_folders,
+    sets_to_display,
+    sets_to_store,
+)
 
 
 class SettingsWindow(QDialog):
@@ -109,36 +114,34 @@ class SettingsWindow(QDialog):
         selected_games = getattr(parent, "selected_games", {})
         selected_sets = getattr(parent, "selected_sets", {})
 
-        game_folders: List[str] = []
-        if os.path.exists(BASE_DATABASE_PATH):
-            game_folders = [
-                item for item in os.listdir(BASE_DATABASE_PATH)
-                if os.path.isdir(os.path.join(BASE_DATABASE_PATH, item))
-                and item not in ("__pycache__",)
-            ]
-
-        for game_name in game_folders:
+        for game_name in game_folders():
+            key = game_name.lower()
+            is_selected = bool(selected_games.get(key, False))
             game_root = QTreeWidgetItem(self.set_tree, [game_name])
             game_root.setFlags(
                 game_root.flags() | Qt.ItemIsAutoTristate | Qt.ItemIsUserCheckable
             )
-            is_selected = selected_games.get(game_name.lower(), False)
+            # Only used as-is when the folder has no sets yet; with children
+            # the box is derived from them (Qt auto-tristate).
             game_root.setCheckState(0, Qt.Checked if is_selected else Qt.Unchecked)
 
             # Pass db_path explicitly — avoids touching the global databasePath
             game_db_path = os.path.join(BASE_DATABASE_PATH, game_name)
             try:
                 game_sets = get_available_sets(db_path=game_db_path)
-                game_selected_sets = selected_sets.get(game_name.lower(), [])
+                ticked = set(sets_to_display(selected_sets.get(key, []), game_sets, is_selected))
                 for set_code in game_sets:
                     set_item = QTreeWidgetItem(game_root, [f"Set {set_code}"])
                     set_item.setFlags(set_item.flags() | Qt.ItemIsUserCheckable)
-                    set_item.setCheckState(
-                        0, Qt.Checked if set_code in game_selected_sets else Qt.Unchecked
-                    )
-                    set_item.setData(0, Qt.UserRole, (game_name.lower(), set_code))
+                    set_item.setCheckState(0, Qt.Checked if set_code in ticked else Qt.Unchecked)
+                    set_item.setData(0, Qt.UserRole, set_code)
             except Exception as e:
                 self.logger.warning(f"Error getting sets for {game_name}: {e}")
+
+        # One active game at a time: ticking a game (or any of its sets)
+        # unticks the others, so the dialog never shows a selection that
+        # scanning would silently ignore.
+        self.set_tree.itemChanged.connect(self._enforce_single_game)
 
         self.set_tree.expandAll()
         layout.addRow("Filter Sets:", self.set_tree)
@@ -188,37 +191,53 @@ class SettingsWindow(QDialog):
         except Exception:
             parent.foil_threshold = 0.08
 
-        # Collect game / set selections from tree
-        selected_games = {"lorcana": False, "riftbound": False}
-        selected_sets = {"lorcana": [], "riftbound": []}
-
+        # Collect game / set selections from tree — every game folder, not
+        # just the built-in two, so new games are selectable too.
+        selected_games: Dict[str, bool] = {}
+        selected_sets: Dict[str, List[str]] = {}
+        active_folder: Optional[str] = None
         for i in range(self.set_tree.topLevelItemCount()):
             root = self.set_tree.topLevelItem(i)
-            game_name = root.text(0).lower()
-            if game_name not in selected_games:
-                continue
-            selected_games[game_name] = root.checkState(0) != Qt.Unchecked
-            if selected_games[game_name]:
-                for j in range(root.childCount()):
-                    child = root.child(j)
-                    if child.checkState(0) == Qt.Checked:
-                        set_code = child.text(0).split(" ")[-1]
-                        selected_sets[game_name].append(set_code)
+            folder = root.text(0)
+            key = folder.lower()
+            selected = root.checkState(0) != Qt.Unchecked
+            selected_games[key] = selected
+            available = [root.child(j).data(0, Qt.UserRole) for j in range(root.childCount())]
+            checked = [
+                root.child(j).data(0, Qt.UserRole)
+                for j in range(root.childCount())
+                if root.child(j).checkState(0) == Qt.Checked
+            ]
+            selected_sets[key] = sets_to_store(checked, available) if selected else []
+            if selected and active_folder is None:
+                active_folder = folder
 
         self.logger.info(f"Applying settings — games: {selected_games}, sets: {selected_sets}")
         parent.selected_games = selected_games
         parent.selected_sets = selected_sets
 
-        # Load the first selected game's database (rebuilds the match index
-        # and keeps MainWindow's cache tracker in sync)
-        for game_name, is_selected in selected_games.items():
-            if is_selected:
-                parent.load_game_database(game_name.capitalize())
-                break
+        # Load the selected game's database (rebuilds the match index and
+        # keeps MainWindow's cache tracker in sync)
+        if active_folder is not None:
+            parent.load_game_database(active_folder)
 
         parent.save_settings()
         if close:
             self.close()
+
+    def _enforce_single_game(self, item: QTreeWidgetItem, column: int) -> None:
+        """Untick every other game when a game (or one of its sets) is ticked."""
+        root = item.parent() or item
+        if root.checkState(0) == Qt.Unchecked:
+            return
+        self.set_tree.blockSignals(True)
+        try:
+            for i in range(self.set_tree.topLevelItemCount()):
+                other = self.set_tree.topLevelItem(i)
+                if other is not root and other.checkState(0) != Qt.Unchecked:
+                    other.setCheckState(0, Qt.Unchecked)
+        finally:
+            self.set_tree.blockSignals(False)
 
     def _rebuild_database(self):
         """Apply current settings, trigger a background DB rebuild, then close."""

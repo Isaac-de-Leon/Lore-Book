@@ -32,6 +32,7 @@ from PhotoMatching import (
 from lorebook.core.card_database import _cache_path
 from lorebook.core.csv_manager import read_collection_rows
 from lorebook.core.features import _check_tflite_input_dtype
+from lorebook.core.game_types import game_folders, resolve_game_folder, sets_to_display, sets_to_store
 from lorebook.core.image_utils import CARD_ASPECT, MotionGate, crop_to_card, focus_rect
 
 HEADER = ["Set Number", "Card Number", "Variant", "Count"]
@@ -71,6 +72,34 @@ def test_game_type_and_file_naming(tmp_path):
     assert _cache_path(os.path.join("Card_Images", "Lorcana")) == "DBCardCache_Lorcana.db"
     assert _cache_path("Card_Images/Lorcana//") == "DBCardCache_Lorcana.db"
     assert _cache_path("") == "DBCardCache_default.db"
+
+
+def test_game_folder_discovery(tmp_path):
+    for name in ("Lorcana", "MTG", "__pycache__", ".hidden", "logs"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "notes.txt").touch()
+    assert game_folders(str(tmp_path)) == ["Lorcana", "MTG"]
+    assert game_folders(str(tmp_path / "missing")) == []
+    # Settings keys are lowercase; the real folder name (and its case) wins —
+    # "MTG" must not become "Mtg" (wrong path on Linux, wrong CSV name).
+    assert resolve_game_folder("mtg", str(tmp_path)) == "MTG"
+    assert resolve_game_folder(" Lorcana ", str(tmp_path)) == "Lorcana"
+    assert resolve_game_folder("pokemon", str(tmp_path)) is None
+
+
+def test_set_filter_round_trip():
+    sets = ["001", "002", "003"]
+    # "All sets" is stored as [] so later sets are included automatically...
+    assert sets_to_store(sets, sets) == []
+    assert sets_to_store([], []) == []
+    # ...and shows every set ticked, so the tree doesn't read as "game off".
+    assert sets_to_display([], sets, game_selected=True) == sets
+    assert sets_to_display([], sets, game_selected=False) == []
+    # A partial filter round-trips in folder order.
+    assert sets_to_store(["003", "001"], sets) == ["001", "003"]
+    assert sets_to_display(["001", "003"], sets, game_selected=True) == ["001", "003"]
+    # A stale filter (no stored set on disk) falls back to all.
+    assert sets_to_display(["999"], sets, game_selected=True) == sets
 
 
 def test_split_filename():

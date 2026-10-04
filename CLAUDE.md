@@ -83,7 +83,7 @@ Lore-Book/
 
 | File | What it owns |
 |------|-------------|
-| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, constants |
+| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, `game_folders()`/`resolve_game_folder()` (Card_Images discovery, case-preserving), `sets_to_store()`/`sets_to_display()` (set-filter semantics), constants |
 | `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` (auto-scan) |
 | `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
 | `lorebook/core/card_prices.py` | `price_for()`, `format_price()`, `rate_for()`, `prices_stale()`, `clear_price_cache()` — optional market prices from `card_prices_<Game>.json` + `currency_rates.json` (display only) |
@@ -204,8 +204,8 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 | `currency` | str | Display currency for scanned-card market prices (`USD`/`CAD`/`EUR`/`GBP`; source prices are USD) |
 | `theme` | string | UI theme: `"dark"` (default) or `"light"` — set in Settings |
 | `debug_mode` | bool | Overlay activation heatmap on the matched card image |
-| `selected_games` | object | Which games are active (`{"lorcana": true, "riftbound": false}`) |
-| `selected_sets` | object | Which set codes to search within each game |
+| `selected_games` | object | Which game is active, keyed by lowercased `Card_Images/` folder name (`{"lorcana": true, "riftbound": false}`); Settings allows one at a time |
+| `selected_sets` | object | Set codes to search within each game; `[]` means all sets (including ones added later) |
 
 ---
 

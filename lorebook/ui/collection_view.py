@@ -3,7 +3,7 @@
 import logging
 import os
 import shutil
-from typing import List, Optional
+from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -22,21 +22,10 @@ from PySide6.QtWidgets import (
 
 from lorebook.core.card_names import name_for
 from lorebook.core.csv_manager import clear_collection, read_collection_rows
-from lorebook.core.game_types import BASE_DATABASE_PATH, csv_for_game
+from lorebook.core.game_types import csv_for_game, game_folders
 from lorebook.ui.icons import get_icon
 
 _COLUMNS = ["Set", "Card", "Variant", "Count", "Name"]
-
-
-def _game_folders() -> List[str]:
-    """Game folder names under Card_Images/ (same discovery as the settings tree)."""
-    if not os.path.exists(BASE_DATABASE_PATH):
-        return []
-    return sorted(
-        item for item in os.listdir(BASE_DATABASE_PATH)
-        if os.path.isdir(os.path.join(BASE_DATABASE_PATH, item))
-        and item not in ("__pycache__",)
-    )
 
 
 class CollectionView(QWidget):
@@ -52,7 +41,7 @@ class CollectionView(QWidget):
 
         # Toolbar row
         self.game_combo = QComboBox()
-        games = _game_folders()
+        games = game_folders()
         self.game_combo.addItems(games)
         if initial_game and initial_game in games:
             self.game_combo.setCurrentText(initial_game)

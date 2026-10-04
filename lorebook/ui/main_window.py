@@ -46,7 +46,13 @@ from lorebook.core.card_prices import (
     rate_for,
 )
 from lorebook.core.csv_manager import split_filename, update_cardlist
-from lorebook.core.game_types import csv_for_game, game_type_from_name, is_foil_only_card
+from lorebook.core.game_types import (
+    csv_for_game,
+    game_folders,
+    game_type_from_name,
+    is_foil_only_card,
+    resolve_game_folder,
+)
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import MotionGate, crop_to_card, focus_rect, is_probably_foil
@@ -175,15 +181,26 @@ class MainWindow(QWidget):
         if timeout_ms > 0:
             QTimer.singleShot(timeout_ms, lambda: self.csv_status.setText(""))
 
-    def get_active_game(self) -> Optional[str]:
-        """Return the capitalized name of the currently selected game, or None."""
+    def _active_game_key(self) -> Optional[str]:
+        """Settings key (lowercased folder name) of the selected game, or None."""
         try:
-            for name, selected in self.selected_games.items():
+            for key, selected in self.selected_games.items():
                 if selected:
-                    return name.capitalize()
+                    return key
         except Exception as e:
             self.logger.error(f"Error getting active game: {e}")
         return None
+
+    def get_active_game(self) -> Optional[str]:
+        """Return the Card_Images folder name of the selected game, or None.
+
+        Resolved against the real folder so names like "MTG" keep their case
+        (falls back to .capitalize() only when the folder is missing).
+        """
+        key = self._active_game_key()
+        if key is None:
+            return None
+        return resolve_game_folder(key) or key.capitalize()
 
     def load_game_database(self, game_name: str) -> bool:
         """
@@ -630,17 +647,13 @@ class MainWindow(QWidget):
         card_images_dir = "Card_Images"
         try:
             os.makedirs(card_images_dir, exist_ok=True)
-            game_folders = [
-                item for item in os.listdir(card_images_dir)
-                if os.path.isdir(os.path.join(card_images_dir, item))
-                and item not in ("__pycache__", "logs")
-            ]
+            folders = game_folders(card_images_dir)
         except Exception as e:
             self.logger.error(f"Error scanning {card_images_dir}: {e}")
             self.match_label.setText("Error scanning Card_Images directory")
             return
 
-        if not game_folders:
+        if not folders:
             self.match_label.setText("No game folders found in Card_Images directory")
             return
 
@@ -660,19 +673,19 @@ class MainWindow(QWidget):
             self._progress_dialog = BuildProgressDialog(self)
             self._progress_dialog.cancel_requested.connect(self._cancel_db_build)
         self._progress_dialog.reset_for_new_build()
-        self._progress_dialog.set_status(f"Building {game_folders[0]} database, please wait…")
+        self._progress_dialog.set_status(f"Building {folders[0]} database, please wait…")
         self._progress_dialog.show()
 
         self._db_progress_pct = 0
         self._build_thread = threading.Thread(
             target=self._build_all_games_worker,
-            args=(game_folders, self._build_cancel_event),
+            args=(folders, self._build_cancel_event),
             daemon=True,
         )
         self._build_thread.start()
         self._db_progress_timer.start()
 
-    def _build_all_games_worker(self, game_folders: List[str], cancel_event: threading.Event) -> None:
+    def _build_all_games_worker(self, folders: List[str], cancel_event: threading.Event) -> None:
         """Build every game's feature DB sequentially in one background thread.
 
         Runs off the main thread and must NOT touch Qt widgets directly — all
@@ -699,7 +712,7 @@ class MainWindow(QWidget):
             except Exception as e:
                 self.logger.warning(f"Currency-rate refresh failed (continuing): {e}")
 
-        for game_name in game_folders:
+        for game_name in folders:
             if cancel_event.is_set():
                 break
             game_path = os.path.join("Card_Images", game_name)
@@ -1116,11 +1129,7 @@ class MainWindow(QWidget):
         """Keep only matches that belong to the active game's selected sets."""
         if not matches:
             return []
-        active_game = None
-        for name, selected in self.selected_games.items():
-            if selected:
-                active_game = name
-                break
+        active_game = self._active_game_key()
         if not active_game:
             return matches
 
