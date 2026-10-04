@@ -5,8 +5,10 @@ from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
 
+from lorebook.core.paths import data_path
+
 SUPPORTED_EXTS = (".webp", ".jpg", ".jpeg", ".png")
-BASE_DATABASE_PATH = "Card_Images"
+BASE_DATABASE_PATH = data_path("Card_Images")
 LORCANA_CSV = "LorcanaList.csv"
 RIFTBOUND_CSV = "RiftboundList.csv"
 
@@ -96,10 +98,10 @@ def csv_for_game(game_name: str | None) -> str:
         raise ValueError("game name is required")
     game_type = game_type_from_name(name)
     if game_type == GameType.LORCANA:
-        return LORCANA_CSV
+        return data_path(LORCANA_CSV)
     if game_type == GameType.RIFTBOUND:
-        return RIFTBOUND_CSV
-    return f"{name}List.csv"
+        return data_path(RIFTBOUND_CSV)
+    return data_path(f"{name}List.csv")
 
 
 # Lorcana main sets have exactly 204 regular cards; anything numbered above
@@ -129,7 +131,9 @@ def get_game_type(filepath: str) -> "GameType":
         return GameType.UNKNOWN
     parts = list(Path(filepath).parts)
     lowered = [p.lower() for p in parts]
-    base = BASE_DATABASE_PATH.lower()
+    # Compare the folder *name*: BASE_DATABASE_PATH is a full per-user path
+    # in installed builds (paths.data_path), never a single path part.
+    base = os.path.basename(BASE_DATABASE_PATH).lower()
     if base in lowered and lowered.index(base) + 1 < len(parts) - 1:
         folder = parts[lowered.index(base) + 1]
     elif len(parts) >= 2:

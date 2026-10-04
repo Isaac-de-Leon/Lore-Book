@@ -1,0 +1,60 @@
+name: Release
+
+# Push a tag like v0.2.0 (matching __version__ in lorebook/__init__.py) to
+# build the Windows installer and attach it to a GitHub Release.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Fail fast, before the heavy install: the tag must match the code's
+      # version. lorebook/__init__.py is import-light on purpose so this
+      # works with no dependencies installed.
+      - name: Check tag matches __version__
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(python -c "import lorebook; print(lorebook.__version__)")
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::Tag v$tag does not match lorebook.__version__ ($ver)"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller==6.11.1
+
+      - name: Build app (PyInstaller)
+        run: pyinstaller lorebook.spec --noconfirm
+
+      - name: Sanity-check bundle
+        shell: bash
+        run: |
+          test -f dist/LoreBook/LoreBook.exe
+          du -sh dist/LoreBook
+
+      # Inno Setup 6 is preinstalled on windows-latest runner images.
+      # Fallback if the image ever drops it: choco install innosetup -y
+      - name: Compile installer (Inno Setup)
+        shell: bash
+        run: |
+          export LOREBOOK_VERSION="${GITHUB_REF_NAME#v}"
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" installer.iss
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Output/LoreBook-Setup-*.exe
+          generate_release_notes: true

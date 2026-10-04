@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from lorebook.core.game_types import BASE_DATABASE_PATH, SUPPORTED_EXTS
+from lorebook.core.paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def _cache_path(db_path: str) -> str:
     # Strip trailing separators so "Card_Images/Lorcana/" (e.g. from shell
     # tab-completion) resolves to "Lorcana", not "".
     game = os.path.basename(db_path.rstrip("/\\")) or "default"
-    return f"DBCardCache_{game}.db"
+    return data_path(f"DBCardCache_{game}.db")
 
 
 def _init_db(path: str) -> None:

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lorebook import __version__
 from lorebook.core.card_database import (
     build_feature_database,
     list_image_files,
@@ -51,6 +52,7 @@ from lorebook.core.csv_manager import split_filename, update_cardlist
 from lorebook.core.features import extract_features, get_extractor, visualize_activation_overlay
 from lorebook.core.fileio import atomic_write_json
 from lorebook.core.game_types import (
+    BASE_DATABASE_PATH,
     csv_for_game,
     game_folders,
     game_type_from_name,
@@ -66,6 +68,7 @@ from lorebook.core.image_utils import (
     motion_sample,
 )
 from lorebook.core.matching import MatchIndex
+from lorebook.core.paths import data_path
 from lorebook.core.price_fetcher import download_card_prices, download_currency_rates
 from lorebook.hardware.camera import open_capture
 from lorebook.ui.collection_view import CollectionView
@@ -76,7 +79,7 @@ from lorebook.ui.styles import DEFAULT_THEME, THEMES, build_stylesheet, theme_to
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_FILE = "ui_settings.json"
+SETTINGS_FILE = data_path("ui_settings.json")
 
 # Held at module level so the faulthandler target file is never GC-closed.
 _crash_log_file = None
@@ -84,7 +87,7 @@ _crash_log_file = None
 
 def setup_logging(log_file: str = "card_scanner.log") -> None:
     """Configure application-wide logging with rotating file + console handlers."""
-    log_dir = "logs"
+    log_dir = data_path("logs")
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, log_file)
 
@@ -236,7 +239,7 @@ class MainWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lore Book")
+        self.setWindowTitle(f"Lore Book v{__version__}")
         self.resize(1000, 840)
 
         # State
@@ -688,7 +691,7 @@ class MainWindow(QWidget):
 
     def start_db_build_in_background(self) -> None:
         """Discover game folders and kick off one background build thread for all of them."""
-        card_images_dir = "Card_Images"
+        card_images_dir = BASE_DATABASE_PATH
         try:
             os.makedirs(card_images_dir, exist_ok=True)
             folders = game_folders(card_images_dir)
@@ -762,7 +765,7 @@ class MainWindow(QWidget):
         for game_name in folders:
             if cancel_event.is_set():
                 break
-            game_path = os.path.join("Card_Images", game_name)
+            game_path = os.path.join(BASE_DATABASE_PATH, game_name)
             # -1 = indeterminate: the download phase only reports text lines
             self._db_progress_pct = -1
 
@@ -1209,7 +1212,7 @@ class MainWindow(QWidget):
         self.match_label.setText(f"{score:.3f}  {fname}")
 
         if active_game:
-            match_path = os.path.join("Card_Images", active_game, fname)
+            match_path = os.path.join(BASE_DATABASE_PATH, active_game, fname)
             img = cv2.imread(match_path, cv2.IMREAD_COLOR)
             if img is not None:
                 # setPixmap clears any placeholder text automatically

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from lorebook.core.fileio import atomic_write_bytes
+from lorebook.core.game_types import BASE_DATABASE_PATH, resolve_game_folder
 from lorebook.core.net import fetch_bytes as _download
 from lorebook.core.net import fetch_json as _fetch_json
 
@@ -306,7 +307,9 @@ def download_new_images(
 
     default_url, fetcher, target_fn = GAMES[key]
     resolved_url = url or default_url
-    resolved_out = out_dir or os.path.join("Card_Images", game.strip().capitalize())
+    resolved_out = out_dir or os.path.join(
+        BASE_DATABASE_PATH, resolve_game_folder(game) or game.strip().capitalize()
+    )
     ext = ".webp" if fmt == "webp" else ".jpg"
     wanted = {_norm(s) for s in sets} if sets else None
 

@@ -18,10 +18,12 @@ import os
 import sys
 
 try:
+    from lorebook.core.card_names import names_file_for
     from lorebook.core.image_fetcher import is_promo_printing
     from lorebook.core.net import fetch_json as _fetch_json
 except ImportError:  # running from a checkout without `pip install -e .`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lorebook.core.card_names import names_file_for
     from lorebook.core.image_fetcher import is_promo_printing
     from lorebook.core.net import fetch_json as _fetch_json
 
@@ -111,7 +113,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Fetch card names into card_names_<Game>.json.")
     p.add_argument("--game", required=True, help="Lorcana or Riftbound.")
     p.add_argument("--url", help="Override the source URL (e.g. a mirror or newer endpoint).")
-    p.add_argument("--out", help="Output path (default: card_names_<Game>.json in the cwd).")
+    p.add_argument("--out", help="Output path (default: card_names_<Game>.json where the app reads it).")
     args = p.parse_args(argv)
 
     key = args.game.strip().lower()
@@ -135,7 +137,7 @@ def main(argv=None) -> int:
               "Try --url with an alternative source.", file=sys.stderr)
         return 1
 
-    out = args.out or f"card_names_{args.game.strip().capitalize()}.json"
+    out = args.out or names_file_for(args.game.strip().capitalize())
     with open(out, "w", encoding="utf-8") as f:
         json.dump(names, f, ensure_ascii=False, indent=1, sort_keys=True)
     print(f"Wrote {len(names)} card names to {out}")

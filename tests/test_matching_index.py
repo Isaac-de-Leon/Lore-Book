@@ -14,7 +14,7 @@ def _random_db(n=50, dim=64, seed=7):
     }
 
 
-def test_matches_reference_implementation():
+def test_match_index():
     # Threshold filtering and descending sort are covered by parity.
     db = _random_db()
     rng = np.random.default_rng(11)
@@ -25,8 +25,7 @@ def test_matches_reference_implementation():
         assert [n for n, _ in got] == [n for n, _ in expected]
         assert np.allclose([s for _, s in got], [s for _, s in expected], atol=1e-5)
 
-
-def test_invalid_vectors_and_queries():
+    # Invalid vectors and queries
     assert MatchIndex({}).find(np.ones(64, np.float32)) == []
     assert len(MatchIndex({})) == 0
 
