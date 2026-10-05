@@ -32,9 +32,10 @@ def main() -> int:
         app.setWindowIcon(QIcon(_ICON_PNG))
     w = MainWindow()
     w.show()
-    _watchdog = GuiStallWatchdog(app)  # noqa: F841 — kept alive for the app lifetime
+    _watchdog = GuiStallWatchdog(app)
     QTimer.singleShot(0, w.start_camera)
     rc = app.exec()
+    _watchdog.stop()  # shutdown waits below must not be reported as a hang
     if not w.stop_workers():
         # A worker is still inside a long blocking call (e.g. a network request
         # with a long timeout). Letting Python tear down its running QThread
