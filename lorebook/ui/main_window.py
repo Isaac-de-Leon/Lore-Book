@@ -23,10 +23,8 @@ from PySide6.QtWidgets import (
 
 from lorebook import __version__
 from lorebook.core.build import BuildReport
-from lorebook.core.card_database import GameDatabase
 from lorebook.core.card_prices import clear_price_cache
 from lorebook.core.csv_manager import split_filename
-from lorebook.core.features import visualize_activation_overlay
 from lorebook.core.game_types import BASE_DATABASE_PATH, game_folders
 from lorebook.core.image_utils import (
     card_motion_gate,
@@ -63,17 +61,22 @@ class MainWindow(QWidget):
     signals below) and hears back through the workers' own signals, which Qt
     delivers on the GUI thread. The only direct cross-thread touches are
     thread-safe by design: setting the build's cancel Event and calling
-    CameraWorker.frame_consumed(). Everything else — widgets, settings,
-    game_db — is GUI-thread-only. Scan results carry a token so a superseded
-    scan's result is dropped. Model use is serialized by features._model_lock
-    (a scan during a build waits for the current batch).
+    CameraWorker.frame_consumed(). Everything else — widgets, settings —
+    is GUI-thread-only, and the GUI thread never touches the model or the
+    card database (ScanWorker owns both, including the debug heatmap), so a
+    running build can't freeze the window. Scan results carry a token so a
+    superseded scan's result is dropped. Model use is serialized by
+    features._model_lock, with a waiting scan served before the build's
+    next batch.
     """
 
     # Queued requests to the workers (connected in _start_workers).
     camera_start_requested = Signal(int)                       # camera index
     camera_stop_requested = Signal()
-    scan_job_requested = Signal(int, object, object, float, str)  # token, image, index, threshold, game
+    scan_job_requested = Signal(int, object, float, str)  # token, image, threshold, game
     warm_up_requested = Signal()
+    heatmap_requested = Signal(object)                    # preview frame (debug mode)
+    scan_db_invalidated = Signal()                        # caches rebuilt → ScanWorker reloads
     build_requested = Signal(object, object)                   # game folders, cancel Event
 
     def __init__(self) -> None:
@@ -82,7 +85,8 @@ class MainWindow(QWidget):
         self.resize(1000, 840)
 
         self.settings = AppSettings.load()
-        self.game_db = GameDatabase()  # active game's vectors + match index
+        self._heatmap_pending = False
+        self._last_heatmap: np.ndarray | None = None
         self._motion_gate = card_motion_gate()
 
         self.last_frame: np.ndarray | None = None
@@ -201,7 +205,10 @@ class MainWindow(QWidget):
         scan = self._scan.worker
         self.scan_job_requested.connect(scan.scan)
         self.warm_up_requested.connect(scan.warm_up)
+        self.heatmap_requested.connect(scan.heatmap)
+        self.scan_db_invalidated.connect(scan.invalidate)
         scan.done.connect(self._on_scan_done)
+        scan.heatmap_ready.connect(self._on_heatmap)
 
         build = self._build.worker
         self.build_requested.connect(build.run)
@@ -241,10 +248,6 @@ class MainWindow(QWidget):
         """Card_Images folder name of the selected game (real case), or None."""
         return self.settings.active_game()
 
-    def load_game_database(self, game_name: str) -> bool:
-        """Make game_name the active database. True if its cache has entries."""
-        return self.game_db.load(game_name)
-
     def _make_settings_dialog(self) -> SettingsWindow:
         dlg = SettingsWindow(self.settings, self)
         dlg.applied.connect(self._apply_settings)
@@ -258,9 +261,6 @@ class MainWindow(QWidget):
         """Adopt settings from the dialog: re-theme, load the game, persist."""
         self.settings = new
         self.apply_theme(new.theme)
-        game = new.active_game()
-        if game is not None:
-            self.load_game_database(game)
         self.save_settings()
         self.scanner.apply_settings(new)
 
@@ -346,7 +346,7 @@ class MainWindow(QWidget):
             self.scanner.set_status_text(
                 f"Database build failed for {', '.join(report.failed)} — see logs/card_scanner.log."
             )
-        self.game_db.invalidate()  # vectors may be stale after a rebuild
+        self.scan_db_invalidated.emit()  # vectors may be stale after a rebuild
         clear_price_cache()        # price/rate files may have been rewritten
         if report.prices_refreshed:
             self.scanner.refresh_current_match()
@@ -429,10 +429,20 @@ class MainWindow(QWidget):
                 self.capture_and_match()
             overlay = draw_focus_overlay(frame)
             if self.settings.debug_mode:
-                overlay = visualize_activation_overlay(overlay, blocking=False)
+                # The heatmap needs a model prediction: computed on the scan
+                # worker, one frame at a time; show the latest one meanwhile.
+                if not self._heatmap_pending:
+                    self._heatmap_pending = True
+                    self.heatmap_requested.emit(overlay)
+                if self._last_heatmap is not None:
+                    overlay = self._last_heatmap
             self.scanner.show_frame(overlay)
         finally:
             self._camera.worker.frame_consumed()  # ready for the next frame
+
+    def _on_heatmap(self, image: np.ndarray) -> None:
+        self._heatmap_pending = False
+        self._last_heatmap = image if self.settings.debug_mode else None
 
     # ------------------------------------------------------------------ scanning
 
@@ -450,21 +460,20 @@ class MainWindow(QWidget):
         if not game:
             self.scanner.scan_failed("Please select a game type in Settings.")
             return
-        if not self.game_db.ensure(game):  # reloads only after a game switch or rebuild
-            self.scanner.scan_failed("No feature database found. Build the DB first.")
-            return
 
         self._scan_token += 1
         self._scan_busy = True
         self.scanner.set_scanning(True)
-        self.scan_job_requested.emit(self._scan_token, img, self.game_db.index,
-                                     self.settings.confidence_threshold, game)
+        self.scan_job_requested.emit(self._scan_token, img, self.settings.confidence_threshold, game)
 
     def _on_scan_done(self, token: int, result: ScanResult) -> None:
         if token != self._scan_token:
             return  # superseded (or the window is closing)
         self._scan_busy = False
         self.scanner.set_scanning(False)
+        if result.no_database:
+            self.scanner.scan_failed("No feature database found. Build the DB first.")
+            return
         if result.error is not None:
             logger.error("Scan failed: %s", result.error)
         if result.matches is None:

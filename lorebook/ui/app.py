@@ -16,7 +16,7 @@ from PySide6.QtGui import QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from lorebook import __version__  # noqa: E402
-from lorebook.ui.app_logging import setup_logging  # noqa: E402
+from lorebook.ui.app_logging import GuiStallWatchdog, setup_logging  # noqa: E402
 from lorebook.ui.main_window import MainWindow  # noqa: E402
 
 _ICON_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
@@ -32,6 +32,7 @@ def main() -> int:
         app.setWindowIcon(QIcon(_ICON_PNG))
     w = MainWindow()
     w.show()
+    _watchdog = GuiStallWatchdog(app)  # noqa: F841 — kept alive for the app lifetime
     QTimer.singleShot(0, w.start_camera)
     rc = app.exec()
     if not w.stop_workers():
