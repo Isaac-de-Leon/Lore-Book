@@ -21,10 +21,13 @@
 # running".
 
 import logging
+from typing import Generic, TypeVar
 
 from PySide6.QtCore import QObject, QThread
 
 logger = logging.getLogger(__name__)
+
+W = TypeVar("W", bound=QObject)
 
 
 class _PythonThread(QThread):
@@ -34,10 +37,10 @@ class _PythonThread(QThread):
         self.exec()
 
 
-class WorkerThread:
+class WorkerThread(Generic[W]):
     """Owns one QThread and the worker QObject that lives on it."""
 
-    def __init__(self, worker: QObject, name: str):
+    def __init__(self, worker: W, name: str):
         self.worker = worker
         self.thread = _PythonThread()
         self.thread.setObjectName(name)

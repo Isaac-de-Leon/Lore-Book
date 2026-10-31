@@ -105,7 +105,7 @@ class MainWindow(QWidget):
         self.watchdog.setInterval(1000)
         self.watchdog.timeout.connect(self._watchdog_tick)
 
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.apply_theme(self.settings.theme)
         # Deferred until the event loop runs so the main window paints before
         # the progress dialog appears.
@@ -121,11 +121,11 @@ class MainWindow(QWidget):
         self.camera_btn = QPushButton("Start")
         self.camera_btn.setObjectName("cameraBtn")
         self.camera_btn.setToolTip("Start / stop the camera")
-        self.camera_btn.setFocusPolicy(Qt.NoFocus)
+        self.camera_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.camera_btn.clicked.connect(self._on_camera_btn)
 
         self.logo_label = QLabel()
-        self.logo_label.setAlignment(Qt.AlignCenter)
+        self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.logo_label.setToolTip("Lore Book")
 
         def nav_button(tooltip: str, checkable: bool = False) -> QPushButton:
@@ -133,9 +133,9 @@ class MainWindow(QWidget):
             btn.setObjectName("navBtn")
             btn.setIconSize(QSize(22, 22))
             btn.setToolTip(tooltip)
-            btn.setCursor(Qt.PointingHandCursor)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setCheckable(checkable)
-            btn.setFocusPolicy(Qt.NoFocus)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             return btn
 
         self.nav_scanner_btn = nav_button("Scanner", checkable=True)
@@ -167,12 +167,12 @@ class MainWindow(QWidget):
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(10, 14, 10, 14)
         side.setSpacing(10)
-        side.addWidget(self.logo_label, 0, Qt.AlignHCenter)
+        side.addWidget(self.logo_label, 0, Qt.AlignmentFlag.AlignHCenter)
         side.addSpacing(8)
-        side.addWidget(self.nav_scanner_btn, 0, Qt.AlignHCenter)
-        side.addWidget(self.nav_collection_btn, 0, Qt.AlignHCenter)
+        side.addWidget(self.nav_scanner_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        side.addWidget(self.nav_collection_btn, 0, Qt.AlignmentFlag.AlignHCenter)
         side.addStretch(1)
-        side.addWidget(self.settings_btn, 0, Qt.AlignHCenter)
+        side.addWidget(self.settings_btn, 0, Qt.AlignmentFlag.AlignHCenter)
 
         top = QHBoxLayout()
         top.setSpacing(8)

@@ -65,21 +65,21 @@ class ScannerView(QWidget):
     def _build_widgets(self) -> None:
         self.preview_label = QLabel("Camera stopped")
         self.preview_label.setObjectName("previewLabel")
-        self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.preview_label.setMinimumSize(640, 360)
 
         # Status / DB-build message (below camera, above result panel)
         self.match_label = QLabel("—")
         self.match_label.setObjectName("statusLabel")
-        self.match_label.setAlignment(Qt.AlignCenter)
+        self.match_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.result_panel = QFrame()
         self.result_panel.setObjectName("resultPanel")  # height set by apply_scale
 
         self.image_label = QLabel("—")
         self.image_label.setObjectName("thumbLabel")
-        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setFixedSize(92, 128)
         self.match_name_label = QLabel("—")
         self.match_name_label.setObjectName("matchName")
@@ -94,7 +94,7 @@ class ScannerView(QWidget):
         self.prev_btn.clicked.connect(self.prev_match)
         self.match_pos_label = QLabel("")
         self.match_pos_label.setObjectName("matchDetail")
-        self.match_pos_label.setAlignment(Qt.AlignCenter)
+        self.match_pos_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.next_btn = QPushButton()
         self.next_btn.setFixedSize(24, 24)
         self.next_btn.clicked.connect(self.next_match)
@@ -127,8 +127,8 @@ class ScannerView(QWidget):
         actions_row = QHBoxLayout()
         actions_row.setContentsMargins(0, 0, 0, 0)
         actions_row.setSpacing(8)
-        for w in (self.foil_check, QLabel("×"), self.count_edit, self.add_csv_btn, self.undo_btn):
-            actions_row.addWidget(w)
+        for widget in (self.foil_check, QLabel("×"), self.count_edit, self.add_csv_btn, self.undo_btn):
+            actions_row.addWidget(widget)
         actions_row.addStretch()
         actions_row.addWidget(self.csv_status)
 
@@ -169,10 +169,10 @@ class ScannerView(QWidget):
         self.next_btn.setToolTip("Next match (D)")
         self.foil_check.setToolTip("Toggle Foil (F)")
         # Keyboard shortcuts belong to the window; only the count field takes focus.
-        for w in (self.capture_btn, self.add_csv_btn, self.undo_btn, self.prev_btn,
+        for button in (self.capture_btn, self.add_csv_btn, self.undo_btn, self.prev_btn,
                   self.next_btn, self.foil_check):
-            w.setFocusPolicy(Qt.NoFocus)
-        self.count_edit.setFocusPolicy(Qt.StrongFocus)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.count_edit.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def apply_theme(self, tokens: dict[str, str]) -> None:
         """(Re)tint icons and status colors for the current theme."""
@@ -405,18 +405,18 @@ class ScannerView(QWidget):
     def handle_key(self, event: QKeyEvent) -> bool:
         """Scanner shortcuts; True if the key was handled."""
         key, mods = event.key(), event.modifiers()
-        if key == Qt.Key_C:
+        if key == Qt.Key.Key_C:
             self.scan_requested.emit()
-        elif key == Qt.Key_S and (mods & (Qt.ControlModifier | Qt.AltModifier)):
+        elif key == Qt.Key.Key_S and (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)):
             if self.add_csv_btn.isEnabled():
                 self.add_to_csv()
-        elif key == Qt.Key_Z and (mods & Qt.ControlModifier):
+        elif key == Qt.Key.Key_Z and (mods & Qt.KeyboardModifier.ControlModifier):
             self.undo_last_add()
-        elif key == Qt.Key_A:
+        elif key == Qt.Key.Key_A:
             self.prev_match()
-        elif key == Qt.Key_D:
+        elif key == Qt.Key.Key_D:
             self.next_match()
-        elif key == Qt.Key_F:
+        elif key == Qt.Key.Key_F:
             if self.foil_check.isEnabled():
                 self.foil_check.setChecked(not self.foil_check.isChecked())
         else:

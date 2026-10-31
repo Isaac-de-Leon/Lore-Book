@@ -155,3 +155,15 @@ calibrated without hardware.
 - [ ] After that rebuild, scan an alternate-art Riftbound card: it matches `<SET>-<NNN>a`, not
       the base card, and adding it writes that code (e.g. `116a`) to `RiftboundList.csv`.
       Signature cards use `<NNN>s`; these variants show no card name (names are base cards only).
+
+## Qt enum and worker typing cleanup
+
+Behaviour shouldn't change: the short enum names resolved to the same objects as the full ones.
+
+- [ ] Start the app and check the Scanner and Collection pages: layout, alignment and icons look
+      as before, and the A/D/F/S/C/Z shortcuts work.
+- [ ] Open Settings: ticking a game or set still works, and Apply keeps the selection.
+- [ ] Collection page: the table can't be edited in place, clicking selects a whole row, and Clear…
+      asks for confirmation.
+- [ ] Turn on Debug mode with the camera running: the heatmap overlay appears, and the window
+      stays responsive during a Rebuild Database.

@@ -60,8 +60,9 @@ version = {attr = "lorebook.__version__"}
 [tool.mypy]
 python_version = "3.11"
 files = ["lorebook"]
-# TensorFlow/tflite/PySide6 aren't installed in CI (tests stub them);
-# treat their imports as untyped rather than failing.
+# TensorFlow/tflite/onnx aren't installed in CI (tests stub them); treat their
+# imports as untyped rather than failing. PySide6 is installed for the type
+# check (the gui job), so lorebook/ui is checked against its real types.
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

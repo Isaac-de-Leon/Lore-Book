@@ -38,11 +38,11 @@ def show_bgr(label: QLabel, img_bgr: np.ndarray | None, fill: bool = False) -> N
     if img_bgr.dtype != np.uint8 or not img_bgr.flags["C_CONTIGUOUS"]:
         img_bgr = np.ascontiguousarray(img_bgr, dtype=np.uint8)
     h, w = img_bgr.shape[:2]
-    qimg = QImage(img_bgr.data, w, h, img_bgr.strides[0], QImage.Format_BGR888)
+    qimg = QImage(img_bgr.data, w, h, img_bgr.strides[0], QImage.Format.Format_BGR888)
     label.setPixmap(
         QPixmap.fromImage(qimg).scaled(
             label.size(),
-            Qt.IgnoreAspectRatio if fill else Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
+            Qt.AspectRatioMode.IgnoreAspectRatio if fill else Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
         )
     )

@@ -57,7 +57,7 @@ Lore-Book/
 │       └── icons.py           # Inline SVG icons → theme-tinted QIcons (get_icon)
 │
 ├── .github/workflows/
-│   ├── tests.yml          # CI: lint+mypy, pytest on Linux+Windows, headless Qt smoke test (no TF needed)
+│   ├── tests.yml          # CI: lint, pytest on Linux+Windows, mypy + headless Qt smoke test with PySide6 (no TF needed)
 │   └── release.yml        # On v* tag: PyInstaller + Inno Setup → installer on GitHub Release
 ├── lorebook.spec          # PyInstaller build definition (Windows onedir bundle)
 ├── installer.iss          # Inno Setup script (per-user install, no UAC)
@@ -342,6 +342,12 @@ the foil-only cutoff (`LORCANA_MAX_NORMAL_CARD`) and filename codes, then rebuil
 - **Keep docs in sync.** When you add a module, script, setting or registry entry, update the
   architecture tree, module table and settings table above (and README.md when user-facing).
   UI changes get a `docs/TESTING.md` entry.
+- **Never explain away a failure.** A failing or newly skipped test, a non-zero exit, a new lint or
+  type error, or a count that moved (77 → 80 errors) gets investigated until you can name its cause
+  with evidence, before moving on, committing or pushing. "Flaky", "pre-existing", "unrelated" and
+  "false positive" are conclusions you have to test first: read the message, reproduce it, and check
+  what the code does. Passing checks can also mislead, so ask whether a check can see the problem at
+  all. If something stays unresolved, say so plainly in your final message rather than leaving it out.
 - **Commit messages** use conventional prefixes: `feat:`, `fix:`, `perf:`, `test:`, `docs:`,
   `data:` (collection CSV updates, user only).
 
@@ -360,4 +366,5 @@ the foil-only cutoff (`LORCANA_MAX_NORMAL_CARD`) and filename codes, then rebuil
 - `foil_score` threshold (default `0.08`) was tuned empirically; may need adjustment per lighting setup.
 - `riot.txt` at the repo root is a Riot Games API domain-verification token — don't delete it.
 - Riftbound image fetching prefers the official Riot API (`RIOT_API_KEY` env var; dev keys from developer.riotgames.com expire every 24 h) and silently falls back to Riftcodex without one, so keyless runs still work. The two sources' JSON shapes are both handled by `riftbound_targets()`.
+- **Qt enums use their full names** (`Qt.AlignmentFlag.AlignCenter`, not `Qt.AlignCenter`). PySide6 still accepts the short forms at runtime, but its type stubs don't, so mypy fails on them. `WorkerThread` is generic so `thread.worker` keeps its real type.
 - `PySide6` is pinned to the 6.8 LTS line for NumPy 2 compatibility (6.6's shiboken predates NumPy 2; 6.11.1 fails to bootstrap on Windows/Py3.12) — see the comment in `requirements.txt` before bumping.

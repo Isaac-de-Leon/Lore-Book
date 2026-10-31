@@ -131,11 +131,11 @@ class SettingsWindow(QDialog):
             is_selected = bool(selected_games.get(key, False))
             game_root = QTreeWidgetItem(self.set_tree, [game_name])
             game_root.setFlags(
-                game_root.flags() | Qt.ItemIsAutoTristate | Qt.ItemIsUserCheckable
+                game_root.flags() | Qt.ItemFlag.ItemIsAutoTristate | Qt.ItemFlag.ItemIsUserCheckable
             )
             # Only used as-is when the folder has no sets yet; with children
             # the box is derived from them (Qt auto-tristate).
-            game_root.setCheckState(0, Qt.Checked if is_selected else Qt.Unchecked)
+            game_root.setCheckState(0, Qt.CheckState.Checked if is_selected else Qt.CheckState.Unchecked)
 
             # Pass db_path explicitly — avoids touching the global database path
             game_db_path = os.path.join(BASE_DATABASE_PATH, game_name)
@@ -144,9 +144,9 @@ class SettingsWindow(QDialog):
                 ticked = set(sets_to_display(selected_sets.get(key, []), game_sets, is_selected))
                 for set_code in game_sets:
                     set_item = QTreeWidgetItem(game_root, [f"Set {set_code}"])
-                    set_item.setFlags(set_item.flags() | Qt.ItemIsUserCheckable)
-                    set_item.setCheckState(0, Qt.Checked if set_code in ticked else Qt.Unchecked)
-                    set_item.setData(0, Qt.UserRole, set_code)
+                    set_item.setFlags(set_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    set_item.setCheckState(0, Qt.CheckState.Checked if set_code in ticked else Qt.CheckState.Unchecked)
+                    set_item.setData(0, Qt.ItemDataRole.UserRole, set_code)
             except OSError as e:
                 self.logger.warning("Error getting sets for %s: %s", game_name, e)
 
@@ -170,8 +170,8 @@ class SettingsWindow(QDialog):
         form.setLayout(layout)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidget(form)
 
         outer = QVBoxLayout()
@@ -206,12 +206,12 @@ class SettingsWindow(QDialog):
         for i in range(self.set_tree.topLevelItemCount()):
             root = self.set_tree.topLevelItem(i)
             key = root.text(0).lower()
-            selected = root.checkState(0) != Qt.Unchecked
-            available = [root.child(j).data(0, Qt.UserRole) for j in range(root.childCount())]
+            selected = root.checkState(0) != Qt.CheckState.Unchecked
+            available = [root.child(j).data(0, Qt.ItemDataRole.UserRole) for j in range(root.childCount())]
             checked = [
-                root.child(j).data(0, Qt.UserRole)
+                root.child(j).data(0, Qt.ItemDataRole.UserRole)
                 for j in range(root.childCount())
-                if root.child(j).checkState(0) == Qt.Checked
+                if root.child(j).checkState(0) == Qt.CheckState.Checked
             ]
             new.selected_games[key] = selected
             new.selected_sets[key] = sets_to_store(checked, available) if selected else []
@@ -234,14 +234,14 @@ class SettingsWindow(QDialog):
     def _enforce_single_game(self, item: QTreeWidgetItem, column: int) -> None:
         """Untick every other game when a game (or one of its sets) is ticked."""
         root = item.parent() or item
-        if root.checkState(0) == Qt.Unchecked:
+        if root.checkState(0) == Qt.CheckState.Unchecked:
             return
         self.set_tree.blockSignals(True)
         try:
             for i in range(self.set_tree.topLevelItemCount()):
                 other = self.set_tree.topLevelItem(i)
-                if other is not root and other.checkState(0) != Qt.Unchecked:
-                    other.setCheckState(0, Qt.Unchecked)
+                if other is not root and other.checkState(0) != Qt.CheckState.Unchecked:
+                    other.setCheckState(0, Qt.CheckState.Unchecked)
         finally:
             self.set_tree.blockSignals(False)
 

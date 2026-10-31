@@ -87,9 +87,9 @@ _cache: dict[tuple[str, str, str | None], QIcon] = {}
 def _render(body: str, color: str, size: int) -> QPixmap:
     renderer = QSvgRenderer(QByteArray(_SVG.format(color=color, body=body).encode()))
     pm = QPixmap(size, size)
-    pm.fill(Qt.transparent)
+    pm.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pm)
-    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     renderer.render(painter)
     painter.end()
     return pm
@@ -108,8 +108,8 @@ def get_icon(name: str, color: str, checked_color: str | None = None) -> QIcon:
     body = _ICONS[name]
     icon = QIcon()
     for size in _RENDER_SIZES:
-        icon.addPixmap(_render(body, color, size), QIcon.Normal, QIcon.Off)
+        icon.addPixmap(_render(body, color, size), QIcon.Mode.Normal, QIcon.State.Off)
         if checked_color:
-            icon.addPixmap(_render(body, checked_color, size), QIcon.Normal, QIcon.On)
+            icon.addPixmap(_render(body, checked_color, size), QIcon.Mode.Normal, QIcon.State.On)
     _cache[key] = icon
     return icon

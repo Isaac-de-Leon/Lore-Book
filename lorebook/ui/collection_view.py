@@ -76,13 +76,13 @@ class CollectionView(QWidget):
         # Table
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(_COLUMNS)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(len(_COLUMNS) - 1, QHeaderView.Stretch)  # Name fills
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(len(_COLUMNS) - 1, QHeaderView.ResizeMode.Stretch)  # Name fills
         # Short values ("011") would otherwise shrink columns below their
         # header text + sort arrow, truncating "Set" to garbage.
         header.setMinimumSectionSize(72)
@@ -127,7 +127,7 @@ class CollectionView(QWidget):
             total += count_val
 
             count_item = QTableWidgetItem()
-            count_item.setData(Qt.DisplayRole, count_val)  # int → numeric sort
+            count_item.setData(Qt.ItemDataRole.DisplayRole, count_val)  # int → numeric sort
 
             name = name_for(set_code, card_code, game) or ""
             for c, item in enumerate([
@@ -183,10 +183,10 @@ class CollectionView(QWidget):
             "Clear collection",
             f"Delete all {len(rows)} entries ({total} cards) from "
             f"{os.path.basename(csv_for_game(game))}?\n\nThis cannot be undone.",
-            QMessageBox.Yes | QMessageBox.Cancel,
-            QMessageBox.Cancel,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
         )
-        if answer != QMessageBox.Yes:
+        if answer != QMessageBox.StandardButton.Yes:
             return
         clear_collection(game)
         self.logger.info("Cleared collection CSV for %s", game)
