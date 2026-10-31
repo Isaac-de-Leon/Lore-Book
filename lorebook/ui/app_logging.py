@@ -61,3 +61,36 @@ def setup_logging(log_file: str = "card_scanner.log") -> None:
     sys.excepthook = _log_excepthook
 
     logger.info("Logging initialized — %s", log_path)
+
+
+class GuiStallWatchdog:
+    """Writes every thread's stack to logs/hang_dump.log when the GUI thread
+    stops processing events for stall_seconds.
+
+    Uses faulthandler.dump_traceback_later, whose timer is a C thread that
+    does not need the GIL — so the dump still happens in a true deadlock
+    where some thread holds the GIL forever (a Python-level watchdog thread
+    would be stuck too). A QTimer on the GUI thread keeps re-arming the
+    timer; if the GUI thread blocks, re-arming stops and the dump fires once.
+    """
+
+    def __init__(self, parent, stall_seconds: float = 8.0) -> None:
+        from PySide6.QtCore import QTimer
+
+        self._stall = stall_seconds
+        path = os.path.join(data_path("logs"), "hang_dump.log")
+        # Kept open for the process lifetime (the C timer writes to its fd).
+        self._file = open(path, "a", encoding="utf-8")  # noqa: SIM115
+        self._timer = QTimer(parent)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._rearm)
+        self._timer.start()
+        self._rearm()
+
+    def _rearm(self) -> None:
+        faulthandler.cancel_dump_traceback_later()
+        faulthandler.dump_traceback_later(self._stall, repeat=False, file=self._file)
+
+    def stop(self) -> None:
+        self._timer.stop()
+        faulthandler.cancel_dump_traceback_later()

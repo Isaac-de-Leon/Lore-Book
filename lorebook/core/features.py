@@ -21,6 +21,7 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # respect a user-set level
 import importlib.util
 import logging
 import threading
+import time
 import warnings
 from collections.abc import Sequence
 
@@ -45,6 +46,37 @@ _act_model = None    # last conv activations (for heatmaps)
 # thread-safe, so both sides queue here. Reentrant because inference paths
 # call _get_models() while holding it.
 _model_lock = threading.RLock()
+
+# Python locks aren't fair: a build looping batch after batch can re-take
+# _model_lock before a waiting scan ever gets it, leaving the scan stuck for
+# the whole build. Interactive work (a scan, the debug heatmap) raises this
+# count while it waits; batch work yields to it before each batch.
+_interactive_waiters = 0
+_waiters_guard = threading.Lock()
+
+
+class _interactive:
+    """Context manager: hold _model_lock with priority over batch extraction."""
+
+    def __enter__(self) -> None:
+        global _interactive_waiters
+        with _waiters_guard:
+            _interactive_waiters += 1
+        try:
+            _model_lock.acquire()
+        finally:
+            with _waiters_guard:
+                _interactive_waiters -= 1
+
+    def __exit__(self, *exc) -> None:
+        _model_lock.release()
+
+
+def _yield_to_interactive(max_wait_s: float = 30.0) -> None:
+    """Batch work: let any waiting interactive caller go first."""
+    deadline = time.monotonic() + max_wait_s
+    while _interactive_waiters and time.monotonic() < deadline:
+        time.sleep(0.005)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -168,7 +200,7 @@ class _KerasExtractor:
             batch = _preprocess_to_batch(img_or_path)
             if batch is None:
                 return None
-            with _model_lock:
+            with _interactive():
                 feat_model, _ = _get_models()
                 features = _infer(feat_model, batch)
             return _finalize(features)
@@ -198,6 +230,7 @@ class _KerasExtractor:
         if not rows:
             return results
         try:
+            _yield_to_interactive()
             with _model_lock:
                 feat_model, _ = _get_models()
                 features = feat_model.predict(np.stack(rows), verbose=0)

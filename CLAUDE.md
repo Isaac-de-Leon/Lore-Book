@@ -139,9 +139,9 @@ Lore-Book/
 | `lorebook/ui/settings_window.py` | `SettingsWindow(settings)` — edits a copy; emits `applied(AppSettings)` / `rebuild_requested` (never writes to its parent) |
 | `lorebook/ui/progress_dialog.py` | `BuildProgressDialog` — modeless DB-build progress popup with Cancel |
 | `lorebook/ui/collection_view.py` | `CollectionView` — collection table (game dropdown, sortable, Export CSV… save-a-copy, Clear… with confirm) |
-| `lorebook/ui/main_window.py` | `MainWindow` — shell (sidebar, header camera toggle, pages, theme) and coordinator: owns `settings`, `game_db` and the three `WorkerThread`s, runs capture → scan → show. Threading rules in its docstring |
+| `lorebook/ui/main_window.py` | `MainWindow` — shell (sidebar, header camera toggle, pages, theme) and coordinator: owns `settings` and the three `WorkerThread`s, runs capture → scan → show. Threading rules in its docstring |
 | `lorebook/ui/scanner_view.py` | `ScannerView` — Scanner page widget: preview, status, result panel, Prev/Next, foil-only lock, Add/Undo (CSV writes), shortcuts; emits `scan_requested` / `collection_changed` |
-| `lorebook/ui/workers.py` | `CameraWorker` (open + read frames; one pending frame at a time), `ScanWorker` (extract + match; model warm-up), `BuildWorker` (runs `core.build`) — QObjects talking only via signals |
+| `lorebook/ui/workers.py` | `CameraWorker` (open + read frames; one pending frame at a time), `ScanWorker` (owns the model and the active game's `GameDatabase`: extract + match, debug heatmap, warm-up), `BuildWorker` (runs `core.build`) — QObjects talking only via signals |
 | `lorebook/ui/threads.py` | `WorkerThread` — moveToThread wrapper with `stop()` (requestInterruption + quit + wait); its QThread runs the event loop from a Python `run()` so `threading.local` state survives between slot calls |
 | `lorebook/ui/app_logging.py` | `setup_logging()` — rotating log + faulthandler crash log + excepthook |
 | `lorebook/ui/app.py` | `main()` — QApplication bootstrap (installed as `lorebook-ui`) |
@@ -336,7 +336,8 @@ the foil-only cutoff (`LORCANA_MAX_NORMAL_CARD`) and filename codes, then rebuil
   committed and only change in `data:` commits made by the user. Never edit, clear or regenerate
   them as part of feature work. Tests write to `tmp_path`.
 - **GUI threading.** Workers (`lorebook/ui/workers.py`) talk to the window only through queued
-  signals. Every widget, `settings` and `game_db` are GUI-thread-only; the only direct cross-thread
+  signals. Widgets and `settings` are GUI-thread-only, and the GUI thread never touches the model or the
+  card database (`ScanWorker` owns both); the only direct cross-thread
   touches are the build's cancel `Event` and `CameraWorker.frame_consumed()`. Full rules: the `MainWindow` docstring in `lorebook/ui/main_window.py`.
 - **Keep docs in sync.** When you add a module, script, setting or registry entry, update the
   architecture tree, module table and settings table above (and README.md when user-facing).

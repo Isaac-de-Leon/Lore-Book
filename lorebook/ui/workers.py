@@ -15,8 +15,8 @@ import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from lorebook.core.build import BuildReport, refresh_and_build
-from lorebook.core.features import extract_features, get_extractor
-from lorebook.core.matching import MatchIndex
+from lorebook.core.card_database import GameDatabase
+from lorebook.core.features import extract_features, get_extractor, visualize_activation_overlay
 from lorebook.hardware.camera import open_capture
 
 logger = logging.getLogger(__name__)
@@ -147,20 +147,30 @@ class CameraWorker(QObject):
 @dataclass
 class ScanResult:
     game: str
-    matches: list[tuple[str, float]] | None   # None: extraction failed
+    matches: list[tuple[str, float]] | None   # None: no database, or extraction failed
     error: str | None = None
+    no_database: bool = False                 # the game's feature cache is empty/missing
 
 
 class ScanWorker(QObject):
-    """Feature extraction + matching on a long-lived thread.
+    """Everything that touches the model or the card database, off the GUI thread.
 
-    Requests carry a token; the GUI drops results whose token is stale (a
-    newer scan started). Model use is additionally serialized by
-    features._model_lock, so a scan during a DB build waits for the current
-    batch instead of racing it.
+    - scan: load the game's vectors if needed (SQLite read + index build — can
+      take seconds and can wait on a build writing the same file), extract
+      features, match. Requests carry a token; the GUI drops stale results.
+    - heatmap: the debug-mode activation overlay for a preview frame.
+    - warm_up: load the model at startup so the first scan doesn't stall.
+    The worker owns its GameDatabase; nothing else reads it. Model use is
+    serialized by features._model_lock, with scans taking priority over
+    DB-build batches.
     """
 
-    done = Signal(int, object)     # (token, ScanResult)
+    done = Signal(int, object)        # (token, ScanResult)
+    heatmap_ready = Signal(object)    # np.ndarray (BGR)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._db = GameDatabase()
 
     @Slot()
     def warm_up(self) -> None:
@@ -170,15 +180,31 @@ class ScanWorker(QObject):
         except Exception as e:  # noqa: BLE001 — optional warm-up; the scan reports real errors
             logger.warning("Background model load failed (will retry on scan): %s", e)
 
-    @Slot(int, object, object, float, str)
-    def scan(self, token: int, img_bgr: np.ndarray, index: MatchIndex, threshold: float, game: str) -> None:
-        """Uses the index it was handed, so a game switch mid-scan can't mix games."""
+    @Slot()
+    def invalidate(self) -> None:
+        """The caches were rebuilt: reload vectors on the next scan."""
+        self._db.invalidate()
+
+    @Slot(int, object, float, str)
+    def scan(self, token: int, img_bgr: np.ndarray, threshold: float, game: str) -> None:
         try:
-            features = extract_features(img_bgr)
-            matches = index.find(features, threshold=threshold) if features is not None else None
-            result = ScanResult(game, matches)
+            if not self._db.ensure(game):  # reloads only after a game switch or rebuild
+                result = ScanResult(game, None, no_database=True)
+            else:
+                features = extract_features(img_bgr)
+                matches = self._db.index.find(features, threshold=threshold) if features is not None else None
+                result = ScanResult(game, matches)
         # Boundary: the GUI stays in "Scanning…" until done() arrives.
         except Exception as e:  # noqa: BLE001
             logger.exception("Scan failed")
             result = ScanResult(game, None, str(e))
         self.done.emit(token, result)
+
+    @Slot(object)
+    def heatmap(self, frame_bgr: np.ndarray) -> None:
+        try:
+            out = visualize_activation_overlay(frame_bgr)
+        except Exception as e:  # noqa: BLE001 — debug aid; show the plain frame instead
+            logger.debug("Heatmap failed: %s", e)
+            out = frame_bgr
+        self.heatmap_ready.emit(out)
