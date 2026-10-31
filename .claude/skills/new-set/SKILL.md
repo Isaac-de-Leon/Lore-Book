@@ -17,8 +17,9 @@ python scripts/fetch_card_images.py --game <Game> --set <N> --dry-run
 
 - **Zero targets** → the source hasn't published the set yet. Stop and tell the user. Don't
   hand-craft URLs or write placeholder images.
-- **Riftbound**: without `RIOT_API_KEY` it falls back to Riftcodex. If one source has the set
-  and the other doesn't, say which one you used.
+- **Riftbound**: without `RIOT_API_KEY` it falls back to Riftcodex, plus the official card gallery
+  for whole sets Riftcodex lacks. If one source has the set and the other doesn't, say which one
+  you used. The log line names it.
 
 ## 2. Fetch art, names, prices
 

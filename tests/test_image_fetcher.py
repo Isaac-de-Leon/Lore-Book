@@ -1,5 +1,6 @@
 # tests/test_image_fetcher.py — card-image downloader (no network).
 
+import json
 import threading
 
 import numpy as np
@@ -45,6 +46,7 @@ def _record(monkeypatch, responses):
         return responses(url) if callable(responses) else responses
 
     monkeypatch.setattr(image_fetcher, "_fetch_json", fake)
+    monkeypatch.setattr(image_fetcher, "_fetch_gallery_cards", lambda: [])
     return calls
 
 
@@ -170,6 +172,66 @@ def test_riftbound_targets_keeps_each_printing():
     # Every code must make a filename split_filename can read back.
     assert image_fetcher._safe_filename("UNL", "229s", ".webp") == "UNL-229s.webp"
     assert image_fetcher._safe_filename("OPP", "086-221", ".webp") == "OPP-086-221.webp"
+
+
+def _gallery_item(card_id, number, set_id, url):
+    """The fields we read from a real card-gallery item."""
+    return {"id": card_id, "collectorNumber": number, "publicCode": "x", "name": "x",
+            "set": {"label": "Card Set", "value": {"id": set_id, "label": "x"}},
+            "cardImage": {"type": "image", "url": url}}
+
+
+def _gallery_page(items):
+    data = {"props": {"pageProps": {"page": {"blades": [
+        {"type": "header"}, {"type": "cards", "cards": {"items": items}},
+    ]}}}}
+    return f'<html><script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script></html>'
+
+
+def test_gallery_cards_parse_into_the_usual_filenames():
+    page = _gallery_page([
+        _gallery_item("rad-175-167", 175, "RAD", "http://img/175.png"),
+        _gallery_item("rad-sp1-005", 1, "RAD", "http://img/sp1.png"),
+        _gallery_item("rad-r01a", 1, "RAD", "http://img/r01a.png"),
+        _gallery_item("rad-153a-167", 153, "RAD", "http://img/153a.png"),
+        _gallery_item("rad-200-star-167", 200, "RAD", "http://img/200s.png"),
+    ])
+    assert list(riftbound_targets(image_fetcher._gallery_cards(page))) == [
+        ("RAD", "175", "http://img/175.png"),
+        ("RAD", "sp1", "http://img/sp1.png"),
+        ("RAD", "r01a", "http://img/r01a.png"),
+        ("RAD", "153a", "http://img/153a.png"),
+        ("RAD", "200s", "http://img/200s.png"),
+    ]
+    # A redesigned page is reported, not read as "no cards".
+    for bad in ("<html>no data</html>", _gallery_page([{"id": "rad-1-1"}]),
+                '<script id="__NEXT_DATA__">{"props": {}}</script>'):
+        with pytest.raises(ValueError):
+            image_fetcher._gallery_cards(bad)
+
+
+def test_gallery_only_fills_sets_riftcodex_lacks(monkeypatch):
+    monkeypatch.delenv("RIOT_API_KEY", raising=False)
+    known = _riftcodex_card("ogn-001-298", 1, "x", "OGN", "http://img/riftcodex.png")
+    _record(monkeypatch, {"total": 1, "items": [known]})
+    gallery = [
+        {"riftbound_id": "ogn-001-298", "collector_number": 1, "set": {"set_id": "OGN"},
+         "media": {"image_url": "http://img/gallery.png"}},
+        {"riftbound_id": "rad-001-167", "collector_number": 1, "set": {"set_id": "RAD"},
+         "media": {"image_url": "http://img/rad.png"}},
+    ]
+    monkeypatch.setattr(image_fetcher, "_fetch_gallery_cards", lambda: gallery)
+    assert list(riftbound_targets(_fetch_riftbound(RIFTBOUND_RIOT_URL))) == [
+        ("OGN", "001", "http://img/riftcodex.png"),  # existing set: Riftcodex's image, same filename
+        ("RAD", "001", "http://img/rad.png"),
+    ]
+
+    # The gallery is optional: losing it (or its format) leaves Riftcodex's cards.
+    for error in (OSError("offline"), ValueError("page changed")):
+        def fail(err=error):
+            raise err
+        monkeypatch.setattr(image_fetcher, "_fetch_gallery_cards", fail)
+        assert _fetch_riftbound(RIFTBOUND_RIOT_URL) == [known]
 
 
 def test_fetch_json_errors_name_the_url(monkeypatch):

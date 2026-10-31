@@ -13,11 +13,14 @@
 #   Riftbound — Riot content API (official, needs RIOT_API_KEY env var)
 #               https://developer.riotgames.com/docs/riftbound
 #               falls back to the open Riftcodex API   https://riftcodex.com
+#               and, for sets Riftcodex doesn't have yet, the official gallery
+#               https://riftbound.leagueoflegends.com/en-us/card-gallery/
 #
 # Note: card art is copyrighted by Ravensburger/Riot. Downloads are local, for
 # personal-collection use only (Card_Images/ is gitignored); nothing is
 # redistributed.
 
+import json
 import logging
 import os
 import re
@@ -37,6 +40,7 @@ logger = logging.getLogger(__name__)
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
 RIFTBOUND_RIOT_URL = "https://americas.api.riotgames.com/riftbound/content/v1/contents?locale=en"
 RIFTBOUND_FALLBACK_URL = "https://api.riftcodex.com/cards"
+RIFTBOUND_GALLERY_URL = "https://riftbound.leagueoflegends.com/en-us/card-gallery/"
 
 
 @dataclass
@@ -155,11 +159,63 @@ def _fetch_riftbound_pages(url: str, size: int = 100) -> list:
     return cards
 
 
+_GALLERY_DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
+
+
+def _gallery_cards(html: str) -> list[dict]:
+    """
+    The cards embedded in the official gallery page, in Riftcodex's shape so
+    riftbound_targets() names them the same way. This is page data, not an API,
+    so raises ValueError when the page no longer looks as expected.
+    """
+    match = _GALLERY_DATA.search(html)
+    if match is None:
+        raise ValueError("no card data found in the gallery page")
+    try:
+        blades = json.loads(match.group(1))["props"]["pageProps"]["page"]["blades"]
+        items = next(b["cards"]["items"] for b in blades if isinstance(b.get("cards"), dict))
+        return [{
+            "id": item["id"],
+            # The gallery writes signatures as "unl-229-star-219", Riftcodex as "unl-229*-219".
+            "riftbound_id": item["id"].replace("-star-", "*-"),
+            "collector_number": item["collectorNumber"],
+            "set": {"set_id": item["set"]["value"]["id"]},
+            "media": {"image_url": item["cardImage"]["url"]},
+        } for item in items]
+    except (KeyError, TypeError, StopIteration, AttributeError) as e:
+        raise ValueError(f"unexpected gallery page format: {e!r}") from e
+
+
+def _fetch_gallery_cards() -> list[dict]:
+    return _gallery_cards(_download(RIFTBOUND_GALLERY_URL).decode("utf-8", "replace"))
+
+
+def _fetch_riftbound_open_sources() -> list:
+    """
+    Riftcodex, plus the official gallery for whole sets Riftcodex doesn't have
+    yet (it can lag a release by weeks). Only whole sets: the two sources give
+    some shared cards different image URLs, which would rename existing files.
+    The gallery is optional, so its failure only logs a warning.
+    """
+    cards = _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
+    try:
+        gallery = _fetch_gallery_cards()
+    except (OSError, ValueError) as e:
+        logger.warning("Official card gallery unavailable (%s); using Riftcodex only", e)
+        return cards
+    known = {_riftbound_set_code(c) for c in cards if isinstance(c, dict)}
+    extra = [c for c in gallery if _riftbound_set_code(c) not in known]
+    if extra:
+        new_sets = sorted({_riftbound_set_code(c) for c in extra})
+        logger.info("Riftcodex doesn't have %s yet; using the official card gallery for it", ", ".join(new_sets))
+    return cards + extra
+
+
 def _fetch_riftbound(url: str):
     """
     Fetch the Riftbound card list. On the default URL, the official Riot
     content endpoint is used when RIOT_API_KEY is set; without a key — or if
-    the Riot call fails — the open Riftcodex API is used instead. An explicit
+    the Riot call fails — the open sources are used instead. An explicit
     url= override is fetched as-is (the key header is only ever attached to
     *.api.riotgames.com hosts).
     """
@@ -167,12 +223,12 @@ def _fetch_riftbound(url: str):
     if url == RIFTBOUND_RIOT_URL:
         if not key:
             logger.info("RIOT_API_KEY not set; using %s", RIFTBOUND_FALLBACK_URL)
-            return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
+            return _fetch_riftbound_open_sources()
         try:
             return _fetch_json(url, headers={"X-Riot-Token": key})
         except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
             logger.warning("Riot API fetch failed (%s); falling back to %s", e, RIFTBOUND_FALLBACK_URL)
-            return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
+            return _fetch_riftbound_open_sources()
     if _is_riot_host(url):
         return _fetch_json(url, headers={"X-Riot-Token": key} if key else None)
     return _fetch_riftbound_pages(url)
