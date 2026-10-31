@@ -65,8 +65,30 @@ def _fetch_mappers():
         assert names["10-18"] == "Scrooge"
         assert names["10-99"] == "Promo Only"
 
-    assert mod.riftbound_names([{"set": "OGN", "number": "23c", "name": "Jinx"}]) == {"OGN-23c": "Jinx"}
-    wrapped = {"cards": [{"setCode": "OGN", "collectorNumber": 24, "name": "Vi"}]}
+    jinx = {"set": "OGN", "number": "23c", "name": "Jinx", "image_url": "http://img/j.png"}
+    assert mod.riftbound_names([jinx]) == {"OGN-23c": "Jinx"}
+    wrapped = {"cards": [{"setCode": "OGN", "collectorNumber": 24, "name": "Vi", "image_url": "http://img/v.png"}]}
     assert mod.riftbound_names(wrapped) == {"OGN-24": "Vi"}
+
+    # Real Radiance data: Ahri's special printing also has collector number 1,
+    # and must not take over the name of RAD-001 (Amateur Demolitionist).
+    def card(rid, number, name):
+        return {"name": name, "riftbound_id": rid, "collector_number": number,
+                "set": {"set_id": "RAD"}, "media": {"image_url": f"http://img/{rid}.png"}}
+
+    cards = [card("rad-001-167", 1, "Amateur Demolitionist"), card("rad-sp1-005", 1, "Ahri, Confident"),
+             card("rad-r06", 6, "Order Rune"), card("rad-006-167", 6, "Scorched Earth"),
+             card("rad-023a-167", 23, "Ziggs, Short-Fused")]
+    assert mod.riftbound_names({"items": cards}) == {
+        "RAD-001": "Amateur Demolitionist", "RAD-sp1": "Ahri, Confident",
+        "RAD-r06": "Order Rune", "RAD-006": "Scorched Earth", "RAD-023a": "Ziggs, Short-Fused",
+    }
+    # Every downloaded file finds its own name.
+    from lorebook.core.image_fetcher import _safe_filename, riftbound_targets
+    names = {normalize_key(*k.split("-", 1)): v for k, v in mod.riftbound_names(cards).items()}
+    for set_code, number, _url in riftbound_targets(cards):
+        stem = _safe_filename(set_code, number, "")
+        assert names[normalize_key(*stem.split("-", 1))] is not None
+    assert names[normalize_key("RAD", "001")] == "Amateur Demolitionist"
     assert mod.lorcana_names({}) == {}
     assert mod.riftbound_names(None) == {}

@@ -155,6 +155,8 @@ calibrated without hardware.
 - [ ] Riftbound Rebuild Database without `RIOT_API_KEY`: `logs/card_scanner.log` has
       `Riftbound image fetch: N cards across sets …` listing every current set. A
       `No cards found` warning there means the Riftcodex format changed again.
+- [ ] Riftbound names match the art: `RAD-001` shows Amateur Demolitionist (not Ahri, Confident),
+      and an alternate-art card such as `RAD-023a` shows a name too.
 - [ ] Scan a Radiance card (filter: Set RAD): it matches a `RAD-<NNN>` image. Its art came from the
       official gallery, because Riftcodex didn't have the set yet (the log says so).
 - [ ] After that rebuild, scan an alternate-art Riftbound card: it matches `<SET>-<NNN>a`, not

@@ -10,7 +10,8 @@
 #
 # Sources (community-maintained; override with --url if a format changes):
 #   Lorcana   — LorcanaJSON bulk data   https://lorcanajson.org
-#   Riftbound — RiftScribe card API     https://riftscribe.gg
+#   Riftbound — the same sources and numbering as the card images
+#               (lorebook.core.image_fetcher), so names always match filenames
 
 import argparse
 import json
@@ -19,41 +20,25 @@ import sys
 
 try:
     from lorebook.core.card_names import names_file_for
-    from lorebook.core.image_fetcher import is_promo_printing
+    from lorebook.core.image_fetcher import (
+        RIFTBOUND_FALLBACK_URL,
+        fetch_riftbound_open_sources,
+        is_promo_printing,
+        riftbound_printings,
+    )
     from lorebook.core.net import fetch_json as _fetch_json
 except ImportError:  # running from a checkout without `pip install -e .`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from lorebook.core.card_names import names_file_for
-    from lorebook.core.image_fetcher import is_promo_printing
+    from lorebook.core.image_fetcher import (
+        RIFTBOUND_FALLBACK_URL,
+        fetch_riftbound_open_sources,
+        is_promo_printing,
+        riftbound_printings,
+    )
     from lorebook.core.net import fetch_json as _fetch_json
 
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
-RIFTBOUND_URL = "https://riftscribe.gg/api/cards"
-
-
-def _fetch_riftbound(url: str):
-    """
-    Fetch all RiftScribe cards. The API returns fixed-size pages (48 cards)
-    and pages with an `offset` query param, so keep requesting until a page
-    comes back short or repeats.
-    """
-    cards, offset, last_first_id = [], 0, None
-    for _ in range(200):  # hard cap: never loop forever on a misbehaving API
-        sep = "&" if "?" in url else "?"
-        page = _fetch_json(f"{url}{sep}offset={offset}" if offset else url)
-        if isinstance(page, dict):
-            page = page.get("cards", [])
-        if not page:
-            break
-        first_id = page[0].get("id") if isinstance(page[0], dict) else None
-        if first_id is not None and first_id == last_first_id:
-            break  # API ignored the offset; stop rather than duplicate
-        last_first_id = first_id
-        cards.extend(page)
-        if len(page) < 48:
-            break
-        offset += len(page)
-    return cards
 
 
 def lorcana_names(data) -> dict:
@@ -80,32 +65,20 @@ def lorcana_names(data) -> dict:
 
 def riftbound_names(data) -> dict:
     """
-    Map RiftScribe card data → {"<set>-<number>": name}.
-
-    Tolerates a top-level list or a {"cards": [...]} wrapper, and the common
-    field spellings for set code and collector number.
+    Map Riftbound card data → {"<set>-<number>": name}, numbered exactly like
+    the image files. A bare collector number won't do: rune, token and special
+    printings reuse the numbers of unrelated cards in their set.
     """
-    cards = data.get("cards", data) if isinstance(data, dict) else data
-    names = {}
-    for card in cards or []:
-        if not isinstance(card, dict):
-            continue
-        set_code = str(
-            card.get("set") or card.get("setCode") or card.get("set_code")
-            or card.get("set_id") or ""
-        ).strip()
-        number = str(
-            card.get("number") or card.get("collectorNumber") or card.get("collector_number") or ""
-        ).strip()
-        name = card.get("name")
-        if set_code and number and name:
-            names[f"{set_code}-{number}"] = str(name)
-    return names
+    return {
+        f"{set_code}-{number}": str(card["name"])
+        for set_code, number, _url, card in riftbound_printings(data)
+        if card.get("name")
+    }
 
 
 GAMES = {
     "lorcana": (LORCANA_URL, _fetch_json, lorcana_names),
-    "riftbound": (RIFTBOUND_URL, _fetch_riftbound, riftbound_names),
+    "riftbound": (RIFTBOUND_FALLBACK_URL, fetch_riftbound_open_sources, riftbound_names),
 }
 
 

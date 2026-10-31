@@ -176,6 +176,7 @@ def _gallery_cards(html: str) -> list[dict]:
         items = next(b["cards"]["items"] for b in blades if isinstance(b.get("cards"), dict))
         return [{
             "id": item["id"],
+            "name": ", ".join(p for p in (item.get("name"), item.get("subtitle")) if p),
             # The gallery writes signatures as "unl-229-star-219", Riftcodex as "unl-229*-219".
             "riftbound_id": item["id"].replace("-star-", "*-"),
             "collector_number": item["collectorNumber"],
@@ -190,14 +191,14 @@ def _fetch_gallery_cards() -> list[dict]:
     return _gallery_cards(_download(RIFTBOUND_GALLERY_URL).decode("utf-8", "replace"))
 
 
-def _fetch_riftbound_open_sources() -> list:
+def fetch_riftbound_open_sources(url: str = RIFTBOUND_FALLBACK_URL) -> list:
     """
     Riftcodex, plus the official gallery for whole sets Riftcodex doesn't have
     yet (it can lag a release by weeks). Only whole sets: the two sources give
     some shared cards different image URLs, which would rename existing files.
     The gallery is optional, so its failure only logs a warning.
     """
-    cards = _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
+    cards = _fetch_riftbound_pages(url)
     try:
         gallery = _fetch_gallery_cards()
     except (OSError, ValueError) as e:
@@ -223,12 +224,12 @@ def _fetch_riftbound(url: str):
     if url == RIFTBOUND_RIOT_URL:
         if not key:
             logger.info("RIOT_API_KEY not set; using %s", RIFTBOUND_FALLBACK_URL)
-            return _fetch_riftbound_open_sources()
+            return fetch_riftbound_open_sources()
         try:
             return _fetch_json(url, headers={"X-Riot-Token": key})
         except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
             logger.warning("Riot API fetch failed (%s); falling back to %s", e, RIFTBOUND_FALLBACK_URL)
-            return _fetch_riftbound_open_sources()
+            return fetch_riftbound_open_sources()
     if _is_riot_host(url):
         return _fetch_json(url, headers={"X-Riot-Token": key} if key else None)
     return _fetch_riftbound_pages(url)
@@ -293,9 +294,10 @@ def _riftbound_cards(data) -> Iterator[dict]:
     yield from (c for c in data or [] if isinstance(c, dict))
 
 
-def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
+def riftbound_printings(data) -> Iterator[tuple[str, str, str, dict]]:
     """
-    Yield (set_code, number, image_url) for every Riftbound card with art.
+    Yield (set_code, number, image_url, card) for every Riftbound card with art.
+    Image filenames and card names both come from here, so they can't disagree.
 
     Handles both source payload shapes — the Riot content endpoint (sets →
     cards with art.fullUrl) and the Riftcodex card list (flat cards with
@@ -324,17 +326,23 @@ def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
         )
         if not (set_code and number and isinstance(url, str)):
             continue
-        printings.append((set_code, number, denominator, url))
+        printings.append((set_code, number, denominator, url, card))
         urls_by_key.setdefault((set_code, number), set()).add(url)
 
     seen = set()
-    for set_code, number, denominator, url in printings:
+    for set_code, number, denominator, url, card in printings:
         if denominator and len(urls_by_key[(set_code, number)]) > 1:
             number = f"{number}-{denominator}"
         key = (set_code, number)
         if key in seen:
             continue
         seen.add(key)
+        yield set_code, number, url, card
+
+
+def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
+    """(set_code, number, image_url) for every Riftbound card with art."""
+    for set_code, number, url, _card in riftbound_printings(data):
         yield set_code, number, url
 
 
