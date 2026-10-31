@@ -46,7 +46,12 @@ from lorebook.core.card_prices import (
     rate_for,
 )
 from lorebook.core.csv_manager import split_filename, update_cardlist
-from lorebook.core.game_types import csv_for_game, game_type_from_name, is_foil_only_card
+from lorebook.core.game_types import (
+    csv_for_game,
+    game_folder_for,
+    game_type_from_name,
+    is_foil_only_card,
+)
 from lorebook.core.features import extract_features, visualize_activation_overlay
 from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.image_utils import MotionGate, crop_to_card, focus_rect, is_probably_foil
@@ -176,11 +181,11 @@ class MainWindow(QWidget):
             QTimer.singleShot(timeout_ms, lambda: self.csv_status.setText(""))
 
     def get_active_game(self) -> Optional[str]:
-        """Return the capitalized name of the currently selected game, or None."""
+        """Return the folder name of the currently selected game, or None."""
         try:
             for name, selected in self.selected_games.items():
                 if selected:
-                    return name.capitalize()
+                    return game_folder_for(name)
         except Exception as e:
             self.logger.error(f"Error getting active game: {e}")
         return None

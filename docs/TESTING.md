@@ -135,3 +135,20 @@ python -m lorebook.sorter --game Lorcana --source Card_Images/Lorcana \
 Worth mentioning even if everything passes: whether the 2% close-match gap
 feels right, and whether auto-scan needed the `min_std` tweak — both were
 calibrated without hardware.
+
+## Game / set selection (Settings)
+
+- [ ] Fresh settings (delete `ui_settings.json`), open Settings: Lorcana and **all** its sets are
+      ticked. Press Apply, reopen: still ticked, and scans still match.
+      *(Fix: an empty saved set list used to render unticked, so Apply deselected every game.)*
+- [ ] Tick only one Riftbound set, Apply, reopen: only that set is ticked; a card from another
+      set doesn't match. Tick all Riftbound sets, Apply: `ui_settings.json` shows
+      `"riftbound": []`.
+- [ ] With all sets ticked, Rebuild Database after a new set is released: the new set appears
+      in the tree already ticked and its cards match without touching Settings.
+- [ ] Create `Card_Images/TestGame/` with one `AAA-001.webp`, reopen Settings: TestGame is
+      listed and can be ticked; Apply loads it (log: `Loaded N entries for TestGame`).
+      Remove the folder afterwards.
+- [ ] Riftbound Rebuild Database without `RIOT_API_KEY`: `logs/card_scanner.log` has
+      `Riftbound image fetch: N cards across sets …` listing every current set. A
+      `No cards found` warning there means the Riftcodex format changed again.

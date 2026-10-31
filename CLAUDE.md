@@ -88,7 +88,7 @@ Lore-Book/
 
 | File | What it owns |
 |------|-------------|
-| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, constants |
+| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, `game_folder_for()` (settings key → real folder name), `normalize_set_selection()`, constants |
 | `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` (auto-scan) |
 | `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
 | `lorebook/core/card_prices.py` | `price_for()`, `format_price()`, `rate_for()`, `prices_stale()`, `clear_price_cache()` — optional market prices from `card_prices_<Game>.json` + `currency_rates.json` (display only) |
@@ -229,7 +229,7 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 | `theme` | string | UI theme: `"dark"` (default) or `"light"` — set in Settings |
 | `debug_mode` | bool | Overlay activation heatmap on the matched card image |
 | `selected_games` | object | Which games are active (`{"lorcana": true, "riftbound": false}`) |
-| `selected_sets` | object | Which set codes to search within each game |
+| `selected_sets` | object | Which set codes to search within each game. `[]` = all sets, including ones downloaded later (Settings saves `[]` whenever every set is ticked) |
 
 ---
 
@@ -238,11 +238,9 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 Use the **`/add-game`** skill (`.claude/skills/add-game/SKILL.md`). In short:
 
 1. Create `Card_Images/<GameName>/` and add card images. The Settings game/set tree discovers the
-   folder, and `csv_for_game()` derives `<GameName>List.csv` from its name.
-2. **Caveat:** `selected_games` / `selected_sets` are initialised with only `lorcana`/`riftbound`
-   in `settings_window.py` (Apply) and `main_window.py`, so a new game shows in the tree but
-   can't actually be selected until that is generalised.
-3. Optional: a `GameType` entry + `get_game_type()` branch (only the legacy path-inference
+   folder and can select it, `game_folder_for()` maps the lowercased settings key back to the
+   folder's real casing, and `csv_for_game()` derives `<GameName>List.csv` from its name.
+2. Optional: a `GameType` entry + `get_game_type()` branch (only the legacy path-inference
    fallback in `update_cardlist()` uses it), and entries in the image / name / price `GAMES`
    registries for whichever data sources exist.
 

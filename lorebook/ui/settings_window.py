@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from lorebook.core.card_prices import SUPPORTED_CURRENCIES
 from lorebook.core.csv_manager import get_available_sets
-from lorebook.core.game_types import BASE_DATABASE_PATH
+from lorebook.core.game_types import BASE_DATABASE_PATH, normalize_set_selection
 
 
 class SettingsWindow(QDialog):
@@ -133,9 +133,12 @@ class SettingsWindow(QDialog):
                 for set_code in game_sets:
                     set_item = QTreeWidgetItem(game_root, [f"Set {set_code}"])
                     set_item.setFlags(set_item.flags() | Qt.ItemIsUserCheckable)
-                    set_item.setCheckState(
-                        0, Qt.Checked if set_code in game_selected_sets else Qt.Unchecked
+                    # An empty saved list means "all sets" — show them checked,
+                    # otherwise auto-tristate would uncheck the game itself.
+                    checked = set_code in game_selected_sets or (
+                        is_selected and not game_selected_sets
                     )
+                    set_item.setCheckState(0, Qt.Checked if checked else Qt.Unchecked)
                     set_item.setData(0, Qt.UserRole, (game_name.lower(), set_code))
             except Exception as e:
                 self.logger.warning(f"Error getting sets for {game_name}: {e}")
@@ -188,22 +191,27 @@ class SettingsWindow(QDialog):
         except Exception:
             parent.foil_threshold = 0.08
 
-        # Collect game / set selections from tree
-        selected_games = {"lorcana": False, "riftbound": False}
-        selected_sets = {"lorcana": [], "riftbound": []}
+        # Collect game / set selections from the tree — one entry per game
+        # folder found, so newly added games are selectable without code changes.
+        selected_games = {}
+        selected_sets = {}
+        game_folders = {}  # settings key -> folder name as it appears on disk
 
         for i in range(self.set_tree.topLevelItemCount()):
             root = self.set_tree.topLevelItem(i)
             game_name = root.text(0).lower()
-            if game_name not in selected_games:
-                continue
+            game_folders[game_name] = root.text(0)
             selected_games[game_name] = root.checkState(0) != Qt.Unchecked
-            if selected_games[game_name]:
-                for j in range(root.childCount()):
-                    child = root.child(j)
-                    if child.checkState(0) == Qt.Checked:
-                        set_code = child.text(0).split(" ")[-1]
-                        selected_sets[game_name].append(set_code)
+            checked, available = [], []
+            for j in range(root.childCount()):
+                child = root.child(j)
+                set_code = child.text(0).split(" ")[-1]
+                available.append(set_code)
+                if child.checkState(0) == Qt.Checked:
+                    checked.append(set_code)
+            selected_sets[game_name] = (
+                normalize_set_selection(checked, available) if selected_games[game_name] else []
+            )
 
         self.logger.info(f"Applying settings — games: {selected_games}, sets: {selected_sets}")
         parent.selected_games = selected_games
@@ -213,7 +221,7 @@ class SettingsWindow(QDialog):
         # and keeps MainWindow's cache tracker in sync)
         for game_name, is_selected in selected_games.items():
             if is_selected:
-                parent.load_game_database(game_name.capitalize())
+                parent.load_game_database(game_folders[game_name])
                 break
 
         parent.save_settings()

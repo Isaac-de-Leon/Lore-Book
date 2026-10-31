@@ -392,6 +392,41 @@ class TestCsvForGame:
             csv_for_game(None)
 
 
+class TestGameFolderFor:
+    def test_resolves_settings_key_to_folder_case(self, tmp_path):
+        from lorebook.core.game_types import game_folder_for
+
+        (tmp_path / "OnePiece").mkdir()
+        (tmp_path / "Riftbound").mkdir()
+        assert game_folder_for("onepiece", base=str(tmp_path)) == "OnePiece"
+        assert game_folder_for("riftbound", base=str(tmp_path)) == "Riftbound"
+
+    def test_falls_back_to_capitalized_key(self, tmp_path):
+        from lorebook.core.game_types import game_folder_for
+
+        (tmp_path / "notes.txt").write_text("not a game folder")
+        assert game_folder_for("lorcana", base=str(tmp_path)) == "Lorcana"
+        assert game_folder_for("lorcana", base=str(tmp_path / "missing")) == "Lorcana"
+
+
+class TestNormalizeSetSelection:
+    def test_all_checked_collapses_to_all(self):
+        from lorebook.core.game_types import normalize_set_selection
+
+        # [] means "every set", so a set downloaded later isn't filtered out
+        assert normalize_set_selection(["OGN", "SFD"], ["OGN", "SFD"]) == []
+
+    def test_partial_selection_kept(self):
+        from lorebook.core.game_types import normalize_set_selection
+
+        assert normalize_set_selection(["OGN"], ["OGN", "SFD"]) == ["OGN"]
+
+    def test_no_sets_available(self):
+        from lorebook.core.game_types import normalize_set_selection
+
+        assert normalize_set_selection([], []) == []
+
+
 class TestUpdateCardlistGameRouting:
     def test_explicit_game_writes_named_csv(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

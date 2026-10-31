@@ -110,13 +110,25 @@ class TestRiftboundTargets:
                 ("OGN", "24", "http://img/24.png"),
             ]
 
+    def test_parses_nested_set_object(self):
+        cards = [{"set": {"set_id": "SFD", "label": "Spiritforged"}, "collector_number": 7,
+                  "media": {"image_url": "http://img/7.png"}}]
+        assert list(riftbound_targets({"total": 1, "items": cards})) == [
+            ("SFD", "7", "http://img/7.png"),
+        ]
+
+    def test_set_code_falls_back_to_riftbound_id(self):
+        cards = [{"riftbound_id": "unl-012-221", "collector_number": 12,
+                  "media": {"image_url": "http://img/12.png"}}]
+        assert list(riftbound_targets(cards)) == [("UNL", "12", "http://img/12.png")]
+
     def test_skips_incomplete_cards(self):
         data = [
             {"set": "OGN", "collectorNumber": 1},                        # no image
             {"collectorNumber": 2, "image_url": "u"},                    # no set
             {"set": "OGN", "image_url": "u"},                            # no number
             {"set": "OGN", "collectorNumber": 3, "image": {"x": "y"}},   # non-string url
-            {"set": {"id": "OGN"}, "number": 4, "image_url": "u"},       # nested set object
+            {"set": {"id": "OGN"}, "number": 4, "image_url": "u"},       # nested bare id (may be a UUID)
             "not-a-dict",
         ]
         assert list(riftbound_targets(data)) == []

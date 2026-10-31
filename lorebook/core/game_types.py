@@ -1,8 +1,10 @@
 # game_types.py — Game type enum, detection, and shared constants.
 
 import logging
+import os
 from enum import Enum
 from pathlib import Path
+from typing import Iterable, List
 
 SUPPORTED_EXTS = (".webp", ".jpg", ".jpeg", ".png")
 BASE_DATABASE_PATH = "Card_Images"
@@ -42,6 +44,38 @@ def csv_for_game(game_name: str) -> str:
     if game_type == GameType.RIFTBOUND:
         return RIFTBOUND_CSV
     return f"{name}List.csv"
+
+
+def game_folder_for(game_key: str, base: str = BASE_DATABASE_PATH) -> str:
+    """
+    Resolve a settings key (lowercased game name, e.g. "onepiece") to the
+    actual folder name under base ("OnePiece"), case-insensitively. Settings
+    store games lowercased, but folder names are used verbatim for paths,
+    which are case-sensitive on Linux/macOS. Falls back to key.capitalize()
+    when no folder matches.
+    """
+    key = (game_key or "").strip().lower()
+    try:
+        for entry in os.listdir(base):
+            if entry.lower() == key and os.path.isdir(os.path.join(base, entry)):
+                return entry
+    except OSError:
+        pass
+    return key.capitalize()
+
+
+def normalize_set_selection(checked: Iterable[str], available: Iterable[str]) -> List[str]:
+    """
+    Return the set codes to persist for a game's set filter. An empty list
+    means "every set", so when every available set is checked the selection
+    collapses to [] — that way sets downloaded later are included
+    automatically instead of being silently filtered out of matches.
+    """
+    checked_list = list(checked)
+    available_set = set(available)
+    if available_set and available_set <= set(checked_list):
+        return []
+    return checked_list
 
 
 # Lorcana main sets have exactly 204 regular cards; anything numbered above

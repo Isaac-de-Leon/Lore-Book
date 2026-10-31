@@ -14,14 +14,10 @@ that has to know about the game.
 - `Card_Images/<Game>/` with images named `<SetCode>-<CardCode>.<ext>` (see `split_filename()`
   in `lorebook/core/csv_manager.py`). The folder is gitignored, so never commit images.
 - `csv_for_game()` derives `<Game>List.csv` from the folder name automatically.
-- **Settings set selection is hardcoded.** `lorebook/ui/settings_window.py` (`apply`, around the
-  "Collect game / set selections" block) initialises `selected_games`/`selected_sets` with only
-  `lorcana`/`riftbound` and `continue`s past any other folder. The same defaults sit in
-  `lorebook/ui/main_window.py` (`__init__` and the default-settings dict). As a result, a new game
-  appears in the Settings tree but can never be selected. Fix this generally: build the dicts from
-  the tree's top-level items or the `Card_Images/` folders, not a list with the new name added.
-  That way the *next* game really does need no code changes. ruff is the only check over this Qt code, so
-  re-read the change carefully.
+- Settings builds `selected_games`/`selected_sets` from whatever folders exist, and
+  `game_folder_for()` resolves the lowercased settings key back to the folder's real casing
+  (paths are case-sensitive on Linux/macOS/the Pi). Use the folder name verbatim, never
+  `.capitalize()`, anywhere a game name becomes a path (e.g. `OnePiece` ≠ `Onepiece`).
 
 ## 2. GameType (only if code must detect the game from paths)
 

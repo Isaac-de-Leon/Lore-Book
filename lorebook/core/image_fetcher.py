@@ -177,6 +177,26 @@ def _first_field(card: dict, *names):
     return None
 
 
+def _riftbound_set_code(card: dict) -> str:
+    """
+    Set code for a Riftbound card, from whichever shape the source uses: a
+    scalar field (Riot "set", Riftcodex-style "set_id"), a nested set object
+    ({"set_id": "OGN", "label": ...} — only code-like keys are read, never a
+    bare "id", which can be an opaque UUID), or the prefix of a
+    "riftbound_id" like "ogn-001-298". Returned uppercased.
+    """
+    code = _first_field(card, "set", "setCode", "set_code", "set_id")
+    if code is None:
+        nested = card.get("set")
+        if isinstance(nested, dict):
+            code = _first_field(nested, "set_id", "setId", "code", "setCode", "set_code")
+    if code is None:
+        rid = _first_field(card, "riftbound_id", "riftboundId")
+        if isinstance(rid, str) and "-" in rid:
+            code = rid.split("-", 1)[0]
+    return str(code or "").strip().upper()
+
+
 def _riftbound_cards(data) -> Iterator[dict]:
     """Flatten either Riftbound payload shape into a stream of card dicts."""
     if isinstance(data, dict):
@@ -202,7 +222,7 @@ def riftbound_targets(data) -> Iterator[Tuple[str, str, str]]:
     """
     seen = set()
     for card in _riftbound_cards(data):
-        set_code = str(_first_field(card, "set", "setCode", "set_code", "set_id") or "").strip().upper()
+        set_code = _riftbound_set_code(card)
         number = str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
         art = card.get("art")
         media = card.get("media")
@@ -311,9 +331,16 @@ def download_new_images(
     targets = [t for t in target_fn(data) if wanted is None or _norm(t[0]) in wanted]
     stats = FetchStats()
     if not targets:
-        report("No cards matched." if wanted else
+        msg = ("No cards matched." if wanted else
                "No cards found — the source format may have changed.")
+        # Logged as well as reported: the GUI only flashes progress text, so
+        # a silently empty parse otherwise leaves no trace in the log file.
+        logging.warning(f"{game} image fetch from {resolved_url}: {msg}")
+        report(msg)
         return stats
+
+    found_sets = sorted({t[0] for t in targets})
+    logging.info(f"{game} image fetch: {len(targets)} cards across sets {', '.join(found_sets)}")
 
     if not dry_run:
         os.makedirs(resolved_out, exist_ok=True)
