@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
 RIFTBOUND_RIOT_URL = "https://americas.api.riotgames.com/riftbound/content/v1/contents?locale=en"
-RIFTBOUND_FALLBACK_URL = "https://api.riftcodex.com/api/cards"
+RIFTBOUND_FALLBACK_URL = "https://api.riftcodex.com/cards"
 
 
 
@@ -123,10 +123,11 @@ def _is_riot_host(url: str) -> bool:
     return host == "api.riotgames.com" or host.endswith(".api.riotgames.com")
 
 
-def _fetch_riftbound_pages(url: str, limit: int = 100) -> list:
+def _fetch_riftbound_pages(url: str, size: int = 100) -> list:
     """
     Fetch all cards from the page-numbered Riftcodex list API, which responds
-    with {"total": N, "items": [...]} to limit=/page= query params. Requests
+    with {"total": N, "items": [...]} to size=/page= query params (size is
+    capped at 100; the API silently ignores unknown params). Requests
     pages until `total` cards are collected, a page comes back empty or
     repeats (page param ignored), or the hard cap is hit.
     """
@@ -134,7 +135,7 @@ def _fetch_riftbound_pages(url: str, limit: int = 100) -> list:
     page_no, last_first_id = 1, None
     for _ in range(200):  # hard cap: never loop forever on a misbehaving API
         sep = "&" if "?" in url else "?"
-        data = _fetch_json(f"{url}{sep}limit={limit}&page={page_no}")
+        data = _fetch_json(f"{url}{sep}size={size}&page={page_no}")
         if isinstance(data, dict):
             items = data.get("items") or data.get("cards") or []
             total = data.get("total")
@@ -208,6 +209,23 @@ def _riftbound_set_code(card: dict) -> str:
     return str(code or "").strip().upper()
 
 
+def _riftbound_printing(card: dict, set_code: str) -> tuple[str, str]:
+    """
+    (printing code, denominator) from a Riftcodex riftbound_id such as
+    "unl-116a-219", or ("", "") when the card has no id for this set.
+
+    The id is the only field that tells printings apart: alternate art
+    ("116a"), signature ("229*") and rune ("r06") cards share an integer
+    collector_number with the base card. "*" can't be in a filename, so
+    signatures become "229s".
+    """
+    rid = _first_field(card, "riftbound_id", "riftboundId")
+    parts = rid.split("-") if isinstance(rid, str) else []
+    if len(parts) < 2 or parts[0].upper() != set_code:
+        return "", ""
+    return parts[1].replace("*", "s"), "-".join(parts[2:])
+
+
 def _riftbound_cards(data) -> Iterator[dict]:
     """Flatten either Riftbound payload shape into a stream of card dicts."""
     if isinstance(data, dict):
@@ -228,13 +246,19 @@ def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
     cards with art.fullUrl) and the Riftcodex card list (flat cards with
     media.image_url) — tolerating camelCase/snake_case spellings. Set codes
     are uppercased (Riftcodex uses "ogn") to match the repo's OGN-001 filename
-    convention. Duplicate set/number keys keep the first occurrence (there is
-    no promo-collision rule like Lorcana's).
+    convention. The number is the printing code from riftbound_id when there
+    is one (see _riftbound_printing), else the collector number.
+
+    Promo sets reuse a code across home sets (opp-086-221 and opp-086-219 are
+    different cards), so a code with more than one image gets its denominator
+    appended. Remaining duplicate set/number keys keep the first occurrence.
     """
-    seen = set()
+    printings = []
+    urls_by_key: dict = {}  # (set_code, number) -> distinct image urls
     for card in _riftbound_cards(data):
         set_code = _riftbound_set_code(card)
-        number = str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
+        code, denominator = _riftbound_printing(card, set_code)
+        number = code or str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
         art = card.get("art")
         media = card.get("media")
         url = (
@@ -245,6 +269,13 @@ def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
         )
         if not (set_code and number and isinstance(url, str)):
             continue
+        printings.append((set_code, number, denominator, url))
+        urls_by_key.setdefault((set_code, number), set()).add(url)
+
+    seen = set()
+    for set_code, number, denominator, url in printings:
+        if denominator and len(urls_by_key[(set_code, number)]) > 1:
+            number = f"{number}-{denominator}"
         key = (set_code, number)
         if key in seen:
             continue

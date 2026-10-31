@@ -152,3 +152,6 @@ calibrated without hardware.
 - [ ] Riftbound Rebuild Database without `RIOT_API_KEY`: `logs/card_scanner.log` has
       `Riftbound image fetch: N cards across sets …` listing every current set. A
       `No cards found` warning there means the Riftcodex format changed again.
+- [ ] After that rebuild, scan an alternate-art Riftbound card: it matches `<SET>-<NNN>a`, not
+      the base card, and adding it writes that code (e.g. `116a`) to `RiftboundList.csv`.
+      Signature cards use `<NNN>s`; these variants show no card name (names are base cards only).

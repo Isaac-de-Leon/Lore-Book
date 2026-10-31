@@ -263,6 +263,10 @@ The target file comes from `csv_for_game(game)` (`lorebook/core/game_types.py`):
 ```
 Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 
+Riftbound card codes come from Riftcodex's `riftbound_id`, so each printing has its own file:
+`UNL-116a` (alternate art), `UNL-229s` (signature, printed `229*`), `VEN-r06` (rune), and
+`OPP-086-221` (promo code reused across home sets, so the denominator is kept).
+
 ---
 
 ## Settings (`ui_settings.json`)

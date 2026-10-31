@@ -19,7 +19,7 @@ from lorebook.core.image_fetcher import (
     riftbound_targets,
 )
 
-PAGE1 = f"{RIFTBOUND_FALLBACK_URL}?limit=100&page=1"
+PAGE1 = f"{RIFTBOUND_FALLBACK_URL}?size=100&page=1"
 
 
 def _card(set_code, number, url="http://img/x.jpg"):
@@ -109,10 +109,47 @@ def test_riftbound_targets():
     assert list(riftbound_targets({"total": 1, "items": nested})) == [("SFD", "7", "http://img/7.png")]
     by_id = [{"riftbound_id": "unl-012-221", "collector_number": 12,
               "media": {"image_url": "http://img/12.png"}}]
-    assert list(riftbound_targets(by_id)) == [("UNL", "12", "http://img/12.png")]
+    assert list(riftbound_targets(by_id)) == [("UNL", "012", "http://img/12.png")]
 
     for empty in (None, {}, {"sets": []}):
         assert list(riftbound_targets(empty)) == []
+
+
+def _riftcodex_card(riftbound_id, number, name, set_id, url):
+    """The fields we read from a real api.riftcodex.com/cards item."""
+    return {"id": riftbound_id, "name": name, "riftbound_id": riftbound_id, "collector_number": number,
+            "set": {"set_id": set_id, "label": "x"}, "media": {"image_url": url}}
+
+
+def test_riftbound_targets_keeps_each_printing():
+    # Riftcodex's collector_number is a bare int shared by every printing;
+    # the alternate art comes first here, as it does in the real response.
+    page = {"total": 9, "page": 1, "size": 100, "pages": 1, "items": [
+        _riftcodex_card("unl-116a-219", 116, "Poppy - Paragon (Alternate Art)", "UNL", "http://img/116a.png"),
+        _riftcodex_card("unl-116-219", 116, "Poppy - Paragon", "UNL", "http://img/116.png"),
+        _riftcodex_card("unl-229*-219", 229, "Vi - Piltover Enforcer (Signature)", "UNL", "http://img/229s.png"),
+        _riftcodex_card("unl-229-219", 229, "Vi - Piltover Enforcer (Overnumbered)", "UNL", "http://img/229.png"),
+        _riftcodex_card("ven-r06", 6, "Order Rune", "VEN", "http://img/r06.png"),
+        # Same code, different home set, different card: both kept.
+        _riftcodex_card("opp-086-221", 86, "World Atlas", "OPP", "http://img/atlas.png"),
+        _riftcodex_card("opp-086-219", 86, "Zilean - Time Mage", "OPP", "http://img/zilean.png"),
+        # Same id, same image (a real duplicate): one file, plain code.
+        _riftcodex_card("ven-164-166", 164, "Sandswept Tomb", "VEN", "http://img/164.png"),
+        _riftcodex_card("ven-164-166", 164, "Sandswept Tomb", "VEN", "http://img/164.png"),
+    ]}
+    assert list(riftbound_targets(page)) == [
+        ("UNL", "116a", "http://img/116a.png"),
+        ("UNL", "116", "http://img/116.png"),
+        ("UNL", "229s", "http://img/229s.png"),
+        ("UNL", "229", "http://img/229.png"),
+        ("VEN", "r06", "http://img/r06.png"),
+        ("OPP", "086-221", "http://img/atlas.png"),
+        ("OPP", "086-219", "http://img/zilean.png"),
+        ("VEN", "164", "http://img/164.png"),
+    ]
+    # Every code must make a filename split_filename can read back.
+    assert image_fetcher._safe_filename("UNL", "229s", ".webp") == "UNL-229s.webp"
+    assert image_fetcher._safe_filename("OPP", "086-221", ".webp") == "OPP-086-221.webp"
 
 
 def test_fetch_json_errors_name_the_url(monkeypatch):
@@ -142,7 +179,7 @@ def test_riftbound_source_selection(monkeypatch):
     # ...a non-Riot override is paginated and never gets the token.
     calls = _record(monkeypatch, [{"id": 1}])
     _fetch_riftbound("https://mirror.example/cards")
-    assert calls == [("https://mirror.example/cards?limit=100&page=1", {})]
+    assert calls == [("https://mirror.example/cards?size=100&page=1", {})]
 
     # Riot failure falls back to Riftcodex.
     def riot_403(u):
