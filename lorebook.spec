@@ -11,13 +11,17 @@ from PyInstaller.utils.hooks import collect_all
 # including dist metadata (TF probes importlib.metadata internally).
 tf_datas, tf_bins, tf_hidden = collect_all("tensorflow")
 keras_datas, keras_bins, keras_hidden = collect_all("keras")
+# The default feature backend: onnxruntime runs the model; onnx + h5py build
+# it on first launch from the Keras weights (lorebook/core/onnx_model.py).
+ort_datas, ort_bins, ort_hidden = collect_all("onnxruntime")
+onnx_datas, onnx_bins, onnx_hidden = collect_all("onnx")
 
 a = Analysis(
     ["UI.py"],
     pathex=[],
-    binaries=tf_bins + keras_bins,
-    datas=[("lorebook/ui/assets", "lorebook/ui/assets")] + tf_datas + keras_datas,
-    hiddenimports=tf_hidden + keras_hidden,
+    binaries=tf_bins + keras_bins + ort_bins + onnx_bins,
+    datas=[("lorebook/ui/assets", "lorebook/ui/assets")] + tf_datas + keras_datas + ort_datas + onnx_datas,
+    hiddenimports=tf_hidden + keras_hidden + ort_hidden + onnx_hidden + ["h5py"],
     hookspath=[],
     runtime_hooks=[],
     # Trim modules the app never imports. If a CI build fails on one of

@@ -16,4 +16,9 @@ for _mod in [
 ]:
     sys.modules.setdefault(_mod, _tf_mock)
 
+# The suite's model paths exercise the (stubbed) keras extractor; without
+# this, a dev venv with onnxruntime installed would default to "onnx" and
+# build the real model. ONNX tests name their backend explicitly.
+os.environ.setdefault("LOREBOOK_BACKEND", "keras")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

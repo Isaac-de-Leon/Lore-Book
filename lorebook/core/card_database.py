@@ -174,7 +174,8 @@ def build_feature_database(
     Processes only images not already in the cache, updates the cache file, and
     returns the full feature dict. Image reads run in a thread pool; feature
     extraction runs in batches through extractor.extract_batch (defaults to the
-    keras backend, resolved lazily so importing this module never pulls in TF).
+    default backend, resolved lazily so importing this module never pulls in a
+    model runtime).
 
     cancel_event: when set, the build stops between batches. Vectors extracted
     so far are still written to the cache, so the next build resumes from them.
@@ -230,8 +231,8 @@ def build_feature_database(
         return feature_db
 
     if extractor is None:
-        from lorebook.core.features import get_extractor  # lazy TF import
-        extractor = get_extractor("keras")
+        from lorebook.core.features import get_extractor  # lazy model-runtime import
+        extractor = get_extractor()
 
     successful = failed = done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:

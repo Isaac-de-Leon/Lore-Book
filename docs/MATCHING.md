@@ -18,11 +18,20 @@ camera frame ──► focus-box crop ──► MobileNetV2 ──► 1280-dim v
 2. **Feature extraction.** `lorebook/core/features.py` runs MobileNetV2
    (ImageNet weights, no top, global average pooling): the image is resized
    to 224×224, scaled to [-1, 1], and pooled into a **1280-dim float32
-   vector**, which is L2-normalized (`_finalize`). Two interchangeable
-   backends — `get_extractor("keras")` (desktop) and `"tflite"` (Raspberry
-   Pi) — share identical preprocessing, so their vectors are
-   cache-compatible (`scripts/check_parity.py` verifies). DB builds use
-   `extract_batch()` to amortize predict overhead.
+   vector**, which is L2-normalized (`_finalize`). Three interchangeable
+   backends — `"onnx"` (desktop default when onnxruntime is installed),
+   `"keras"` (TensorFlow fallback) and `"tflite"` (Raspberry Pi) — share
+   identical preprocessing, so their vectors are cache-compatible
+   (`scripts/check_parity.py` verifies keras vs tflite; the onnx model matched
+   the keras vectors to cosine 1.000000). The ONNX model is built once,
+   without TensorFlow, from the same Keras weights file
+   (`lorebook/core/onnx_model.py`, BatchNorm folded into each conv); it
+   exists because Windows Smart App Control blocks TensorFlow's unsigned DLL
+   but allows Microsoft-signed onnxruntime. `LOREBOOK_BACKEND` overrides the
+   default. DB builds use
+   `extract_batch()` to amortize predict overhead; single-image scans call
+   the model directly instead (`_infer`), since `predict()` builds a tf.data
+   pipeline on every call.
 
 3. **The reference cache.** `build_feature_database()`
    (`lorebook/core/card_database.py`) extracts a vector for every image in

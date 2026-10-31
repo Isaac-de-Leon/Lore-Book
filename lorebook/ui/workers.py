@@ -164,9 +164,9 @@ class ScanWorker(QObject):
 
     @Slot()
     def warm_up(self) -> None:
-        """Load the model now so the first scan doesn't stall (optional)."""
+        """Load the model and run a warm-up inference so the first scan doesn't stall (optional)."""
         try:
-            get_extractor("keras").ensure_ready()
+            get_extractor().ensure_ready()
         except Exception as e:  # noqa: BLE001 — optional warm-up; the scan reports real errors
             logger.warning("Background model load failed (will retry on scan): %s", e)
 

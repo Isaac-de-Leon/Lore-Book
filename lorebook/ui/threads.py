@@ -2,8 +2,16 @@
 #
 # Pattern (the one Qt recommends): a plain QObject worker is moved onto a
 # QThread; the GUI talks to it only through queued signals/slots, and the
-# worker talks back only through its own signals. Never subclass QThread and
-# never touch a worker's attributes from the GUI thread while it runs.
+# worker talks back only through its own signals. Never put work in a QThread
+# subclass's run() and never touch a worker's attributes from the GUI thread
+# while it runs.
+#
+# The one subclass, _PythonThread, only runs the event loop from Python. On a
+# plain QThread, PySide creates a Python thread state for each slot call and
+# destroys it afterwards, which wipes threading.local between calls.
+# TensorFlow keeps its eager context in thread-locals, so a model loaded by
+# ScanWorker.warm_up crashed the next scan natively. Running exec() inside a
+# Python run() keeps one thread state for the thread's whole life.
 #
 # stop() asks the thread to finish (requestInterruption + quit) and waits.
 # A worker blocked in a long call (a network request, a camera open) can't
@@ -19,12 +27,19 @@ from PySide6.QtCore import QObject, QThread
 logger = logging.getLogger(__name__)
 
 
+class _PythonThread(QThread):
+    """A QThread whose event loop runs inside a Python frame (see top of file)."""
+
+    def run(self) -> None:
+        self.exec()
+
+
 class WorkerThread:
     """Owns one QThread and the worker QObject that lives on it."""
 
     def __init__(self, worker: QObject, name: str):
         self.worker = worker
-        self.thread = QThread()
+        self.thread = _PythonThread()
         self.thread.setObjectName(name)
         worker.moveToThread(self.thread)
 

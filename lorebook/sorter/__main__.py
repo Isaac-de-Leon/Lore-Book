@@ -12,7 +12,7 @@ import os
 import sys
 
 from lorebook.core.card_database import load_cache
-from lorebook.core.features import get_extractor
+from lorebook.core.features import BACKENDS, default_backend, get_extractor
 from lorebook.core.game_types import BASE_DATABASE_PATH
 from lorebook.core.image_utils import card_motion_gate
 from lorebook.hardware.camera import CameraSource, MockCameraSource, OpenCVCameraSource
@@ -27,8 +27,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Headless card sorter: capture → match → decide bin → (mock) route.",
     )
     p.add_argument("--game", default="Lorcana", help="Game folder inside Card_Images/.")
-    p.add_argument("--backend", default="keras", choices=["keras", "tflite"],
-                   help="Feature extractor backend.")
+    p.add_argument("--backend", default=None, choices=list(BACKENDS),
+                   help="Feature extractor backend (default: onnx if onnxruntime is installed, else keras).")
     p.add_argument("--rules", help="Path to a JSON sort-rules config. Omit to send everything to reject_bin.")
     p.add_argument("--source", default="camera",
                    help="'camera' for a live feed, or a path to an image file/folder for a dry replay.")
@@ -88,13 +88,14 @@ def main(argv=None) -> int:
 
     # Fail fast (and warm the model) instead of silently rejecting every card
     # when e.g. the .tflite model hasn't been generated yet.
-    extractor = get_extractor(args.backend)
+    backend = args.backend or default_backend()
+    extractor = get_extractor(backend)
     try:
         extractor.ensure_ready()
     # Boundary: model loading can fail in many ways (missing file, missing
     # runtime, download error, TF internals); report it and exit cleanly.
     except Exception as e:  # noqa: BLE001
-        log.error("Feature extractor (%s) is not usable: %s", args.backend, e)
+        log.error("Feature extractor (%s) is not usable: %s", backend, e)
         camera.release()
         return 1
 

@@ -22,7 +22,8 @@ Lore-Book/
 │   │   ├── game_types.py      # GameType enum, get_game_type, csv_for_game, constants
 │   │   ├── image_utils.py     # ensure_valid_image, foil_score, focus_rect/crop_to_card, MotionGate
 │   │   ├── matching.py        # L2-normalize, cosine similarity, find_best_matches, MatchIndex
-│   │   ├── features.py        # get_extractor("keras"|"tflite"), extract_features(+_batch), heatmap
+│   │   ├── features.py        # get_extractor("onnx"|"keras"|"tflite"), extract_features(+_batch), heatmap
+│   │   ├── onnx_model.py      # Build mobilenetv2_features.onnx from the Keras weights (no TensorFlow)
 │   │   ├── card_database.py   # Feature cache build/load; GameDatabase (active game's vectors + index)
 │   │   ├── build.py           # refresh_and_build: download art/prices + build caches (Qt-free job)
 │   │   ├── settings.py        # AppSettings: ui_settings.json model (validate, migrate, atomic save)
@@ -96,13 +97,16 @@ Lore-Book/
     ├── test_photo_matching.py
     ├── test_matching_index.py
     ├── test_card_database.py
+    ├── test_features.py       # keras extractor call paths with fake models
+    ├── test_onnx_backend.py   # ONNX model build (synthetic weights) + onnx extractor
     ├── test_card_names.py
     ├── test_card_prices.py
     ├── test_image_fetcher.py
     ├── test_camera.py
     ├── test_sorter_rules.py
     ├── test_sorter_pipeline.py
-    └── test_gui_smoke.py      # headless Qt (skipped without PySide6; CI's gui job runs it)
+    ├── test_gui_smoke.py      # headless Qt (skipped without PySide6; CI's gui job runs it)
+    └── test_tf_integration.py # real TF on the scan worker thread (opt-in: LOREBOOK_TF_TESTS=1)
 ```
 
 ### Module responsibilities
@@ -117,7 +121,8 @@ Lore-Book/
 | `lorebook/core/price_fetcher.py` | `download_card_prices()` (Lorcast → TCGplayer USD prices; `GAMES` registry), `download_currency_rates()` (Frankfurter/ECB). Auto-run by the GUI when files are >24 h old; CLI: `scripts/fetch_card_prices.py` |
 | `lorebook/core/image_fetcher.py` | `download_new_images()` — fetch missing card art into `Card_Images/<Game>/` (Lorcana: LorcanaJSON; Riftbound: Riot content API when `RIOT_API_KEY` is set, else Riftcodex). Auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py` |
 | `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
-| `lorebook/core/features.py` | `get_extractor(backend)` (keras/tflite), `extract_features`, `visualize_activation_overlay` |
+| `lorebook/core/features.py` | `get_extractor(backend=None)` (onnx/keras/tflite; `None` → `default_backend()`: `LOREBOOK_BACKEND`, else onnx when onnxruntime is installed, else keras), `extract_features`, `visualize_activation_overlay`. Keras inference runs under `_model_lock`; single images call the model directly (`_infer`, never `predict()`), `extract_batch` keeps `predict()`, and `ensure_ready()` loads the model plus one warm-up inference |
+| `lorebook/core/onnx_model.py` | `ensure_model()` — builds `mobilenetv2_features.onnx` (at `data_path()`, or `LOREBOOK_ONNX_MODEL`) on first use from the Keras MobileNetV2 `.h5` weights (Keras cache if present, else downloaded; sha256-checked), BatchNorm folded into convs. Needs `onnx` + `h5py`; outputs `features` (N,1280) and `activations` (N,7,7,1280) |
 | `lorebook/core/card_database.py` | `GameDatabase` (the active game's vectors + `MatchIndex`, `load`/`ensure`/`invalidate`), `load_cache`, `build_feature_database`; legacy `set_database_path`/`get_database_path` (+ `databasePath`) kept for PhotoMatching/CLI callers |
 | `lorebook/core/build.py` | `refresh_and_build()` — per game: download new art, refresh stale prices, build the cache; status/progress callbacks + cancel Event; returns `BuildReport` (Qt-free; the GUI runs it on `BuildWorker`) |
 | `lorebook/core/settings.py` | `AppSettings` — every `ui_settings.json` preference with defaults, per-field validation, migration, atomic `save()`; `THEME_NAMES`/`DEFAULT_THEME` |
@@ -137,7 +142,7 @@ Lore-Book/
 | `lorebook/ui/main_window.py` | `MainWindow` — shell (sidebar, header camera toggle, pages, theme) and coordinator: owns `settings`, `game_db` and the three `WorkerThread`s, runs capture → scan → show. Threading rules in its docstring |
 | `lorebook/ui/scanner_view.py` | `ScannerView` — Scanner page widget: preview, status, result panel, Prev/Next, foil-only lock, Add/Undo (CSV writes), shortcuts; emits `scan_requested` / `collection_changed` |
 | `lorebook/ui/workers.py` | `CameraWorker` (open + read frames; one pending frame at a time), `ScanWorker` (extract + match; model warm-up), `BuildWorker` (runs `core.build`) — QObjects talking only via signals |
-| `lorebook/ui/threads.py` | `WorkerThread` — moveToThread wrapper with `stop()` (requestInterruption + quit + wait) |
+| `lorebook/ui/threads.py` | `WorkerThread` — moveToThread wrapper with `stop()` (requestInterruption + quit + wait); its QThread runs the event loop from a Python `run()` so `threading.local` state survives between slot calls |
 | `lorebook/ui/app_logging.py` | `setup_logging()` — rotating log + faulthandler crash log + excepthook |
 | `lorebook/ui/app.py` | `main()` — QApplication bootstrap (installed as `lorebook-ui`) |
 | `UI.py` | Thin wrapper around `lorebook.ui.app.main()` |
@@ -242,6 +247,11 @@ those paths, say it is unverified in the real app and add checklist items to `do
 (LorcanaJSON, Lorcast, Riot/Riftcodex, Frankfurter) are always faked with small inline fixtures
 or `monkeypatch`.
 
+`tests/test_tf_integration.py` is the exception: it runs real TensorFlow + PySide6 (and downloads the MobileNetV2 weights on first run) in a child process, so it is skipped unless opted in. Run it after touching `features.py`, `threads.py` or `ScanWorker`:
+```bash
+LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v
+```
+
 ---
 
 ## CSV Format
@@ -338,11 +348,13 @@ the foil-only cutoff (`LORCANA_MAX_NORMAL_CARD`) and filename codes, then rebuil
 
 ## Known Limitations / Gotchas
 
-- **Threads:** the GUI runs three workers, each a QObject on its own QThread (`ui/workers.py` via `ui/threads.WorkerThread`). Talk to a worker only with queued signals and listen to its signals — never call its methods or read/write its attributes from the GUI thread (the documented exceptions are the build's cancel `Event` and `CameraWorker.frame_consumed()`). Keep long jobs Qt-free in `core/` (like `core/build.py`) and wrap them in a worker. On exit, a worker stuck in a long blocking call makes `app.main` exit via `os._exit` rather than destroy a running QThread.
+- **Threads:** the GUI runs three workers, each a QObject on its own QThread (`ui/workers.py` via `ui/threads.WorkerThread`). Talk to a worker only with queued signals and listen to its signals — never call its methods or read/write its attributes from the GUI thread (the documented exceptions are the build's cancel `Event` and `CameraWorker.frame_consumed()`). Keep long jobs Qt-free in `core/` (like `core/build.py`) and wrap them in a worker. On exit, a worker stuck in a long blocking call makes `app.main` exit via `os._exit` rather than destroy a running QThread. Always create worker threads through `WorkerThread`: on a plain `QThread`, PySide gives each slot call a fresh Python thread state, which wipes `threading.local` — and with it TensorFlow's per-thread context, so a model loaded by `ScanWorker.warm_up` hung or crashed the next scan.
 
 - `tensorflow_intel` installs only on Windows (guarded by a `sys_platform == "win32"` marker in `requirements.txt`).
 - `Card_Images/` is git-ignored (images can be large); the SQLite/JSON caches and `ui_settings.json` are also git-ignored.
-- The feature model (MobileNetV2 weights) is downloaded from the internet on first run (~14 MB).
+- The feature model (MobileNetV2 weights) is downloaded from the internet on first run (~9 MB) unless Keras already cached it; the onnx backend then builds `mobilenetv2_features.onnx` from it (gitignored, rebuilt if deleted).
+- **Windows Smart App Control** blocks TensorFlow's unsigned `_pywrap_tensorflow_internal.pyd` ("An Application Control policy has blocked this file"), which is why `onnx` is the default backend — onnxruntime is Microsoft-signed. Don't route desktop inference back through TensorFlow. The PyInstaller build is unsigned too, so SAC may also block the installed `LoreBook.exe` until releases are code-signed.
+- `onnx` is pinned to 1.17: 1.18+ requires protobuf>=6, which TensorFlow 2.18 rejects.
 - Camera index `0` may not be correct on machines with multiple cameras — adjust in Settings.
 - `foil_score` threshold (default `0.08`) was tuned empirically; may need adjustment per lighting setup.
 - `riot.txt` at the repo root is a Riot Games API domain-verification token — don't delete it.

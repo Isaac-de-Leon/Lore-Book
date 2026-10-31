@@ -23,8 +23,12 @@ lorebook-sort = "lorebook.sorter.__main__:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=9", "ruff>=0.15", "mypy>=2"]  # exact CI pins: requirements-dev.txt
-# Desktop GUI + keras feature backend (also builds the .tflite model).
+# Desktop GUI + onnx feature backend (default; onnx/h5py build the model
+# from the Keras weights) + keras backend (fallback; builds the .tflite model).
 gui = [
+    "onnxruntime>=1.20",
+    "onnx>=1.17",
+    "h5py>=3.10",
     "tensorflow>=2.18,<2.19",
     "keras>=3.9,<4",
     "scikit-learn>=1.6",

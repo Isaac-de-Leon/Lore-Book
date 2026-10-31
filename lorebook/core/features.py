@@ -1,12 +1,16 @@
 # features.py — MobileNetV2 feature extraction and activation heatmap overlay.
 #
 # Extraction is pluggable behind get_extractor(backend):
-#   - "keras"  : MobileNetV2 via TensorFlow/Keras (desktop default, also used to
+#   - "onnx"   : MobileNetV2 on ONNX Runtime (desktop default when onnxruntime
+#                is installed). The model is built from the Keras weights without
+#                TensorFlow (core/onnx_model.py) — Windows Smart App Control
+#                blocks TensorFlow's unsigned DLL, but allows onnxruntime.
+#   - "keras"  : MobileNetV2 via TensorFlow/Keras (fallback, also used to
 #                build the .tflite model).
 #   - "tflite" : the same MobileNetV2 features via a .tflite Interpreter
 #                (tflite_runtime preferred, falls back to tensorflow.lite).
 #                Lightweight enough to run on a Raspberry Pi for the sorter.
-# Both backends share identical preprocessing, so the 1280-dim vectors they
+# All backends share identical preprocessing, so the 1280-dim vectors they
 # produce are interchangeable and cache-compatible (see scripts/check_parity.py).
 
 import os
@@ -14,6 +18,7 @@ import os
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # respect a user-set level
 
+import importlib.util
 import logging
 import threading
 import warnings
@@ -35,9 +40,9 @@ _feat_model = None   # 1280-dim pooled features
 _act_model = None    # last conv activations (for heatmaps)
 
 # Serializes everything that touches the Keras models: the one-time load and
-# every predict. The GUI scans while the DB-build worker extracts batches;
-# concurrent model construction or predict on a shared model is not
-# thread-safe, so both sides queue here. Reentrant because predict paths
+# every inference. The GUI scans while the DB-build worker extracts batches;
+# concurrent model construction or inference on a shared model is not
+# thread-safe, so both sides queue here. Reentrant because inference paths
 # call _get_models() while holding it.
 _model_lock = threading.RLock()
 
@@ -125,6 +130,19 @@ def _preprocess_to_batch(img_or_path: np.ndarray | str) -> np.ndarray | None:
     return _mobilenet_preprocess(batch)
 
 
+def _infer(model, batch: np.ndarray) -> np.ndarray:
+    """
+    Run one small batch through a Keras model and return a NumPy array.
+
+    Calls the model directly instead of predict(): predict() builds a tf.data
+    pipeline and traces a tf.function on every call, which is slow for one
+    frame and is where a scan crashed natively on a worker thread. Batch
+    extraction (DB builds) keeps predict(), whose overhead is paid per batch.
+    Callers hold _model_lock.
+    """
+    return np.asarray(model(batch, training=False))
+
+
 def _finalize(features: np.ndarray) -> np.ndarray | None:
     """Flatten, validate the 1280-dim shape, and L2-normalize a raw feature vector."""
     features = np.asarray(features).flatten().astype(np.float32)
@@ -138,8 +156,12 @@ class _KerasExtractor:
     """MobileNetV2 feature extractor backed by TensorFlow/Keras."""
 
     def ensure_ready(self) -> None:
-        """Load the model now, raising on failure, so callers can fail fast."""
-        _get_models()
+        """Load the model and run one warm-up inference now, raising on
+        failure, so callers can fail fast and the first real scan doesn't pay
+        TensorFlow's first-call setup."""
+        with _model_lock:
+            feat_model, _ = _get_models()
+            _infer(feat_model, np.zeros((1, 224, 224, 3), np.float32))
 
     def extract(self, img_or_path: np.ndarray | str) -> np.ndarray | None:
         try:
@@ -148,7 +170,7 @@ class _KerasExtractor:
                 return None
             with _model_lock:
                 feat_model, _ = _get_models()
-                features = feat_model.predict(batch, verbose=0)
+                features = _infer(feat_model, batch)
             return _finalize(features)
         # Boundary: TF/Keras raise many error types; the contract is "None on
         # failure" so one bad frame never aborts a scan or sort run.
@@ -267,24 +289,117 @@ class _TFLiteExtractor:
         return [self.extract(img) for img in images]
 
 
+class _OnnxExtractor:
+    """MobileNetV2 feature extractor on ONNX Runtime (model built on first use).
+
+    InferenceSession.run is thread-safe, so inference needs no lock; only the
+    one-time model build + session load is serialized.
+    """
+
+    def __init__(self, model_path: str | None = None):
+        self._explicit_model_path = model_path
+        self._session = None
+        self._load_lock = threading.Lock()
+
+    @property
+    def model_path(self) -> str:
+        from lorebook.core.onnx_model import default_model_path
+        return self._explicit_model_path or default_model_path()
+
+    def loaded(self) -> bool:
+        """True once the session is in memory (no load is triggered)."""
+        return self._session is not None
+
+    def ensure_ready(self) -> None:
+        """Build/load the model and run one warm-up inference, raising on failure."""
+        self._run(np.zeros((1, 224, 224, 3), np.float32))
+
+    def _ensure_session(self):
+        if self._session is not None:
+            return self._session
+        with self._load_lock:
+            if self._session is None:
+                import onnxruntime as ort
+
+                from lorebook.core.onnx_model import ensure_model
+
+                path = ensure_model(self.model_path)
+                opts = ort.SessionOptions()
+                opts.log_severity_level = 3  # errors only
+                self._session = ort.InferenceSession(path, opts, providers=["CPUExecutionProvider"])
+        return self._session
+
+    def _run(self, batch: np.ndarray, output: str = "features") -> np.ndarray:
+        return self._ensure_session().run([output], {"input": batch})[0]
+
+    def activations(self, batch: np.ndarray) -> np.ndarray:
+        """(N, 7, 7, 1280) last-conv activations for a preprocessed batch."""
+        return self._run(batch, "activations")
+
+    def extract(self, img_or_path: np.ndarray | str) -> np.ndarray | None:
+        try:
+            batch = _preprocess_to_batch(img_or_path)
+            if batch is None:
+                return None
+            return _finalize(self._run(batch))
+        except Exception as e:  # noqa: BLE001 — boundary, see _KerasExtractor.extract()
+            logger.error("Error extracting features (onnx): %s", e)
+            return None
+
+    def extract_batch(self, images: Sequence) -> list[np.ndarray | None]:
+        """One session run per call; same contract as _KerasExtractor.extract_batch."""
+        results: list[np.ndarray | None] = [None] * len(images)
+        rows, positions = [], []
+        for i, img in enumerate(images):
+            batch = _preprocess_to_batch(img)
+            if batch is not None:
+                rows.append(batch[0])
+                positions.append(i)
+        if not rows:
+            return results
+        try:
+            features = self._run(np.stack(rows))
+            for pos, row in zip(positions, features):
+                results[pos] = _finalize(row)
+        except Exception as e:  # noqa: BLE001 — boundary, see extract()
+            logger.error("Error extracting batch features (onnx): %s", e)
+        return results
+
+
+BACKENDS = ("onnx", "keras", "tflite")
+
+
+def default_backend() -> str:
+    """
+    The extractor used when none is named: LOREBOOK_BACKEND if set, else
+    "onnx" when onnxruntime is installed, else "keras".
+    """
+    override = os.environ.get("LOREBOOK_BACKEND")
+    if override:
+        return override.lower()
+    return "onnx" if importlib.util.find_spec("onnxruntime") is not None else "keras"
+
+
 _extractors: dict = {}
 
 
-def get_extractor(backend: str = "keras"):
+def get_extractor(backend: str | None = None):
     """
-    Return a cached feature extractor for the given backend.
+    Return a cached feature extractor for the given backend (default_backend() if None).
 
     The returned object exposes `.extract(img_or_path) -> Optional[np.ndarray]`,
-    yielding a 1280-dim L2-normalized vector. Supported backends: "keras", "tflite".
+    yielding a 1280-dim L2-normalized vector. Supported backends: see BACKENDS.
     """
-    key = (backend or "keras").lower()
+    key = (backend or default_backend()).lower()
     if key not in _extractors:
-        if key == "keras":
+        if key == "onnx":
+            _extractors[key] = _OnnxExtractor()
+        elif key == "keras":
             _extractors[key] = _KerasExtractor()
         elif key == "tflite":
             _extractors[key] = _TFLiteExtractor()
         else:
-            raise ValueError(f"Unknown extractor backend: {backend!r} (use 'keras' or 'tflite').")
+            raise ValueError(f"Unknown extractor backend: {backend!r} (use one of {', '.join(BACKENDS)}).")
     return _extractors[key]
 
 
@@ -292,10 +407,10 @@ def extract_features(img_or_path: np.ndarray | str) -> np.ndarray | None:
     """
     Extract a normalized 1280-dim feature vector from an image or file path.
 
-    Uses MobileNetV2 (Keras backend) by default. The model is loaded lazily on
-    first call. For other backends use get_extractor(backend).extract(...).
+    Uses default_backend(); the model is loaded lazily on first call. For a
+    specific backend use get_extractor(backend).extract(...).
     """
-    return get_extractor("keras").extract(img_or_path)
+    return get_extractor().extract(img_or_path)
 
 
 def visualize_activation_overlay(img_bgr: np.ndarray, model=None, blocking: bool = True) -> np.ndarray:
@@ -307,28 +422,33 @@ def visualize_activation_overlay(img_bgr: np.ndarray, model=None, blocking: bool
     """
     if img_bgr is None or img_bgr.size == 0:
         return img_bgr
+    if model is None and default_backend() == "onnx":
+        onnx = get_extractor("onnx")
+        if not blocking and not onnx.loaded():
+            return img_bgr
+        return _activation_overlay(img_bgr, onnx.activations)
     if not blocking and model is None and not models_loaded():
         return img_bgr
     if not _model_lock.acquire(blocking=blocking):
         return img_bgr
     try:
-        return _activation_overlay(img_bgr, model)
+        use_model = model or _get_models()[1]
+        return _activation_overlay(img_bgr, lambda batch: _infer(use_model, batch))
     finally:
         _model_lock.release()
 
 
-def _activation_overlay(img_bgr: np.ndarray, model=None) -> np.ndarray:
+def _activation_overlay(img_bgr: np.ndarray, activations_fn) -> np.ndarray:
+    """activations_fn maps a preprocessed (1, 224, 224, 3) batch to (1, 7, 7, 1280)."""
     if img_bgr.ndim == 2:
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
     if img_bgr.shape[-1] == 4:
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
 
-    use_model = model or _get_models()[1]
-
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(img_rgb, (224, 224), interpolation=cv2.INTER_AREA)
     batch = np.expand_dims(resized.astype(np.float32), axis=0)
-    activations = use_model.predict(_mobilenet_preprocess(batch), verbose=0)[0]  # (7,7,1280)
+    activations = activations_fn(_mobilenet_preprocess(batch))[0]  # (7,7,1280)
 
     heatmap = activations.mean(axis=-1)  # (7,7)
     heatmap = cv2.resize(heatmap, (img_bgr.shape[1], img_bgr.shape[0]), interpolation=cv2.INTER_CUBIC)

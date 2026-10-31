@@ -232,9 +232,10 @@ def test_get_extractor():
     # Constructing the tflite extractor must NOT load the interpreter.
     assert type(get_extractor("keras")).__name__ == "_KerasExtractor"
     assert type(get_extractor("TFLite")).__name__ == "_TFLiteExtractor"
+    assert type(get_extractor("onnx")).__name__ == "_OnnxExtractor"
     assert get_extractor("keras") is get_extractor("keras")
     with pytest.raises(ValueError):
-        get_extractor("onnx")
+        get_extractor("bogus")
 
     # Concurrent first use (GUI scan + DB-build worker) builds the model once.
     import threading
