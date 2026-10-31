@@ -44,7 +44,11 @@ Lore-Book/
 │       ├── collection_view.py # Collection page: CSV table, Export CSV, Clear…
 │       └── main_window.py     # MainWindow: sidebar nav, Scanner/Collection pages, camera
 │
-├── .github/workflows/tests.yml # CI: pytest on every push/PR (no TF needed)
+├── .github/workflows/tests.yml # CI: ruff + pytest on every push/PR (no TF needed)
+├── .claude/
+│   ├── settings.json           # Hooks: SessionStart dep install (cloud), ruff after each .py edit
+│   ├── hooks/                  # session-start.sh, ruff_check.py
+│   └── skills/                 # /new-set, /add-game
 ├── configs/
 │   └── sort_rules.example.json # Example multi-bin sort rules
 ├── scripts/
@@ -55,6 +59,7 @@ Lore-Book/
 │   └── fetch_card_images.py    # CLI over image_fetcher — card art → Card_Images/<Game>/
 ├── docs/
 │   ├── MATCHING.md             # How recognition works (pipeline, thresholds)
+│   ├── TESTING.md              # Manual test plan (camera / Qt / live APIs the suite can't cover)
 │   └── SORTER_ROADMAP.md       # Phased plan for the physical sorter
 │
 ├── Card_Images/
@@ -168,6 +173,25 @@ Or run a single test:
 python -m pytest tests/test_photo_matching.py::TestSplitFilename -v
 ```
 
+### Before committing
+
+```bash
+ruff check . && python -m pytest tests/ -v
+```
+
+CI runs both. Ruff (`pyproject.toml`: pyflakes + E4/E7/E9) is the **only** automated check over
+`lorebook/ui/`, because the Qt UI can't run headless. A `.claude/settings.json` hook lints each `.py`
+file after it is edited, and in cloud sessions the SessionStart hook installs CI's test deps.
+
+### What can't be verified here
+
+Cloud sessions and CI have no camera, no TensorFlow/model weights, no `Card_Images/` and no
+display. So the GUI can't be launched and the feature DB can't be built. When a change touches
+those paths, say it is unverified in the real app and add checklist items to `docs/TESTING.md`
+(same "do this / you should see" format). Tests must never hit the network: the external APIs
+(LorcanaJSON, Lorcast, Riot/Riftcodex, Frankfurter) are always faked with small inline fixtures
+or `monkeypatch`.
+
 ---
 
 ## CSV Format
@@ -211,13 +235,21 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 
 ## Adding a New Card Game
 
-1. Create `Card_Images/<GameName>/` and add card images.
-2. That's it for the common path: the UI's game/set tree widget discovers game folders
-   automatically, and the collection CSV (`<GameName>List.csv`) is derived from the folder
-   name by `csv_for_game()` — no code changes needed.
-3. Optional: add a `GameType` entry in `lorebook/core/game_types.py` and update
-   `get_game_type()` if code needs to detect the game from file paths (only the legacy
-   path-inference fallback in `update_cardlist()` uses this).
+Use the **`/add-game`** skill (`.claude/skills/add-game/SKILL.md`). In short:
+
+1. Create `Card_Images/<GameName>/` and add card images. The Settings game/set tree discovers the
+   folder, and `csv_for_game()` derives `<GameName>List.csv` from its name.
+2. **Caveat:** `selected_games` / `selected_sets` are initialised with only `lorcana`/`riftbound`
+   in `settings_window.py` (Apply) and `main_window.py`, so a new game shows in the tree but
+   can't actually be selected until that is generalised.
+3. Optional: a `GameType` entry + `get_game_type()` branch (only the legacy path-inference
+   fallback in `update_cardlist()` uses it), and entries in the image / name / price `GAMES`
+   registries for whichever data sources exist.
+
+## Adding a New Set
+
+Use the **`/new-set`** skill (`.claude/skills/new-set/SKILL.md`): fetch art/names/prices, re-check
+the foil-only cutoff (`LORCANA_MAX_NORMAL_CARD`) and filename codes, then rebuild the DB.
 
 ---
 
@@ -233,6 +265,23 @@ Examples: `001-042.webp`, `ONG-23c-alt.jpg`
 - **Change sort routing** — edit the rules JSON (see `configs/sort_rules.example.json`); the engine is `decide_bin()` in `lorebook/sorter/rules.py`. Unmatched cards always go to `reject_bin`.
 - **Implement the real transport** — subclass `Transport` (`lorebook/hardware/transport.py`); the pipeline needs `route_to_bin`, `advance`, `home`.
 - **Cache issues** — delete `DBCardCache_<game>.db` and rebuild with `--build` flag.
+
+---
+
+## Rules for Claude
+
+- **Collection CSVs are the user's real data.** `LorcanaList.csv` / `RiftboundList.csv` are
+  committed and only change in `data:` commits made by the user. Never edit, clear or regenerate
+  them as part of feature work. Tests write to `tmp_path`.
+- **GUI threading.** Background threads (DB build, camera open) may only write
+  `_db_progress_pct`, emit `MainWindow`'s signals, and read the `cancel_event`/`token` they were
+  given. Every widget, `featureDB`/`_match_index`, settings and the `set_database_path` global are
+  main-thread-only. Full rules: the `MainWindow` docstring in `lorebook/ui/main_window.py`.
+- **Keep docs in sync.** When you add a module, script, setting or registry entry, update the
+  architecture tree, module table and settings table above (and README.md when user-facing).
+  UI changes get a `docs/TESTING.md` entry.
+- **Commit messages** use conventional prefixes: `feat:`, `fix:`, `perf:`, `test:`, `docs:`,
+  `data:` (collection CSV updates, user only).
 
 ---
 
