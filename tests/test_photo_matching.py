@@ -12,7 +12,14 @@ import pytest
 from lorebook.core.card_database import _cache_path
 from lorebook.core.csv_manager import CsvReadError, read_collection_rows
 from lorebook.core.features import _check_tflite_input_dtype
-from lorebook.core.game_types import game_folders, resolve_game_folder, sets_to_display, sets_to_store
+from lorebook.core.game_types import (
+    game_folder_for,
+    game_folders,
+    normalize_set_selection,
+    resolve_game_folder,
+    sets_to_display,
+    sets_to_store,
+)
 from lorebook.core.image_utils import CARD_ASPECT, MotionGate, crop_to_card, focus_rect
 
 # TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
@@ -103,6 +110,22 @@ def test_game_folders_and_set_filter(tmp_path):
     assert sets_to_display(["001", "003"], sets, game_selected=True) == ["001", "003"]
     # A stale filter (no stored set on disk) falls back to all.
     assert sets_to_display(["999"], sets, game_selected=True) == sets
+
+
+def test_game_folder_for_and_normalize_set_selection(tmp_path):
+    (tmp_path / "OnePiece").mkdir()
+    (tmp_path / "Riftbound").mkdir()
+    (tmp_path / "notes.txt").write_text("not a game folder")
+    assert game_folder_for("onepiece", base=str(tmp_path)) == "OnePiece"
+    assert game_folder_for("riftbound", base=str(tmp_path)) == "Riftbound"
+    # No matching folder: capitalized key.
+    assert game_folder_for("lorcana", base=str(tmp_path)) == "Lorcana"
+    assert game_folder_for("lorcana", base=str(tmp_path / "missing")) == "Lorcana"
+
+    # [] means "every set", so a set downloaded later isn't filtered out.
+    assert normalize_set_selection(["OGN", "SFD"], ["OGN", "SFD"]) == []
+    assert normalize_set_selection(["OGN"], ["OGN", "SFD"]) == ["OGN"]
+    assert normalize_set_selection([], []) == []
 
 
 def test_split_filename():

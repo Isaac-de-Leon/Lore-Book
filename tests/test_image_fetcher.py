@@ -103,8 +103,28 @@ def test_riftbound_targets():
             ("OGN", "23c", "http://img/23c.png"),
             ("OGN", "24", "http://img/24.png"),
         ]
+    # A nested set object is read by its code-like keys; riftbound_id is the fallback.
+    nested = [{"set": {"set_id": "SFD", "label": "Spiritforged"}, "collector_number": 7,
+               "media": {"image_url": "http://img/7.png"}}]
+    assert list(riftbound_targets({"total": 1, "items": nested})) == [("SFD", "7", "http://img/7.png")]
+    by_id = [{"riftbound_id": "unl-012-221", "collector_number": 12,
+              "media": {"image_url": "http://img/12.png"}}]
+    assert list(riftbound_targets(by_id)) == [("UNL", "12", "http://img/12.png")]
+
     for empty in (None, {}, {"sets": []}):
         assert list(riftbound_targets(empty)) == []
+
+
+def test_fetch_json_errors_name_the_url(monkeypatch):
+    import urllib.error
+
+    def refuse(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(net.urllib.request, "urlopen", refuse)
+    # Still an OSError: _fetch_riftbound's Riot → Riftcodex fallback catches those.
+    with pytest.raises(OSError, match=r"404.*GET http://api\.example/cards"):
+        net.fetch_json("http://api.example/cards")
 
 
 def test_riftbound_source_selection(monkeypatch):

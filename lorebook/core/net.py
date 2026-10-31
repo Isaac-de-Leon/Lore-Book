@@ -23,8 +23,13 @@ def _request(url: str, headers: dict | None = None) -> urllib.request.Request:
 
 def fetch_json(url: str, headers: dict | None = None, timeout: float = 120) -> Any:
     """GET url and decode JSON. Raises on any network/HTTP/JSON error."""
-    with urllib.request.urlopen(_request(url, headers), timeout=timeout) as resp:
-        return json.load(resp)
+    try:
+        with urllib.request.urlopen(_request(url, headers), timeout=timeout) as resp:
+            return json.load(resp)
+    except OSError as e:
+        # Name the URL: with a fallback source (Riot → Riftcodex), the URL
+        # announced up front isn't necessarily the one that failed.
+        raise OSError(f"{e} (GET {url})") from e
 
 
 def is_retryable(err: Exception) -> bool:
