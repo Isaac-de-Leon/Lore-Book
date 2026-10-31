@@ -47,8 +47,13 @@ class FetchStats:
 
 def _fetch_json(url: str, headers: Optional[dict] = None):
     req = urllib.request.Request(url, headers={"User-Agent": _UA, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.load(resp)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return json.load(resp)
+    except urllib.error.URLError as e:
+        # Name the URL: with the Riot → Riftcodex fallback, the URL announced
+        # up front isn't necessarily the one that failed.
+        raise RuntimeError(f"{e} (GET {url})") from e
 
 
 def _pad(part: str) -> str:

@@ -13,6 +13,7 @@
 #   python PhotoMatching.py --game Lorcana --build
 
 import argparse
+import logging
 import os
 import sys
 
@@ -39,6 +40,9 @@ def main(argv=None) -> int:
                    help="Seconds to pause between downloads (be polite; default: 0.05).")
     p.add_argument("--dry-run", action="store_true", help="List what would download; fetch nothing.")
     args = p.parse_args(argv)
+    # Surface the fetcher's source-selection lines (Riot key missing / Riot
+    # failed → Riftcodex fallback), which otherwise go nowhere from the CLI.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     if args.game.strip().lower() not in GAMES:
         print(f"Unsupported game {args.game!r} (supported: {', '.join(sorted(GAMES))}).",
