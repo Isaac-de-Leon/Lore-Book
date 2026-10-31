@@ -25,10 +25,10 @@ from lorebook.core.card_prices import SUPPORTED_CURRENCIES
 from lorebook.core.csv_manager import get_available_sets
 from lorebook.core.game_types import (
     BASE_DATABASE_PATH,
-    game_folders,
     sets_to_display,
     sets_to_store,
 )
+from lorebook.core.image_fetcher import GAMES, selectable_games
 from lorebook.core.settings import AppSettings
 
 
@@ -126,7 +126,7 @@ class SettingsWindow(QDialog):
         selected_games = settings.selected_games
         selected_sets = settings.selected_sets
 
-        for game_name in game_folders():
+        for game_name in selectable_games():
             key = game_name.lower()
             is_selected = bool(selected_games.get(key, False))
             game_root = QTreeWidgetItem(self.set_tree, [game_name])
@@ -141,6 +141,8 @@ class SettingsWindow(QDialog):
             game_db_path = os.path.join(BASE_DATABASE_PATH, game_name)
             try:
                 game_sets = get_available_sets(db_path=game_db_path)
+                if not game_sets and key in GAMES:
+                    game_root.setToolTip(0, "No cards yet. Tick this game and press Rebuild Database to download them.")
                 ticked = set(sets_to_display(selected_sets.get(key, []), game_sets, is_selected))
                 for set_code in game_sets:
                     set_item = QTreeWidgetItem(game_root, [f"Set {set_code}"])

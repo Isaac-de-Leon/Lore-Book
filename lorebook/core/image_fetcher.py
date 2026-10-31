@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from lorebook.core.fileio import atomic_write_bytes
-from lorebook.core.game_types import BASE_DATABASE_PATH, resolve_game_folder
+from lorebook.core.game_types import BASE_DATABASE_PATH, game_folders, resolve_game_folder
 from lorebook.core.net import fetch_bytes as _download
 from lorebook.core.net import fetch_json as _fetch_json
 
@@ -287,6 +287,27 @@ GAMES = {
     "lorcana": (LORCANA_URL, _fetch_json, lorcana_targets),
     "riftbound": (RIFTBOUND_RIOT_URL, _fetch_riftbound, riftbound_targets),
 }
+
+
+def selectable_games(base: str = BASE_DATABASE_PATH) -> list[str]:
+    """
+    Games to offer in the UI: every game folder, plus registered games with no
+    folder yet. Their art only downloads once the folder exists, so listing
+    folders alone would leave them impossible to select.
+    """
+    found = game_folders(base)
+    have = {name.lower() for name in found}
+    return sorted(found + [key.capitalize() for key in GAMES if key not in have])
+
+
+def ensure_game_folder(game: str | None, base: str = BASE_DATABASE_PATH) -> None:
+    """
+    Create the folder for a registered game so the next build downloads its
+    art. Only called when the user asks for a rebuild: startup builds every
+    folder, so creating folders there would download games nobody selected.
+    """
+    if game and game.strip().lower() in GAMES:
+        os.makedirs(os.path.join(base, game.strip()), exist_ok=True)
 
 
 def _to_webp(raw: bytes, quality: int) -> bytes:

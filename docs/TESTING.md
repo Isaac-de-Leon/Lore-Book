@@ -149,6 +149,9 @@ calibrated without hardware.
 - [ ] Create `Card_Images/TestGame/` with one `AAA-001.webp`, reopen Settings: TestGame is
       listed and can be ticked; Apply loads it (log: `Loaded N entries for TestGame`).
       Remove the folder afterwards.
+- [ ] With no `Card_Images/Riftbound/` folder, open Settings: Riftbound is listed with no sets, and
+      restarting the app downloads nothing for it. Tick it and press Rebuild Database: the folder
+      appears, art downloads, and its sets are listed the next time you open Settings.
 - [ ] Riftbound Rebuild Database without `RIOT_API_KEY`: `logs/card_scanner.log` has
       `Riftbound image fetch: N cards across sets …` listing every current set. A
       `No cards found` warning there means the Riftcodex format changed again.

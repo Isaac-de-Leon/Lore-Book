@@ -34,14 +34,30 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
     window._make_settings_dialog().apply_settings()
     assert window.settings.selected_games["lorcana"] and window.settings.selected_sets["lorcana"] == []
 
+    def tree_roots(dialog):
+        return {dialog.set_tree.topLevelItem(i).text(0): dialog.set_tree.topLevelItem(i)
+                for i in range(dialog.set_tree.topLevelItemCount())}
+
+    # A game we can download is selectable with no folder yet; Rebuild creates
+    # the folder, so its art can download. Opening Settings alone must not.
+    builds = []
+    monkeypatch.setattr(mw.MainWindow, "start_db_build_in_background", lambda self: builds.append(1))
+    dialog = window._make_settings_dialog()
+    roots = tree_roots(dialog)
+    assert roots["Riftbound"].childCount() == 0
+    assert not (tmp_path / "Card_Images" / "Riftbound").exists()
+    roots["Riftbound"].setCheckState(0, Qt.Checked)
+    dialog._rebuild_database()
+    assert window.get_active_game() == "Riftbound" and builds == [1]
+    assert (tmp_path / "Card_Images" / "Riftbound").is_dir()
+
     # A new game folder is selectable, keeps its case, and replaces the old one.
     dialog = window._make_settings_dialog()
-    roots = {dialog.set_tree.topLevelItem(i).text(0): dialog.set_tree.topLevelItem(i)
-             for i in range(dialog.set_tree.topLevelItemCount())}
+    roots = tree_roots(dialog)
     roots["MTG"].setCheckState(0, Qt.Checked)
     dialog.apply_settings()
     assert window.get_active_game() == "MTG"
-    assert not window.settings.selected_games["lorcana"]
+    assert not window.settings.selected_games["lorcana"] and not window.settings.selected_games["riftbound"]
 
     # A scan runs on the scan worker thread and lands in the result panel,
     # tied to the game it was scanned for.

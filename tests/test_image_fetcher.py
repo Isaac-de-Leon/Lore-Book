@@ -115,6 +115,26 @@ def test_riftbound_targets():
         assert list(riftbound_targets(empty)) == []
 
 
+def test_registered_games_are_selectable_before_their_folder_exists(tmp_path):
+    base = str(tmp_path / "images")
+    (tmp_path / "images" / "Lorcana").mkdir(parents=True)
+    (tmp_path / "images" / "MTG").mkdir()
+    assert image_fetcher.selectable_games(base) == ["Lorcana", "MTG", "Riftbound"]
+
+    (tmp_path / "images" / "riftbound").mkdir()  # an existing folder keeps its own case
+    assert image_fetcher.selectable_games(base) == ["Lorcana", "MTG", "riftbound"]
+    (tmp_path / "images" / "riftbound").rmdir()
+
+    image_fetcher.ensure_game_folder("Riftbound", base)
+    assert (tmp_path / "images" / "Riftbound").is_dir()
+    image_fetcher.ensure_game_folder("Riftbound", base)  # already there: no error
+    # Only registered games: a stale settings key must not create folders.
+    for game in ("../outside", "Pokemon", "", None):
+        image_fetcher.ensure_game_folder(game, base)
+    assert sorted(p.name for p in (tmp_path / "images").iterdir()) == ["Lorcana", "MTG", "Riftbound"]
+    assert not (tmp_path / "outside").exists()
+
+
 def _riftcodex_card(riftbound_id, number, name, set_id, url):
     """The fields we read from a real api.riftcodex.com/cards item."""
     return {"id": riftbound_id, "name": name, "riftbound_id": riftbound_id, "collector_number": number,

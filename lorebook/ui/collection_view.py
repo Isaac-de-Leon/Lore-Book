@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (
 
 from lorebook.core.card_names import name_for
 from lorebook.core.csv_manager import CsvReadError, clear_collection, read_collection_rows
-from lorebook.core.game_types import csv_for_game, game_folders
+from lorebook.core.game_types import csv_for_game
+from lorebook.core.image_fetcher import selectable_games
 from lorebook.ui.icons import get_icon
 
 _COLUMNS = ["Set", "Card", "Variant", "Count", "Name"]
@@ -42,7 +43,7 @@ class CollectionView(QWidget):
 
         # Toolbar row
         self.game_combo = QComboBox()
-        games = game_folders()
+        games = selectable_games()
         self.game_combo.addItems(games)
         if initial_game and initial_game in games:
             self.game_combo.setCurrentText(initial_game)

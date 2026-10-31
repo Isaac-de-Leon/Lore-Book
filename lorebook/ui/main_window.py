@@ -26,6 +26,7 @@ from lorebook.core.build import BuildReport
 from lorebook.core.card_prices import clear_price_cache
 from lorebook.core.csv_manager import split_filename
 from lorebook.core.game_types import BASE_DATABASE_PATH, game_folders
+from lorebook.core.image_fetcher import ensure_game_folder
 from lorebook.core.image_utils import (
     card_motion_gate,
     crop_to_card,
@@ -251,7 +252,7 @@ class MainWindow(QWidget):
     def _make_settings_dialog(self) -> SettingsWindow:
         dlg = SettingsWindow(self.settings, self)
         dlg.applied.connect(self._apply_settings)
-        dlg.rebuild_requested.connect(self.start_db_build_in_background)
+        dlg.rebuild_requested.connect(self._rebuild_database)
         return dlg
 
     def open_settings(self) -> None:
@@ -291,6 +292,14 @@ class MainWindow(QWidget):
         return stopped
 
     # ------------------------------------------------------------------ DB build
+
+    def _rebuild_database(self) -> None:
+        """Settings' Rebuild Database: the selected game may not have a folder yet."""
+        try:
+            ensure_game_folder(self.settings.active_game())
+        except OSError as e:
+            logger.error("Could not create the game folder: %s", e)
+        self.start_db_build_in_background()
 
     def start_db_build_in_background(self) -> None:
         """Build every game folder's database on the build worker."""
