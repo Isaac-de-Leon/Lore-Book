@@ -146,10 +146,6 @@ def list_image_files(folder: str) -> list[str]:
     return sorted(n for n in os.listdir(folder) if n.lower().endswith(SUPPORTED_EXTS))
 
 
-# Backward-compat alias (was private; csv_manager and the GUI need it).
-_list_image_files = list_image_files
-
-
 # Images per inference batch during builds. Reads are parallelized within a
 # chunk; inference runs once per chunk on the calling thread (Keras predict is
 # not guaranteed thread-safe, and its per-call overhead dominates per-image).
@@ -284,7 +280,6 @@ def build_feature_database(
 
     logger.info("Build complete: %s ok, %s failed", successful, failed)
     return feature_db
-
 
 
 def clear_from_cache(filename: str, db_path: str | None = None) -> None:

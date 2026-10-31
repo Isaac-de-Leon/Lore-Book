@@ -60,7 +60,6 @@ def motion_sample(frame_bgr: np.ndarray | None, size: int = 64) -> np.ndarray | 
     return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if small.ndim == 3 else small
 
 
-
 def draw_focus_overlay(frame_bgr: np.ndarray, color: tuple[int, int, int] = (0, 255, 0),
                        thickness: int = 2, corner: int = 40) -> np.ndarray:
     """A copy of the frame with the card focus box (focus_rect) and corner marks drawn."""

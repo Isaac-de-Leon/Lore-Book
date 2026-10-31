@@ -114,7 +114,7 @@ Lore-Book/
 | File | What it owns |
 |------|-------------|
 | `lorebook/core/paths.py` | `data_dir()`/`data_path()` — writable-data root (CWD-relative from source; `%LOCALAPPDATA%\LoreBook` when frozen; `LOREBOOK_DATA_DIR` overrides both), `configure_frozen_environment()` (KERAS_HOME) |
-| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, `game_folders()`/`resolve_game_folder()` (Card_Images discovery, case-preserving), `sets_to_store()`/`sets_to_display()` (set-filter semantics), `game_folder_for()`/`normalize_set_selection()` (same jobs, capitalized-key fallback; the app uses the pairs before them), constants |
+| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, `game_folders()`/`resolve_game_folder()` (Card_Images discovery, case-preserving), `sets_to_store()`/`sets_to_display()` (set-filter semantics), constants |
 | `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` + `motion_sample` + `card_motion_gate` (GUI auto-scan and sorter live-camera trigger) |
 | `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
 | `lorebook/core/card_prices.py` | `price_for()`, `format_price()`, `rate_for()`, `prices_stale()`, `clear_price_cache()` — optional market prices from `card_prices_<Game>.json` + `currency_rates.json` (display only) |
@@ -134,7 +134,7 @@ Lore-Book/
 | `lorebook/sorter/rules.py` | `Rule`, `SortRules`, `load_rules`, `decide_bin` |
 | `lorebook/sorter/pipeline.py` | `SortPipeline`, `SortOutcome` — the headless sort loop |
 | `lorebook/sorter/__main__.py` | `python -m lorebook.sorter` argument parsing and wiring |
-| `lorebook/ui/styles.py` | `THEMES` (dark/light token palettes), `build_stylesheet(theme)`, `theme_tokens()`; `APP_STYLESHEET` kept as the dark sheet for backward compat |
+| `lorebook/ui/styles.py` | `THEMES` (dark/light token palettes), `build_stylesheet(theme)`, `theme_tokens()` |
 | `lorebook/ui/icons.py` | `get_icon(name, color, checked_color=None)` — inline SVG outline icons rendered to tinted QIcons (high-DPI safe, cached) |
 | `lorebook/ui/settings_window.py` | `SettingsWindow(settings)` — edits a copy; emits `applied(AppSettings)` / `rebuild_requested` (never writes to its parent) |
 | `lorebook/ui/progress_dialog.py` | `BuildProgressDialog` — modeless DB-build progress popup with Cancel |
@@ -227,6 +227,11 @@ Or run a single test:
 python -m pytest tests/test_photo_matching.py::test_split_filename -v
 ```
 
+`tests/test_tf_integration.py` is the exception: it runs real TensorFlow + PySide6 (and downloads the MobileNetV2 weights on first run) in a child process, so it is skipped unless opted in. Run it after touching `features.py`, `threads.py` or `ScanWorker`:
+```bash
+LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v
+```
+
 ### Before committing
 
 ```bash
@@ -246,11 +251,6 @@ those paths, say it is unverified in the real app and add checklist items to `do
 (same "do this / you should see" format). Tests must never hit the network: the external APIs
 (LorcanaJSON, Lorcast, Riot/Riftcodex, Frankfurter) are always faked with small inline fixtures
 or `monkeypatch`.
-
-`tests/test_tf_integration.py` is the exception: it runs real TensorFlow + PySide6 (and downloads the MobileNetV2 weights on first run) in a child process, so it is skipped unless opted in. Run it after touching `features.py`, `threads.py` or `ScanWorker`:
-```bash
-LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v
-```
 
 ---
 

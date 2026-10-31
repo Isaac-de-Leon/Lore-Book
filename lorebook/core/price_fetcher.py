@@ -32,7 +32,6 @@ LORCANA_URL = "https://api.lorcast.com/v0"
 RATES_URL = "https://api.frankfurter.dev/v1/latest?base=USD"
 
 
-
 def _as_price(value) -> float | None:
     try:
         return float(value)

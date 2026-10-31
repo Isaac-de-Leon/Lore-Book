@@ -39,7 +39,6 @@ RIFTBOUND_RIOT_URL = "https://americas.api.riotgames.com/riftbound/content/v1/co
 RIFTBOUND_FALLBACK_URL = "https://api.riftcodex.com/cards"
 
 
-
 @dataclass
 class FetchStats:
     """Result of a download_new_images() run."""

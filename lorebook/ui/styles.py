@@ -380,7 +380,3 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 def build_stylesheet(theme: str = DEFAULT_THEME) -> str:
     """Render the app-wide QSS for the given theme name."""
     return _QSS.substitute(theme_tokens(theme))
-
-
-# Backward-compat: the original single dark stylesheet constant.
-APP_STYLESHEET = build_stylesheet("dark")
