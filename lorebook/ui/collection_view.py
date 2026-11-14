@@ -3,9 +3,8 @@
 import logging
 import os
 import shutil
-from typing import List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -21,22 +20,12 @@ from PySide6.QtWidgets import (
 )
 
 from lorebook.core.card_names import name_for
-from lorebook.core.csv_manager import clear_collection, read_collection_rows
-from lorebook.core.game_types import BASE_DATABASE_PATH, csv_for_game
+from lorebook.core.csv_manager import CsvReadError, clear_collection, read_collection_rows
+from lorebook.core.game_types import csv_for_game
+from lorebook.core.image_fetcher import selectable_games
 from lorebook.ui.icons import get_icon
 
 _COLUMNS = ["Set", "Card", "Variant", "Count", "Name"]
-
-
-def _game_folders() -> List[str]:
-    """Game folder names under Card_Images/ (same discovery as the settings tree)."""
-    if not os.path.exists(BASE_DATABASE_PATH):
-        return []
-    return sorted(
-        item for item in os.listdir(BASE_DATABASE_PATH)
-        if os.path.isdir(os.path.join(BASE_DATABASE_PATH, item))
-        and item not in ("__pycache__",)
-    )
 
 
 class CollectionView(QWidget):
@@ -46,13 +35,15 @@ class CollectionView(QWidget):
     disk stays the single source of truth — this widget never writes to it.
     """
 
-    def __init__(self, initial_game: Optional[str] = None, parent=None):
+    cleared = Signal(str)  # game whose collection CSV was emptied
+
+    def __init__(self, initial_game: str | None = None, parent=None):
         super().__init__(parent)
         self.logger = logging.getLogger(__name__)
 
         # Toolbar row
         self.game_combo = QComboBox()
-        games = _game_folders()
+        games = selectable_games()
         self.game_combo.addItems(games)
         if initial_game and initial_game in games:
             self.game_combo.setCurrentText(initial_game)
@@ -86,13 +77,13 @@ class CollectionView(QWidget):
         # Table
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(_COLUMNS)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(len(_COLUMNS) - 1, QHeaderView.Stretch)  # Name fills
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(len(_COLUMNS) - 1, QHeaderView.ResizeMode.Stretch)  # Name fills
         # Short values ("011") would otherwise shrink columns below their
         # header text + sort arrow, truncating "Set" to garbage.
         header.setMinimumSectionSize(72)
@@ -118,7 +109,13 @@ class CollectionView(QWidget):
     def refresh(self) -> None:
         """Reload the table from the selected game's CSV."""
         game = self.current_game()
-        rows = read_collection_rows(game) if game else []
+        try:
+            rows = read_collection_rows(game, strict=True) if game else []
+        except CsvReadError as e:
+            self.logger.error(str(e))
+            self.table.setRowCount(0)
+            self.summary_label.setText(f"Couldn't read {csv_for_game(game)} — check the file.")
+            return
 
         self.table.setSortingEnabled(False)  # sorting mid-fill scrambles rows
         self.table.setRowCount(len(rows))
@@ -131,7 +128,7 @@ class CollectionView(QWidget):
             total += count_val
 
             count_item = QTableWidgetItem()
-            count_item.setData(Qt.DisplayRole, count_val)  # int → numeric sort
+            count_item.setData(Qt.ItemDataRole.DisplayRole, count_val)  # int → numeric sort
 
             name = name_for(set_code, card_code, game) or ""
             for c, item in enumerate([
@@ -163,17 +160,21 @@ class CollectionView(QWidget):
         try:
             shutil.copyfile(source, dest)
             self.summary_label.setText(f"Exported to {dest}")
-            self.logger.info(f"Exported {source} to {dest}")
+            self.logger.info("Exported %s to %s", source, dest)
         except OSError as e:
             self.summary_label.setText(f"Export failed: {e}")
-            self.logger.error(f"Error exporting {source} to {dest}: {e}")
+            self.logger.error("Error exporting %s to %s: %s", source, dest, e)
 
     def _clear_csv(self) -> None:
         """Empty the selected game's collection CSV after an explicit confirm."""
         game = self.current_game()
         if not game:
             return
-        rows = read_collection_rows(game)
+        try:
+            rows = read_collection_rows(game, strict=True)
+        except CsvReadError:
+            self.summary_label.setText(f"Couldn't read {csv_for_game(game)} — not clearing it.")
+            return
         if not rows:
             self.summary_label.setText("Collection is already empty.")
             return
@@ -183,18 +184,15 @@ class CollectionView(QWidget):
             "Clear collection",
             f"Delete all {len(rows)} entries ({total} cards) from "
             f"{os.path.basename(csv_for_game(game))}?\n\nThis cannot be undone.",
-            QMessageBox.Yes | QMessageBox.Cancel,
-            QMessageBox.Cancel,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
         )
-        if answer != QMessageBox.Yes:
+        if answer != QMessageBox.StandardButton.Yes:
             return
         clear_collection(game)
-        self.logger.info(f"Cleared collection CSV for {game}")
+        self.logger.info("Cleared collection CSV for %s", game)
         # The scanner's single-level Undo now points at rows that no longer
-        # exist — disable it rather than let it "undo" into the empty file.
-        win = self.window()
-        if hasattr(win, "undo_btn"):
-            win.undo_btn.setEnabled(False)
-            win._last_add = None
+        # exist — whoever owns it should disable it.
+        self.cleared.emit(game)
         self.refresh()
         self.summary_label.setText("Collection cleared.")

@@ -1,20 +1,50 @@
 # app.py — GUI application entry point (also exposed as the `lorebook-ui` script).
 
+import logging
+import os
 import sys
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+# Must run before anything imports TensorFlow/Keras (main_window pulls in the
+# feature pipeline): frozen builds keep the Keras weights cache in the
+# per-user data dir instead of the ephemeral bundle.
+from lorebook.core.paths import configure_frozen_environment
 
-from lorebook.ui.main_window import MainWindow, setup_logging
+configure_frozen_environment()
+
+from PySide6.QtCore import QTimer  # noqa: E402
+from PySide6.QtGui import QIcon  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from lorebook import __version__  # noqa: E402
+from lorebook.ui.app_logging import GuiStallWatchdog, setup_logging  # noqa: E402
+from lorebook.ui.main_window import MainWindow  # noqa: E402
+
+_ICON_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
 
 
 def main() -> int:
     setup_logging()
     app = QApplication(sys.argv)
+    app.setApplicationName("LoreBook")
+    app.setApplicationVersion(__version__)
+    app.setOrganizationName("LoreBook")
+    if os.path.exists(_ICON_PNG):
+        app.setWindowIcon(QIcon(_ICON_PNG))
     w = MainWindow()
     w.show()
+    _watchdog = GuiStallWatchdog(app)
     QTimer.singleShot(0, w.start_camera)
-    return app.exec()
+    rc = app.exec()
+    _watchdog.stop()  # shutdown waits below must not be reported as a hang
+    if not w.stop_workers():
+        # A worker is still inside a long blocking call (e.g. a network request
+        # with a long timeout). Letting Python tear down its running QThread
+        # would abort the process, so exit directly instead: settings are
+        # saved and every data file write is atomic, so nothing is lost.
+        logging.getLogger(__name__).warning("Exiting with a worker thread still busy")
+        logging.shutdown()
+        os._exit(rc)
+    return rc
 
 
 if __name__ == "__main__":

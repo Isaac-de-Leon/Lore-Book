@@ -1,16 +1,18 @@
 # image_utils.py — Image validation and foil detection utilities.
 
 import logging
-from typing import Optional, Tuple
+from typing import overload
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # Standard TCG card aspect ratio (63mm × 88mm portrait).
 CARD_ASPECT = 63 / 88.0
 
 
-def focus_rect(h: int, w: int, height_frac: float = 0.6) -> Tuple[int, int, int, int]:
+def focus_rect(h: int, w: int, height_frac: float = 0.6) -> tuple[int, int, int, int]:
     """
     Return (fx, fy, fw, fh) for a centered 63:88 portrait card box sized to
     height_frac of the frame height. Shared by the GUI focus overlay and the
@@ -23,7 +25,11 @@ def focus_rect(h: int, w: int, height_frac: float = 0.6) -> Tuple[int, int, int,
     return fx, fy, fw, fh
 
 
-def crop_to_card(img_bgr: Optional[np.ndarray], height_frac: float = 0.6) -> Optional[np.ndarray]:
+@overload
+def crop_to_card(img_bgr: None, height_frac: float = ...) -> None: ...
+@overload
+def crop_to_card(img_bgr: np.ndarray, height_frac: float = ...) -> np.ndarray: ...
+def crop_to_card(img_bgr: np.ndarray | None, height_frac: float = 0.6) -> np.ndarray | None:
     """
     Crop a frame to the centered card focus box (see focus_rect).
 
@@ -40,6 +46,35 @@ def crop_to_card(img_bgr: Optional[np.ndarray], height_frac: float = 0.6) -> Opt
         return img_bgr[fy:fy + fh, fx:fx + fw].copy()
     return img_bgr
 
+
+def motion_sample(frame_bgr: np.ndarray | None, size: int = 64) -> np.ndarray | None:
+    """
+    Small grayscale sample of the card focus box for MotionGate.update().
+
+    Shared by the GUI's auto-scan and the sorter's live-camera trigger so
+    both decide "a card has settled" from the same pixels.
+    """
+    if frame_bgr is None or np.size(frame_bgr) == 0:
+        return None
+    small = cv2.resize(crop_to_card(frame_bgr), (size, size), interpolation=cv2.INTER_AREA)
+    return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if small.ndim == 3 else small
+
+
+def draw_focus_overlay(frame_bgr: np.ndarray, color: tuple[int, int, int] = (0, 255, 0),
+                       thickness: int = 2, corner: int = 40) -> np.ndarray:
+    """A copy of the frame with the card focus box (focus_rect) and corner marks drawn."""
+    overlay = frame_bgr.copy()
+    h, w = overlay.shape[:2]
+    fx, fy, fw, fh = focus_rect(h, w)
+    cv2.rectangle(overlay, (fx, fy), (fx + fw, fy + fh), color, thickness)
+    for (sx, sy), (ex, ey) in [
+        ((fx, fy), (fx + corner, fy)), ((fx, fy), (fx, fy + corner)),
+        ((fx + fw, fy), (fx + fw - corner, fy)), ((fx + fw, fy), (fx + fw, fy + corner)),
+        ((fx, fy + fh), (fx + corner, fy + fh)), ((fx, fy + fh), (fx, fy + fh - corner)),
+        ((fx + fw, fy + fh), (fx + fw - corner, fy + fh)), ((fx + fw, fy + fh), (fx + fw, fy + fh - corner)),
+    ]:
+        cv2.line(overlay, (sx, sy), (ex, ey), color, thickness)
+    return overlay
 
 class MotionGate:
     """
@@ -63,14 +98,14 @@ class MotionGate:
         self.steady_frames = max(1, steady_frames)
         self.diff_threshold = diff_threshold
         self.min_std = min_std
-        self._prev: Optional[np.ndarray] = None
+        self._prev: np.ndarray | None = None
         self._steady = 0
         self._armed = False  # motion must be seen before a trigger
 
     def reset(self) -> None:
         self._prev, self._steady, self._armed = None, 0, False
 
-    def update(self, gray: Optional[np.ndarray]) -> bool:
+    def update(self, gray: np.ndarray | None) -> bool:
         """Feed the next frame; True exactly when a fresh card has settled."""
         if gray is None or np.size(gray) == 0:
             return False
@@ -95,7 +130,16 @@ class MotionGate:
         return float(np.std(gray)) >= self.min_std
 
 
-def ensure_valid_image(img_bgr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+def card_motion_gate() -> MotionGate:
+    """The MotionGate tuned for a card on the scanning mat (GUI auto-scan and
+    the sorter's live-camera trigger share it, so they behave the same).
+
+    min_std=12 suppresses triggers on an empty, near-uniform focus box.
+    """
+    return MotionGate(min_std=12.0)
+
+
+def ensure_valid_image(img_bgr: np.ndarray | None) -> np.ndarray | None:
     """Validate and normalize an input image to 3-channel BGR format."""
     if img_bgr is None or img_bgr.size == 0:
         return None
@@ -122,8 +166,8 @@ def foil_score(img_bgr: np.ndarray) -> float:
         bright_ratio = float((gray > 240).astype(np.uint8).mean())
         contrast = float(np.mean(np.abs(cv2.Laplacian(gray, cv2.CV_32F)))) / 255.0
         return float(np.clip(0.7 * bright_ratio + 0.3 * contrast, 0.0, 1.0))
-    except Exception as e:
-        logging.error(f"Error calculating foil score: {e}")
+    except cv2.error as e:
+        logger.error("Error calculating foil score: %s", e)
         return 0.0
 
 

@@ -9,12 +9,15 @@
 import json
 import logging
 import os
-from typing import Dict, Optional
+
+from lorebook.core.paths import data_path
+
+logger = logging.getLogger(__name__)
 
 
 def names_file_for(game: str) -> str:
     """Path of the (optional) names file for a game folder name."""
-    return f"card_names_{game}.json"
+    return data_path(f"card_names_{game}.json")
 
 
 def normalize_key(set_code: str, card_code: str) -> str:
@@ -30,10 +33,10 @@ def normalize_key(set_code: str, card_code: str) -> str:
 
 # Loaded name maps keyed by the names file's absolute path (so tests that
 # chdir, and games sharing a cwd, never collide).
-_cache: Dict[str, Dict[str, str]] = {}
+_cache: dict[str, dict[str, str]] = {}
 
 
-def load_card_names(game: str, path: Optional[str] = None) -> Dict[str, str]:
+def load_card_names(game: str, path: str | None = None) -> dict[str, str]:
     """
     Load (and cache) the normalized {key: name} map for a game.
     Returns {} when the file is missing or unreadable.
@@ -42,23 +45,25 @@ def load_card_names(game: str, path: Optional[str] = None) -> Dict[str, str]:
     if file in _cache:
         return _cache[file]
 
-    names: Dict[str, str] = {}
+    names: dict[str, str] = {}
     if os.path.exists(file):
         try:
-            with open(file, "r", encoding="utf-8") as f:
+            with open(file, encoding="utf-8") as f:
                 raw = json.load(f)
+            if not isinstance(raw, dict):
+                raise ValueError("expected a JSON object")
             for key, name in raw.items():
                 set_code, sep, card_code = str(key).partition("-")
                 if sep:
                     names[normalize_key(set_code, card_code)] = str(name)
-        except Exception as e:
-            logging.warning(f"Could not load card names from {file}: {e}")
+        except (OSError, ValueError) as e:  # ValueError covers malformed JSON
+            logger.warning("Could not load card names from %s: %s", file, e)
 
     _cache[file] = names
     return names
 
 
-def name_for(set_code: str, card_code: str, game: str) -> Optional[str]:
+def name_for(set_code: str, card_code: str, game: str) -> str | None:
     """Return the card's display name, or None when unknown/no names file."""
     if not set_code or not game:
         return None

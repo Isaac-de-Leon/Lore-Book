@@ -10,7 +10,6 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import Counter
-from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ class MockTransport(Transport):
 
     def __init__(self):
         self.routed: Counter = Counter()
-        self.history: List[str] = []
+        self.history: list[str] = []
         self.cards_advanced = 0
         self.homed = False
 

@@ -3,10 +3,8 @@
 import csv
 import logging
 import os
-import stat
-import tempfile
-from typing import List, Optional, Tuple
 
+from lorebook.core.fileio import atomic_write
 from lorebook.core.game_types import (
     LORCANA_CSV,
     RIFTBOUND_CSV,
@@ -17,8 +15,10 @@ from lorebook.core.game_types import (
     is_foil_only_card,
 )
 
+logger = logging.getLogger(__name__)
 
-def split_filename(matchedFilename: str) -> Tuple[str, str]:
+
+def split_filename(matched_filename: str) -> tuple[str, str]:
     """
     Split a card image filename into (set_code, card_code).
 
@@ -27,15 +27,11 @@ def split_filename(matchedFilename: str) -> Tuple[str, str]:
         "ONG-23c-alt.jpg"   → ("ONG", "23c-alt")
         "nosetcode.png"     → ("",    "nosetcode")
     """
-    try:
-        base = os.path.splitext(os.path.basename(matchedFilename))[0]
-        parts = base.split("-", maxsplit=2)
-        if len(parts) < 2:
-            return "", base
-        return parts[0], "-".join(parts[1:])
-    except Exception as e:
-        logging.error(f"Error splitting filename {matchedFilename}: {e}")
-        return "", matchedFilename
+    base = os.path.splitext(os.path.basename(matched_filename))[0]
+    parts = base.split("-", maxsplit=2)
+    if len(parts) < 2:
+        return "", base
+    return parts[0], "-".join(parts[1:])
 
 
 # Backward-compat alias (was private; other packages legitimately need it).
@@ -43,69 +39,83 @@ _split_filename = split_filename
 
 
 def get_available_sets(
-    game_type: Optional[GameType] = None,
-    db_path: Optional[str] = None,
-) -> List[str]:
+    game_type: GameType | None = None,
+    db_path: str | None = None,
+) -> list[str]:
     """
-    Return a sorted list of all set codes found in db_path (or the current databasePath).
+    Return a sorted list of all set codes found in db_path (or the current database path).
 
     game_type is accepted for API compatibility but no longer restricts results —
     all set codes present in the folder are returned regardless of format.
     """
-    from lorebook.core.card_database import _list_image_files, databasePath
+    from lorebook.core.card_database import get_database_path, list_image_files
 
-    resolved = db_path or databasePath
+    resolved = db_path or get_database_path()
     sets = set()
-    for fname in _list_image_files(resolved):
+    for fname in list_image_files(resolved):
         set_code, _ = split_filename(fname)
         if set_code:
             sets.add(set_code)
     return sorted(sets)
 
 
-def _normalize_existing_rows(csv_path: str) -> List[List[str]]:
+class CsvReadError(OSError):
+    """An existing collection CSV could not be read.
+
+    Raised (rather than returning the rows read so far) wherever the caller
+    is about to write the file back, so a read failure can never truncate
+    the collection. Subclasses OSError so ``except OSError`` covers it.
+    """
+
+
+def _normalize_existing_rows(csv_path: str, strict: bool = False) -> list[list[str]]:
     """
     Read a CSV and normalize every row to exactly 4 columns:
     [Set Number, Card Number, Variant, Count].
 
     Handles 3-col (count defaults to 0), 4-col, and 5-col rows (5th column
-    is a legacy "Tag" field that is ignored).
+    is a legacy "Tag" field that is ignored). A missing file is an empty
+    collection. A file that exists but can't be read (bad encoding, I/O
+    error) raises CsvReadError when strict, else is logged and yields the
+    rows read so far — fine for display, never for read-modify-write.
     """
-    rows: List[List[str]] = []
+    rows: list[list[str]] = []
     if not os.path.exists(csv_path):
         return rows
     try:
-        with open(csv_path, "r", newline="", encoding="utf-8") as f:
+        # utf-8-sig: Excel re-saves CSVs with a byte-order mark
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
             reader = csv.reader(f)
             first = True
-            for row_num, row in enumerate(reader, 1):
-                try:
-                    if first:
-                        first = False
-                        if row and any("set" in c.lower() for c in row):
-                            continue  # skip header
-                    if not row:
-                        continue
-                    if len(row) >= 4:
-                        # Count is always col[3]; a 5th legacy "Tag" column is ignored
-                        count = row[3] if row[3] != "" else "0"
-                        rows.append([row[0], row[1], row[2], count])
-                    elif len(row) == 3:
-                        rows.append([row[0], row[1], row[2], "0"])
-                except Exception as e:
-                    logging.warning(f"Error processing row {row_num} in {csv_path}: {e}")
+            for row in reader:
+                if first:
+                    first = False
+                    if row and any("set" in c.lower() for c in row):
+                        continue  # skip header
+                if not row:
+                    continue
+                if len(row) >= 4:
+                    # Count is always col[3]; a 5th legacy "Tag" column is ignored
+                    count = row[3] if row[3] != "" else "0"
+                    rows.append([row[0], row[1], row[2], count])
+                elif len(row) == 3:
+                    rows.append([row[0], row[1], row[2], "0"])
         return rows
     except Exception as e:
-        logging.error(f"Error reading CSV file {csv_path}: {e}")
+        if strict:
+            raise CsvReadError(f"Could not read {csv_path}: {e}") from e
+        logger.error("Error reading CSV file %s: %s", csv_path, e)
         return rows
 
 
-def read_collection_rows(game: str) -> List[List[str]]:
+def read_collection_rows(game: str, strict: bool = False) -> list[list[str]]:
     """
     Return the collection rows for a game as normalized 4-column lists
-    [Set Number, Card Number, Variant, Count]. Missing file → [].
+    [Set Number, Card Number, Variant, Count]. Missing file → []. With
+    strict, an unreadable file raises CsvReadError instead of returning
+    a partial list.
     """
-    return _normalize_existing_rows(csv_for_game(game))
+    return _normalize_existing_rows(csv_for_game(game), strict=strict)
 
 
 def clear_collection(game: str) -> None:
@@ -118,40 +128,21 @@ def clear_collection(game: str) -> None:
     _write_rows_4col(csv_for_game(game), [])
 
 
-def _write_rows_4col(csv_path: str, rows: List[List[str]]) -> None:
+def _write_rows_4col(csv_path: str, rows: list[list[str]]) -> None:
     """
     Write rows to CSV with a 4-column header.
 
     Writes to a temp file in the same directory and atomically replaces the
     target, so a crash mid-write can't destroy the existing collection file.
     """
-    directory = os.path.dirname(os.path.abspath(csv_path))
-    # mkstemp creates the file 0600; carry over the target's existing mode (or
-    # a normal umask-honoring mode for new files) so os.replace doesn't
-    # silently tighten the CSV's permissions.
-    try:
-        mode = stat.S_IMODE(os.stat(csv_path).st_mode)
-    except OSError:
-        umask = os.umask(0)
-        os.umask(umask)
-        mode = 0o666 & ~umask
-    fd, tmp_path = tempfile.mkstemp(prefix=os.path.basename(csv_path) + ".", suffix=".tmp", dir=directory)
-    try:
-        os.chmod(tmp_path, mode)
-        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
-            for r in rows:
-                writer.writerow([r[0], r[1], r[2], r[3]])
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, csv_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    def write(f) -> None:
+        writer = csv.writer(f)
+        writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
+        for r in rows:
+            writer.writerow([r[0], r[1], r[2], r[3]])
+
+    # fsync: the collection is the one file worth surviving a power cut.
+    atomic_write(csv_path, write, newline="", fsync=True)
 
 
 def _csv_for_game_type(game_type: GameType) -> str:
@@ -161,17 +152,19 @@ def _csv_for_game_type(game_type: GameType) -> str:
 
 def update_cardlist_batch(
     cards,
-    game: Optional[str] = None,
+    game: str | None = None,
     allow_negative: bool = False,
 ) -> None:
     """
     Increment (or insert) rows for many cards with one read+write per CSV file.
 
-    cards: iterable of (matchedFilename, is_foil, count) tuples.
+    cards: iterable of (matched_filename, is_foil, count) tuples.
     game: explicit game folder name; the target file is csv_for_game(game),
     so any game gets its own <Game>List.csv. When None (legacy behavior),
     each card's game is inferred from its filename path: Riftbound paths →
     RiftboundList.csv, everything else → LorcanaList.csv.
+    Raises CsvReadError if an existing CSV can't be read (the file is left
+    untouched) and OSError if it can't be written (e.g. locked by Excel).
     allow_negative: permit negative counts, which decrement the matching row
     (clamped at 0; a decrement of a card not in the list is a no-op). Off by
     default so scan paths can never accidentally remove cards — only explicit
@@ -179,24 +172,25 @@ def update_cardlist_batch(
     """
     target = csv_for_game(game) if game is not None else None
     by_file: dict = {}
-    for matchedFilename, is_foil, count in cards:
+    for matched_filename, is_foil, count in cards:
         try:
             count = int(count)
         except (TypeError, ValueError):
-            logging.warning(f"Non-numeric count {count!r} for {matchedFilename}; recording 1")
+            logger.warning("Non-numeric count %r for %s; recording 1", count, matched_filename)
             count = 1
         if count == 0 or (count < 0 and not allow_negative):
             continue
-        game_type = game_type_from_name(game) if game is not None else get_game_type(matchedFilename)
+        game_type = game_type_from_name(game) if game is not None else get_game_type(matched_filename)
         target_file = target or _csv_for_game_type(game_type)
-        set_code, card_code = split_filename(matchedFilename)
+        set_code, card_code = split_filename(matched_filename)
         # Foil-only rarities (Lorcana Enchanted/Epic/Iconic) are always recorded
         # as foil — Dreamborn.ink rejects a "normal" row for them.
         variant = "foil" if is_foil or is_foil_only_card(set_code, card_code, game_type) else "normal"
         by_file.setdefault(target_file, []).append((set_code, card_code, variant, count))
 
     for target_file, updates in by_file.items():
-        existing = _normalize_existing_rows(target_file)
+        # strict: a read failure must abort, not write back a partial file
+        existing = _normalize_existing_rows(target_file, strict=True)
         changed = False
         for set_code, card_code, variant, count in updates:
             for r in existing:
@@ -217,21 +211,21 @@ def update_cardlist_batch(
 
 
 def update_cardlist(
-    matchedFilename: str,
+    matched_filename: str,
     is_foil: bool,
     count: int = 1,
-    game: Optional[str] = None,
+    game: str | None = None,
     allow_negative: bool = False,
 ) -> None:
     """
     Increment (or insert) a row in the game-appropriate CSV.
 
     When game is None the target file is chosen by inspecting the path of
-    matchedFilename: Riftbound paths → RiftboundList.csv, everything else →
+    matched_filename: Riftbound paths → RiftboundList.csv, everything else →
     LorcanaList.csv. Pass the game folder name explicitly to skip the path
     inference and write to csv_for_game(game). allow_negative permits a
     decrement (see update_cardlist_batch).
     """
     update_cardlist_batch(
-        [(matchedFilename, is_foil, count)], game=game, allow_negative=allow_negative
+        [(matched_filename, is_foil, count)], game=game, allow_negative=allow_negative
     )

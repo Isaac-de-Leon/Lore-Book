@@ -10,58 +10,35 @@
 #
 # Sources (community-maintained; override with --url if a format changes):
 #   Lorcana   — LorcanaJSON bulk data   https://lorcanajson.org
-#   Riftbound — RiftScribe card API     https://riftscribe.gg
+#   Riftbound — the same sources and numbering as the card images
+#               (lorebook.core.image_fetcher), so names always match filenames
 
 import argparse
 import json
+import os
 import sys
-import urllib.request
+
+try:
+    from lorebook.core.card_names import names_file_for
+    from lorebook.core.image_fetcher import (
+        RIFTBOUND_FALLBACK_URL,
+        fetch_riftbound_open_sources,
+        is_promo_printing,
+        riftbound_printings,
+    )
+    from lorebook.core.net import fetch_json as _fetch_json
+except ImportError:  # running from a checkout without `pip install -e .`
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lorebook.core.card_names import names_file_for
+    from lorebook.core.image_fetcher import (
+        RIFTBOUND_FALLBACK_URL,
+        fetch_riftbound_open_sources,
+        is_promo_printing,
+        riftbound_printings,
+    )
+    from lorebook.core.net import fetch_json as _fetch_json
 
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
-RIFTBOUND_URL = "https://riftscribe.gg/api/cards"
-
-
-def _fetch_json(url: str):
-    with urllib.request.urlopen(url, timeout=60) as resp:
-        return json.load(resp)
-
-
-def _fetch_riftbound(url: str):
-    """
-    Fetch all RiftScribe cards. The API returns fixed-size pages (48 cards)
-    and pages with an `offset` query param, so keep requesting until a page
-    comes back short or repeats.
-    """
-    cards, offset, last_first_id = [], 0, None
-    for _ in range(200):  # hard cap: never loop forever on a misbehaving API
-        sep = "&" if "?" in url else "?"
-        page = _fetch_json(f"{url}{sep}offset={offset}" if offset else url)
-        if isinstance(page, dict):
-            page = page.get("cards", [])
-        if not page:
-            break
-        first_id = page[0].get("id") if isinstance(page[0], dict) else None
-        if first_id is not None and first_id == last_first_id:
-            break  # API ignored the offset; stop rather than duplicate
-        last_first_id = first_id
-        cards.extend(page)
-        if len(page) < 48:
-            break
-        offset += len(page)
-    return cards
-
-
-def _is_promo_printing(card: dict) -> bool:
-    """
-    True for promo printings, which share their home set's setCode/number with
-    the main-set card in LorcanaJSON (e.g. Zeus "18/P3 · EN · 10" collides with
-    Scrooge "18/204 · EN · 10"). The fullIdentifier denominator tells them
-    apart: main-set cards have a numeric one. Must match the image fetcher's
-    rule (lorebook/core/image_fetcher.py) so names describe the downloaded art.
-    """
-    ident = str(card.get("fullIdentifier", ""))
-    denom = ident.split("/", 1)[1].split()[0] if "/" in ident else ""
-    return bool(denom) and not denom.isdigit()
 
 
 def lorcana_names(data) -> dict:
@@ -79,7 +56,7 @@ def lorcana_names(data) -> dict:
         if not (set_code and number and name):
             continue
         key = f"{set_code}-{number}"
-        promo = _is_promo_printing(card)
+        promo = is_promo_printing(card)
         if key not in names or (is_promo[key] and not promo):
             names[key] = str(name)
             is_promo[key] = promo
@@ -88,32 +65,20 @@ def lorcana_names(data) -> dict:
 
 def riftbound_names(data) -> dict:
     """
-    Map RiftScribe card data → {"<set>-<number>": name}.
-
-    Tolerates a top-level list or a {"cards": [...]} wrapper, and the common
-    field spellings for set code and collector number.
+    Map Riftbound card data → {"<set>-<number>": name}, numbered exactly like
+    the image files. A bare collector number won't do: rune, token and special
+    printings reuse the numbers of unrelated cards in their set.
     """
-    cards = data.get("cards", data) if isinstance(data, dict) else data
-    names = {}
-    for card in cards or []:
-        if not isinstance(card, dict):
-            continue
-        set_code = str(
-            card.get("set") or card.get("setCode") or card.get("set_code")
-            or card.get("set_id") or ""
-        ).strip()
-        number = str(
-            card.get("number") or card.get("collectorNumber") or card.get("collector_number") or ""
-        ).strip()
-        name = card.get("name")
-        if set_code and number and name:
-            names[f"{set_code}-{number}"] = str(name)
-    return names
+    return {
+        f"{set_code}-{number}": str(card["name"])
+        for set_code, number, _url, card in riftbound_printings(data)
+        if card.get("name")
+    }
 
 
 GAMES = {
     "lorcana": (LORCANA_URL, _fetch_json, lorcana_names),
-    "riftbound": (RIFTBOUND_URL, _fetch_riftbound, riftbound_names),
+    "riftbound": (RIFTBOUND_FALLBACK_URL, fetch_riftbound_open_sources, riftbound_names),
 }
 
 
@@ -121,7 +86,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Fetch card names into card_names_<Game>.json.")
     p.add_argument("--game", required=True, help="Lorcana or Riftbound.")
     p.add_argument("--url", help="Override the source URL (e.g. a mirror or newer endpoint).")
-    p.add_argument("--out", help="Output path (default: card_names_<Game>.json in the cwd).")
+    p.add_argument("--out", help="Output path (default: card_names_<Game>.json where the app reads it).")
     args = p.parse_args(argv)
 
     key = args.game.strip().lower()
@@ -135,7 +100,7 @@ def main(argv=None) -> int:
     print(f"Fetching {url} …")
     try:
         data = fetcher(url)
-    except Exception as e:
+    except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
         print(f"Download failed: {e}", file=sys.stderr)
         return 1
 
@@ -145,7 +110,7 @@ def main(argv=None) -> int:
               "Try --url with an alternative source.", file=sys.stderr)
         return 1
 
-    out = args.out or f"card_names_{args.game.strip().capitalize()}.json"
+    out = args.out or names_file_for(args.game.strip().capitalize())
     with open(out, "w", encoding="utf-8") as f:
         json.dump(names, f, ensure_ascii=False, indent=1, sort_keys=True)
     print(f"Wrote {len(names)} card names to {out}")

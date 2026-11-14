@@ -18,11 +18,13 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Dict, Optional
 
 from lorebook.core.card_names import normalize_key
+from lorebook.core.paths import data_path
 
-RATES_FILE = "currency_rates.json"
+logger = logging.getLogger(__name__)
+
+RATES_FILE = data_path("currency_rates.json")
 
 # Display currencies offered in Settings; all are converted from the USD
 # source prices via the cached rates file. Order = dropdown order.
@@ -32,13 +34,13 @@ _SYMBOLS = {"USD": "$", "CAD": "CA$", "EUR": "€", "GBP": "£"}
 
 def prices_file_for(game: str) -> str:
     """Path of the (optional) prices file for a game folder name."""
-    return f"card_prices_{game}.json"
+    return data_path(f"card_prices_{game}.json")
 
 
 # Loaded price/rate maps keyed by the file's absolute path (so tests that
 # chdir, and games sharing a cwd, never collide). Unlike card names, prices
 # change while the app runs — clear_price_cache() evicts after a refresh.
-_cache: Dict[str, dict] = {}
+_cache: dict[str, dict] = {}
 
 
 def clear_price_cache() -> None:
@@ -46,24 +48,24 @@ def clear_price_cache() -> None:
     _cache.clear()
 
 
-def _read_json(file: str) -> Optional[dict]:
+def _read_json(file: str) -> dict | None:
     try:
-        with open(file, "r", encoding="utf-8") as f:
+        with open(file, encoding="utf-8") as f:
             raw = json.load(f)
         return raw if isinstance(raw, dict) else None
-    except Exception as e:
-        logging.warning(f"Could not load {file}: {e}")
+    except (OSError, ValueError) as e:  # ValueError covers malformed JSON
+        logger.warning("Could not load %s: %s", file, e)
         return None
 
 
-def _as_float(value) -> Optional[float]:
+def _as_float(value) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
         return None
 
 
-def load_card_prices(game: str, path: Optional[str] = None) -> Dict[str, dict]:
+def load_card_prices(game: str, path: str | None = None) -> dict[str, dict]:
     """
     Load (and cache) the normalized {key: {"usd", "usd_foil"}} map for a game.
     Returns {} when the file is missing or unreadable.
@@ -72,7 +74,7 @@ def load_card_prices(game: str, path: Optional[str] = None) -> Dict[str, dict]:
     if file in _cache:
         return _cache[file]
 
-    prices: Dict[str, dict] = {}
+    prices: dict[str, dict] = {}
     if os.path.exists(file):
         raw = _read_json(file) or {}
         entries = raw.get("prices")
@@ -88,21 +90,21 @@ def load_card_prices(game: str, path: Optional[str] = None) -> Dict[str, dict]:
     return prices
 
 
-def price_for(set_code: str, card_code: str, game: str) -> Optional[dict]:
+def price_for(set_code: str, card_code: str, game: str) -> dict | None:
     """Return {"usd": float|None, "usd_foil": float|None}, or None when unknown."""
     if not set_code or not game:
         return None
     return load_card_prices(game).get(normalize_key(set_code, card_code))
 
 
-def rate_for(currency: str, path: Optional[str] = None) -> Optional[float]:
+def rate_for(currency: str, path: str | None = None) -> float | None:
     """USD→currency rate from the cached rates file; 1.0 for USD, None when unknown."""
     currency = (currency or "USD").upper()
     if currency == "USD":
         return 1.0
     file = os.path.abspath(path or RATES_FILE)
     if file not in _cache:
-        rates: Dict[str, float] = {}
+        rates: dict[str, float] = {}
         if os.path.exists(file):
             raw = _read_json(file) or {}
             entries = raw.get("rates")
@@ -114,8 +116,8 @@ def rate_for(currency: str, path: Optional[str] = None) -> Optional[float]:
     return _cache[file].get(currency)
 
 
-def format_price(entry: Optional[dict], currency: str = "USD",
-                 rate: Optional[float] = None) -> str:
+def format_price(entry: dict | None, currency: str = "USD",
+                 rate: float | None = None) -> str:
     """
     Render a price entry as e.g. "$1.24 · foil $3.80" (missing halves omitted,
     "" when there's nothing to show). Stored prices are USD; a non-USD
@@ -139,18 +141,24 @@ def format_price(entry: Optional[dict], currency: str = "USD",
     return " · ".join(parts)
 
 
-def prices_stale(game: Optional[str] = None, path: Optional[str] = None,
+def prices_stale(game: str | None = None, path: str | None = None,
                  max_age_hours: float = 24.0) -> bool:
     """
     True when the prices file (or, with path=RATES_FILE, the rates file) is
     missing or its fetched_at is older than max_age_hours or unparseable.
     Reads the file directly — no cache — so it's safe from worker threads.
     """
-    file = os.path.abspath(path or prices_file_for(game))
+    if path is not None:
+        file = os.path.abspath(path)
+    elif game is not None:
+        file = os.path.abspath(prices_file_for(game))
+    else:
+        raise ValueError("prices_stale() needs a game or a path")
     try:
-        with open(file, "r", encoding="utf-8") as f:
-            fetched_at = json.load(f).get("fetched_at")
+        with open(file, encoding="utf-8") as f:
+            raw = json.load(f)
+        fetched_at = raw.get("fetched_at") if isinstance(raw, dict) else None
         fetched_ts = datetime.fromisoformat(str(fetched_at)).timestamp()
-    except Exception:
+    except (OSError, ValueError):  # missing/unreadable file, bad JSON or timestamp
         return True
     return (time.time() - fetched_ts) > max_age_hours * 3600

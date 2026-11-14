@@ -11,9 +11,11 @@ import logging
 import os
 import sys
 
-from lorebook.core.card_database import load_cache, set_database_path
-from lorebook.core.features import get_extractor
-from lorebook.hardware.camera import MockCameraSource, OpenCVCameraSource
+from lorebook.core.card_database import load_cache
+from lorebook.core.features import BACKENDS, default_backend, get_extractor
+from lorebook.core.game_types import BASE_DATABASE_PATH
+from lorebook.core.image_utils import card_motion_gate
+from lorebook.hardware.camera import CameraSource, MockCameraSource, OpenCVCameraSource
 from lorebook.hardware.transport import MockTransport
 from lorebook.sorter.pipeline import SortPipeline
 from lorebook.sorter.rules import SortRules, load_rules
@@ -25,8 +27,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Headless card sorter: capture → match → decide bin → (mock) route.",
     )
     p.add_argument("--game", default="Lorcana", help="Game folder inside Card_Images/.")
-    p.add_argument("--backend", default="keras", choices=["keras", "tflite"],
-                   help="Feature extractor backend.")
+    p.add_argument("--backend", default=None, choices=list(BACKENDS),
+                   help="Feature extractor backend (default: onnx if onnxruntime is installed, else keras).")
     p.add_argument("--rules", help="Path to a JSON sort-rules config. Omit to send everything to reject_bin.")
     p.add_argument("--source", default="camera",
                    help="'camera' for a live feed, or a path to an image file/folder for a dry replay.")
@@ -40,6 +42,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                            "(default with --source camera).")
     crop.add_argument("--no-crop", dest="crop", action="store_false",
                       help="Match the full frame (default when replaying image files).")
+    p.add_argument("--trigger", choices=["motion", "every-frame"], default=None,
+                   help="When to process a frame: 'motion' waits for a newly placed card to "
+                        "settle (default with --source camera, so a card under the camera is "
+                        "recorded once); 'every-frame' treats each frame as a card (default "
+                        "when replaying image files).")
     dry = p.add_mutually_exclusive_group()
     dry.add_argument("--dry-run", dest="dry_run", action="store_true", default=True,
                      help="Do not write the CSV (default).")
@@ -54,8 +61,7 @@ def main(argv=None) -> int:
     log = logging.getLogger("lorebook.sorter")
 
     # Reference feature cache for the chosen game.
-    set_database_path(args.game)
-    feature_db = load_cache()
+    feature_db = load_cache(os.path.join(BASE_DATABASE_PATH, args.game))
     if not feature_db:
         log.error("No feature database for %s. Build it first: "
                   "python PhotoMatching.py --game %s --build", args.game, args.game)
@@ -67,10 +73,11 @@ def main(argv=None) -> int:
         log.warning("No --rules given; every card routes to '%s'.", rules.reject_bin)
 
     # Camera: live or a folder/file replay.
+    camera: CameraSource
     if args.source == "camera":
         try:
             camera = OpenCVCameraSource(args.camera_index)
-        except Exception as e:
+        except RuntimeError as e:  # open_capture's "no backend could open it"
             log.error("Could not open camera %d: %s", args.camera_index, e)
             return 1
     else:
@@ -81,11 +88,14 @@ def main(argv=None) -> int:
 
     # Fail fast (and warm the model) instead of silently rejecting every card
     # when e.g. the .tflite model hasn't been generated yet.
-    extractor = get_extractor(args.backend)
+    backend = args.backend or default_backend()
+    extractor = get_extractor(backend)
     try:
         extractor.ensure_ready()
-    except Exception as e:
-        log.error("Feature extractor (%s) is not usable: %s", args.backend, e)
+    # Boundary: model loading can fail in many ways (missing file, missing
+    # runtime, download error, TF internals); report it and exit cleanly.
+    except Exception as e:  # noqa: BLE001
+        log.error("Feature extractor (%s) is not usable: %s", backend, e)
         camera.release()
         return 1
 
@@ -94,6 +104,13 @@ def main(argv=None) -> int:
     # Live frames have the card centered against background — crop like the
     # GUI does. Replayed reference images are already just the card.
     crop_to_focus = args.crop if args.crop is not None else (args.source == "camera")
+
+    # A live camera delivers the same card many times a second; without a
+    # trigger each frame would be routed and recorded as another card.
+    trigger = args.trigger or ("motion" if args.source == "camera" else "every-frame")
+    gate = card_motion_gate() if trigger == "motion" else None
+    if gate is not None:
+        log.info("Waiting for cards: each one is processed once it settles in the focus box.")
 
     pipeline = SortPipeline(
         camera=camera,
@@ -106,6 +123,7 @@ def main(argv=None) -> int:
         foil_threshold=args.foil_threshold,
         dry_run=args.dry_run,
         crop_to_focus=crop_to_focus,
+        gate=gate,
     )
 
     outcomes = pipeline.run(max_cards=args.max_cards)

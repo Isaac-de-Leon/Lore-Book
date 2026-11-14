@@ -135,3 +135,42 @@ python -m lorebook.sorter --game Lorcana --source Card_Images/Lorcana \
 Worth mentioning even if everything passes: whether the 2% close-match gap
 feels right, and whether auto-scan needed the `min_std` tweak — both were
 calibrated without hardware.
+
+## Game / set selection (Settings)
+
+- [ ] Fresh settings (delete `ui_settings.json`), open Settings: Lorcana and **all** its sets are
+      ticked. Press Apply, reopen: still ticked, and scans still match.
+      *(Fix: an empty saved set list used to render unticked, so Apply deselected every game.)*
+- [ ] Tick only one Riftbound set, Apply, reopen: only that set is ticked; a card from another
+      set doesn't match. Tick all Riftbound sets, Apply: `ui_settings.json` shows
+      `"riftbound": []`.
+- [ ] With all sets ticked, Rebuild Database after a new set is released: the new set appears
+      in the tree already ticked and its cards match without touching Settings.
+- [ ] Create `Card_Images/TestGame/` with one `AAA-001.webp`, reopen Settings: TestGame is
+      listed and can be ticked; Apply loads it (log: `Loaded N entries for TestGame`).
+      Remove the folder afterwards.
+- [ ] With no `Card_Images/Riftbound/` folder, open Settings: Riftbound is listed with no sets, and
+      restarting the app downloads nothing for it. Tick it and press Rebuild Database: the folder
+      appears, art downloads, and its sets are listed the next time you open Settings.
+- [ ] Riftbound Rebuild Database without `RIOT_API_KEY`: `logs/card_scanner.log` has
+      `Riftbound image fetch: N cards across sets …` listing every current set. A
+      `No cards found` warning there means the Riftcodex format changed again.
+- [ ] Riftbound names match the art: `RAD-001` shows Amateur Demolitionist (not Ahri, Confident),
+      and an alternate-art card such as `RAD-023a` shows a name too.
+- [ ] Scan a Radiance card (filter: Set RAD): it matches a `RAD-<NNN>` image. Its art came from the
+      official gallery, because Riftcodex didn't have the set yet (the log says so).
+- [ ] After that rebuild, scan an alternate-art Riftbound card: it matches `<SET>-<NNN>a`, not
+      the base card, and adding it writes that code (e.g. `116a`) to `RiftboundList.csv`.
+      Signature cards use `<NNN>s`; these variants show no card name (names are base cards only).
+
+## Qt enum and worker typing cleanup
+
+Behaviour shouldn't change: the short enum names resolved to the same objects as the full ones.
+
+- [ ] Start the app and check the Scanner and Collection pages: layout, alignment and icons look
+      as before, and the A/D/F/S/C/Z shortcuts work.
+- [ ] Open Settings: ticking a game or set still works, and Apply keeps the selection.
+- [ ] Collection page: the table can't be edited in place, clicking selects a whole row, and Clear…
+      asks for confirmation.
+- [ ] Turn on Debug mode with the camera running: the heatmap overlay appears, and the window
+      stays responsive during a Rebuild Database.

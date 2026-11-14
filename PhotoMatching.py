@@ -3,7 +3,7 @@
 # All logic has been moved to focused modules under lorebook/core/:
 #   game_types.py    — GameType enum, get_game_type, constants
 #   image_utils.py   — ensure_valid_image, foil_score, is_probably_foil
-#   matching.py      — _l2_normalize, _cosine_score, find_best_matches
+#   matching.py      — l2_normalize, _cosine_score, find_best_matches
 #   features.py      — extract_features, visualize_activation_overlay
 #   card_database.py — load_cache, build_feature_database, set_database_path
 #   csv_manager.py   — update_cardlist, get_available_sets, CSV helpers
@@ -13,7 +13,6 @@
 from lorebook.core.card_database import (
     build_feature_database,
     clear_from_cache,
-    databasePath,
     get_database_path,
     load_cache,
     set_database_path,
@@ -21,11 +20,11 @@ from lorebook.core.card_database import (
 from lorebook.core.csv_manager import (
     _normalize_existing_rows,
     _split_filename,
-    split_filename,
     _write_rows_4col,
     clear_collection,
     get_available_sets,
     read_collection_rows,
+    split_filename,
     update_cardlist,
     update_cardlist_batch,
 )
@@ -47,7 +46,18 @@ from lorebook.core.game_types import (
     is_foil_only_card,
 )
 from lorebook.core.image_utils import ensure_valid_image, foil_score, is_probably_foil
-from lorebook.core.matching import MatchIndex, _cosine_score, _l2_normalize, find_best_matches
+from lorebook.core.matching import MatchIndex, _cosine_score, _l2_normalize, find_best_matches, l2_normalize
+
+
+def __getattr__(name: str):
+    # The active database path changes at runtime (set_database_path), so
+    # read it live instead of re-exporting a copy taken at import time.
+    if name == "databasePath":
+        from lorebook.core import card_database
+
+        return card_database.database_path
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Legacy name aliases
 baseDatabasePath = BASE_DATABASE_PATH

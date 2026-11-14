@@ -16,12 +16,16 @@ import sys
 
 try:
     from lorebook.core.price_fetcher import (
-        GAMES, download_card_prices, download_currency_rates,
+        GAMES,
+        download_card_prices,
+        download_currency_rates,
     )
 except ImportError:  # running from a checkout without `pip install -e .`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from lorebook.core.price_fetcher import (
-        GAMES, download_card_prices, download_currency_rates,
+        GAMES,
+        download_card_prices,
+        download_currency_rates,
     )
 
 
@@ -46,7 +50,7 @@ def main(argv=None) -> int:
             url=args.url,
             progress_callback=print,
         )
-    except Exception as e:
+    except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
         print(f"Price download failed: {e}", file=sys.stderr)
         return 1
     print(f"Wrote {count} price entries.")
@@ -54,7 +58,7 @@ def main(argv=None) -> int:
     if not args.skip_rates:
         try:
             download_currency_rates()
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"Currency-rate refresh failed (USD display still works): {e}",
                   file=sys.stderr)
 

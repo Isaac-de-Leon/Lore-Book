@@ -11,7 +11,6 @@
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -19,7 +18,8 @@ import numpy as np
 from lorebook.core.card_names import name_for
 from lorebook.core.card_prices import format_price, price_for
 from lorebook.core.csv_manager import split_filename, update_cardlist_batch
-from lorebook.core.image_utils import crop_to_card, is_probably_foil
+from lorebook.core.game_types import game_type_from_name, is_foil_only_card
+from lorebook.core.image_utils import MotionGate, crop_to_card, is_probably_foil, motion_sample
 from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import CameraSource
 from lorebook.hardware.transport import Transport
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class SortOutcome:
     """The result of processing a single card."""
 
-    filename: Optional[str]      # matched reference image name, or None if no match
+    filename: str | None      # matched reference image name, or None if no match
     set_code: str
     card_code: str
     confidence: float
@@ -68,6 +68,11 @@ class SortPipeline:
                      applies. Use for live-camera frames where the card sits
                      centered against background; leave off when replaying
                      already-cropped reference images.
+        gate:        optional MotionGate for live cameras. Without it every
+                     frame is a new card (right for folder replays, where each
+                     image is one card). With it, a frame is only processed
+                     once a card has been placed and settled, so a card left
+                     under the camera is recorded once — not once per frame.
     """
 
     def __init__(
@@ -76,14 +81,15 @@ class SortPipeline:
         camera: CameraSource,
         transport: Transport,
         extractor,
-        feature_db: Dict[str, np.ndarray],
+        feature_db: dict[str, np.ndarray],
         rules: SortRules,
         game: str,
         threshold: float = 0.70,
-        foil_threshold: Optional[float] = None,
+        foil_threshold: float | None = None,
         dry_run: bool = True,
         csv_flush_interval: int = 25,
         crop_to_focus: bool = False,
+        gate: MotionGate | None = None,
     ):
         self.camera = camera
         self.transport = transport
@@ -96,6 +102,7 @@ class SortPipeline:
         self.dry_run = dry_run
         self.csv_flush_interval = max(1, csv_flush_interval)
         self.crop_to_focus = crop_to_focus
+        self.gate = gate
         self._pending: Counter = Counter()  # (filename, is_foil) -> count
         self._index = MatchIndex(feature_db)  # one matmul per card instead of a dict scan
 
@@ -115,7 +122,11 @@ class SortPipeline:
         return is_probably_foil(frame, threshold=self.foil_threshold)
 
     def flush_csv(self) -> None:
-        """Write any accumulated matched cards to the CSV in one read+write."""
+        """Write any accumulated matched cards to the CSV in one read+write.
+
+        On failure the pending cards are kept (and the CSV left untouched),
+        so a later flush can retry.
+        """
         if not self._pending:
             return
         update_cardlist_batch(
@@ -138,6 +149,9 @@ class SortPipeline:
             filename, confidence = matches[0]
             set_code, card_code = split_filename(filename)
             matched = True
+            # Foil-only rarities (e.g. Lorcana Enchanted) have no normal
+            # printing: route them as foil, matching what the CSV records.
+            is_foil = is_foil or is_foil_only_card(set_code, card_code, game_type_from_name(self.game))
             bin_id = decide_bin(
                 set_code=set_code,
                 card_code=card_code,
@@ -154,6 +168,9 @@ class SortPipeline:
 
         self.transport.route_to_bin(bin_id)
         self.transport.advance()
+        # Frames buffered while the card was moving show the previous card;
+        # drop them so the next read sees the newly placed one.
+        self.camera.flush()
 
         if matched and not self.dry_run:
             self._pending[(filename, is_foil)] += 1
@@ -183,23 +200,32 @@ class SortPipeline:
             matched=matched,
         )
 
-    def run(self, max_cards: Optional[int] = None) -> List[SortOutcome]:
+    def run(self, max_cards: int | None = None) -> list[SortOutcome]:
         """
-        Process frames until the camera feed is exhausted or max_cards is hit.
+        Process cards until the camera feed is exhausted or max_cards is hit.
+        With a gate, only frames where a new card has settled are processed.
         Flushes pending CSV rows, releases the camera, and homes the transport
         on completion.
         """
-        outcomes: List[SortOutcome] = []
+        outcomes: list[SortOutcome] = []
         try:
             while max_cards is None or len(outcomes) < max_cards:
                 frame = self.camera.read()
                 if frame is None:
                     break
+                # Live feeds: wait for a freshly settled card. Skipped frames
+                # don't count toward max_cards.
+                if self.gate is not None and not self.gate.update(motion_sample(frame)):
+                    continue
                 outcomes.append(self.process_one(frame))
         finally:
-            self.flush_csv()
-            self.camera.release()
-            self.transport.home()
+            # Release/home even if the final CSV write fails (e.g. the file
+            # is locked); the write error still propagates afterwards.
+            try:
+                self.flush_csv()
+            finally:
+                self.camera.release()
+                self.transport.home()
 
         logger.info("Sorted %d card(s).", len(outcomes))
         return outcomes

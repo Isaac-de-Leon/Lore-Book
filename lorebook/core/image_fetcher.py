@@ -13,6 +13,8 @@
 #   Riftbound — Riot content API (official, needs RIOT_API_KEY env var)
 #               https://developer.riotgames.com/docs/riftbound
 #               falls back to the open Riftcodex API   https://riftcodex.com
+#               and, for sets Riftcodex doesn't have yet, the official gallery
+#               https://riftbound.leagueoflegends.com/en-us/card-gallery/
 #
 # Note: card art is copyrighted by Ravensburger/Riot. Downloads are local, for
 # personal-collection use only (Card_Images/ is gitignored); nothing is
@@ -21,20 +23,24 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
-import urllib.error
-import urllib.request
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Callable, Iterable, Iterator, Optional, Tuple
 from urllib.parse import urlsplit
+
+from lorebook.core.fileio import atomic_write_bytes
+from lorebook.core.game_types import BASE_DATABASE_PATH, game_folders, resolve_game_folder
+from lorebook.core.net import fetch_bytes as _download
+from lorebook.core.net import fetch_json as _fetch_json
+
+logger = logging.getLogger(__name__)
 
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
 RIFTBOUND_RIOT_URL = "https://americas.api.riotgames.com/riftbound/content/v1/contents?locale=en"
-RIFTBOUND_FALLBACK_URL = "https://api.riftcodex.com/api/cards"
-
-# A UA header — the Ravensburger image CDN can 403 an empty urllib agent.
-_UA = "Lore-Book-image-fetcher/1.0 (+https://github.com/; personal collection tool)"
+RIFTBOUND_FALLBACK_URL = "https://api.riftcodex.com/cards"
+RIFTBOUND_GALLERY_URL = "https://riftbound.leagueoflegends.com/en-us/card-gallery/"
 
 
 @dataclass
@@ -45,17 +51,25 @@ class FetchStats:
     failed: int = 0
 
 
-def _fetch_json(url: str, headers: Optional[dict] = None):
-    req = urllib.request.Request(url, headers={"User-Agent": _UA, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.load(resp)
-
-
 def _pad(part: str) -> str:
     """Zero-pad a numeric code to 3 digits to match the 009-041 filename style;
     leave non-numeric codes (promos like P1, Q1) untouched."""
     part = str(part).strip()
     return part.zfill(3) if part.isdigit() else part
+
+
+# Set codes and card numbers come from downloaded JSON and become filenames,
+# so only plain codes are accepted: no path separators, drive letters or
+# leading dots (e.g. "../../x" or "/etc/x" would escape Card_Images/).
+_SAFE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def _safe_filename(set_code: str, number: str, ext: str) -> str | None:
+    """'<set>-<number><ext>' for plain codes, or None when either code is unsafe."""
+    set_part, num_part = _pad(set_code), _pad(number)
+    if not (_SAFE_CODE.fullmatch(set_part) and _SAFE_CODE.fullmatch(num_part)):
+        return None
+    return f"{set_part}-{num_part}{ext}"
 
 
 def _norm(part: str) -> str:
@@ -64,7 +78,7 @@ def _norm(part: str) -> str:
     return part if part else "0"
 
 
-def _is_promo_printing(card: dict) -> bool:
+def is_promo_printing(card: dict) -> bool:
     """
     True for promo printings, which share their home set's setCode/number with
     the main-set card in LorcanaJSON (e.g. Zeus "18/P3 · EN · 10" collides with
@@ -76,7 +90,7 @@ def _is_promo_printing(card: dict) -> bool:
     return bool(denom) and not denom.isdigit()
 
 
-def lorcana_targets(data) -> Iterator[Tuple[str, str, str]]:
+def lorcana_targets(data) -> Iterator[tuple[str, str, str]]:
     """
     Yield (set_code, number, image_url) for every Lorcana card with a full image.
 
@@ -93,7 +107,7 @@ def lorcana_targets(data) -> Iterator[Tuple[str, str, str]]:
         if not (set_code and number and url):
             continue
         key = (set_code, number)
-        promo = _is_promo_printing(card)
+        promo = is_promo_printing(card)
         if key not in best:
             best[key] = (promo, url)
             order.append(key)
@@ -112,17 +126,19 @@ def _is_riot_host(url: str) -> bool:
     return host == "api.riotgames.com" or host.endswith(".api.riotgames.com")
 
 
-def _fetch_riftbound_pages(url: str, limit: int = 100) -> list:
+def _fetch_riftbound_pages(url: str, size: int = 100) -> list:
     """
     Fetch all cards from the page-numbered Riftcodex list API, which responds
-    with {"total": N, "items": [...]} to limit=/page= query params. Requests
+    with {"total": N, "items": [...]} to size=/page= query params (size is
+    capped at 100; the API silently ignores unknown params). Requests
     pages until `total` cards are collected, a page comes back empty or
     repeats (page param ignored), or the hard cap is hit.
     """
-    cards, page_no, last_first_id = [], 1, None
+    cards: list = []
+    page_no, last_first_id = 1, None
     for _ in range(200):  # hard cap: never loop forever on a misbehaving API
         sep = "&" if "?" in url else "?"
-        data = _fetch_json(f"{url}{sep}limit={limit}&page={page_no}")
+        data = _fetch_json(f"{url}{sep}size={size}&page={page_no}")
         if isinstance(data, dict):
             items = data.get("items") or data.get("cards") or []
             total = data.get("total")
@@ -143,25 +159,77 @@ def _fetch_riftbound_pages(url: str, limit: int = 100) -> list:
     return cards
 
 
+_GALLERY_DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
+
+
+def _gallery_cards(html: str) -> list[dict]:
+    """
+    The cards embedded in the official gallery page, in Riftcodex's shape so
+    riftbound_targets() names them the same way. This is page data, not an API,
+    so raises ValueError when the page no longer looks as expected.
+    """
+    match = _GALLERY_DATA.search(html)
+    if match is None:
+        raise ValueError("no card data found in the gallery page")
+    try:
+        blades = json.loads(match.group(1))["props"]["pageProps"]["page"]["blades"]
+        items = next(b["cards"]["items"] for b in blades if isinstance(b.get("cards"), dict))
+        return [{
+            "id": item["id"],
+            "name": ", ".join(p for p in (item.get("name"), item.get("subtitle")) if p),
+            # The gallery writes signatures as "unl-229-star-219", Riftcodex as "unl-229*-219".
+            "riftbound_id": item["id"].replace("-star-", "*-"),
+            "collector_number": item["collectorNumber"],
+            "set": {"set_id": item["set"]["value"]["id"]},
+            "media": {"image_url": item["cardImage"]["url"]},
+        } for item in items]
+    except (KeyError, TypeError, StopIteration, AttributeError) as e:
+        raise ValueError(f"unexpected gallery page format: {e!r}") from e
+
+
+def _fetch_gallery_cards() -> list[dict]:
+    return _gallery_cards(_download(RIFTBOUND_GALLERY_URL).decode("utf-8", "replace"))
+
+
+def fetch_riftbound_open_sources(url: str = RIFTBOUND_FALLBACK_URL) -> list:
+    """
+    Riftcodex, plus the official gallery for whole sets Riftcodex doesn't have
+    yet (it can lag a release by weeks). Only whole sets: the two sources give
+    some shared cards different image URLs, which would rename existing files.
+    The gallery is optional, so its failure only logs a warning.
+    """
+    cards = _fetch_riftbound_pages(url)
+    try:
+        gallery = _fetch_gallery_cards()
+    except (OSError, ValueError) as e:
+        logger.warning("Official card gallery unavailable (%s); using Riftcodex only", e)
+        return cards
+    known = {_riftbound_set_code(c) for c in cards if isinstance(c, dict)}
+    extra = [c for c in gallery if _riftbound_set_code(c) not in known]
+    if extra:
+        new_sets = sorted({_riftbound_set_code(c) for c in extra})
+        logger.info("Riftcodex doesn't have %s yet; using the official card gallery for it", ", ".join(new_sets))
+    return cards + extra
+
+
 def _fetch_riftbound(url: str):
     """
     Fetch the Riftbound card list. On the default URL, the official Riot
     content endpoint is used when RIOT_API_KEY is set; without a key — or if
-    the Riot call fails — the open Riftcodex API is used instead. An explicit
+    the Riot call fails — the open sources are used instead. An explicit
     url= override is fetched as-is (the key header is only ever attached to
     *.api.riotgames.com hosts).
     """
     key = _riot_api_key()
     if url == RIFTBOUND_RIOT_URL:
         if not key:
-            logging.info(f"RIOT_API_KEY not set; using {RIFTBOUND_FALLBACK_URL}")
-            return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
+            logger.info("RIOT_API_KEY not set; using %s", RIFTBOUND_FALLBACK_URL)
+            return fetch_riftbound_open_sources()
         try:
             return _fetch_json(url, headers={"X-Riot-Token": key})
-        except Exception as e:
-            logging.warning(f"Riot API fetch failed ({e}); "
-                            f"falling back to {RIFTBOUND_FALLBACK_URL}")
-            return _fetch_riftbound_pages(RIFTBOUND_FALLBACK_URL)
+        except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
+            logger.warning("Riot API fetch failed (%s); falling back to %s", e, RIFTBOUND_FALLBACK_URL)
+            return fetch_riftbound_open_sources()
     if _is_riot_host(url):
         return _fetch_json(url, headers={"X-Riot-Token": key} if key else None)
     return _fetch_riftbound_pages(url)
@@ -177,6 +245,43 @@ def _first_field(card: dict, *names):
     return None
 
 
+def _riftbound_set_code(card: dict) -> str:
+    """
+    Set code for a Riftbound card, from whichever shape the source uses: a
+    scalar field (Riot "set", Riftcodex-style "set_id"), a nested set object
+    ({"set_id": "OGN", "label": ...} — only code-like keys are read, never a
+    bare "id", which can be an opaque UUID), or the prefix of a
+    "riftbound_id" like "ogn-001-298". Returned uppercased.
+    """
+    code = _first_field(card, "set", "setCode", "set_code", "set_id")
+    if code is None:
+        nested = card.get("set")
+        if isinstance(nested, dict):
+            code = _first_field(nested, "set_id", "setId", "code", "setCode", "set_code")
+    if code is None:
+        rid = _first_field(card, "riftbound_id", "riftboundId")
+        if isinstance(rid, str) and "-" in rid:
+            code = rid.split("-", 1)[0]
+    return str(code or "").strip().upper()
+
+
+def _riftbound_printing(card: dict, set_code: str) -> tuple[str, str]:
+    """
+    (printing code, denominator) from a Riftcodex riftbound_id such as
+    "unl-116a-219", or ("", "") when the card has no id for this set.
+
+    The id is the only field that tells printings apart: alternate art
+    ("116a"), signature ("229*") and rune ("r06") cards share an integer
+    collector_number with the base card. "*" can't be in a filename, so
+    signatures become "229s".
+    """
+    rid = _first_field(card, "riftbound_id", "riftboundId")
+    parts = rid.split("-") if isinstance(rid, str) else []
+    if len(parts) < 2 or parts[0].upper() != set_code:
+        return "", ""
+    return parts[1].replace("*", "s"), "-".join(parts[2:])
+
+
 def _riftbound_cards(data) -> Iterator[dict]:
     """Flatten either Riftbound payload shape into a stream of card dicts."""
     if isinstance(data, dict):
@@ -189,21 +294,28 @@ def _riftbound_cards(data) -> Iterator[dict]:
     yield from (c for c in data or [] if isinstance(c, dict))
 
 
-def riftbound_targets(data) -> Iterator[Tuple[str, str, str]]:
+def riftbound_printings(data) -> Iterator[tuple[str, str, str, dict]]:
     """
-    Yield (set_code, number, image_url) for every Riftbound card with art.
+    Yield (set_code, number, image_url, card) for every Riftbound card with art.
+    Image filenames and card names both come from here, so they can't disagree.
 
     Handles both source payload shapes — the Riot content endpoint (sets →
     cards with art.fullUrl) and the Riftcodex card list (flat cards with
     media.image_url) — tolerating camelCase/snake_case spellings. Set codes
     are uppercased (Riftcodex uses "ogn") to match the repo's OGN-001 filename
-    convention. Duplicate set/number keys keep the first occurrence (there is
-    no promo-collision rule like Lorcana's).
+    convention. The number is the printing code from riftbound_id when there
+    is one (see _riftbound_printing), else the collector number.
+
+    Promo sets reuse a code across home sets (opp-086-221 and opp-086-219 are
+    different cards), so a code with more than one image gets its denominator
+    appended. Remaining duplicate set/number keys keep the first occurrence.
     """
-    seen = set()
+    printings = []
+    urls_by_key: dict = {}  # (set_code, number) -> distinct image urls
     for card in _riftbound_cards(data):
-        set_code = str(_first_field(card, "set", "setCode", "set_code", "set_id") or "").strip().upper()
-        number = str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
+        set_code = _riftbound_set_code(card)
+        code, denominator = _riftbound_printing(card, set_code)
+        number = code or str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
         art = card.get("art")
         media = card.get("media")
         url = (
@@ -214,10 +326,23 @@ def riftbound_targets(data) -> Iterator[Tuple[str, str, str]]:
         )
         if not (set_code and number and isinstance(url, str)):
             continue
+        printings.append((set_code, number, denominator, url, card))
+        urls_by_key.setdefault((set_code, number), set()).add(url)
+
+    seen = set()
+    for set_code, number, denominator, url, card in printings:
+        if denominator and len(urls_by_key[(set_code, number)]) > 1:
+            number = f"{number}-{denominator}"
         key = (set_code, number)
         if key in seen:
             continue
         seen.add(key)
+        yield set_code, number, url, card
+
+
+def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
+    """(set_code, number, image_url) for every Riftbound card with art."""
+    for set_code, number, url, _card in riftbound_printings(data):
         yield set_code, number, url
 
 
@@ -228,19 +353,25 @@ GAMES = {
 }
 
 
-def _download(url: str, retries: int = 3, backoff: float = 1.5) -> bytes:
-    """Fetch image bytes with a couple of retries on transient failures."""
-    last = None
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                return resp.read()
-        except (urllib.error.URLError, TimeoutError) as e:
-            last = e
-            if attempt < retries - 1:
-                time.sleep(backoff * (attempt + 1))
-    raise last
+def selectable_games(base: str = BASE_DATABASE_PATH) -> list[str]:
+    """
+    Games to offer in the UI: every game folder, plus registered games with no
+    folder yet. Their art only downloads once the folder exists, so listing
+    folders alone would leave them impossible to select.
+    """
+    found = game_folders(base)
+    have = {name.lower() for name in found}
+    return sorted(found + [key.capitalize() for key in GAMES if key not in have])
+
+
+def ensure_game_folder(game: str | None, base: str = BASE_DATABASE_PATH) -> None:
+    """
+    Create the folder for a registered game so the next build downloads its
+    art. Only called when the user asks for a rebuild: startup builds every
+    folder, so creating folders there would download games nobody selected.
+    """
+    if game and game.strip().lower() in GAMES:
+        os.makedirs(os.path.join(base, game.strip()), exist_ok=True)
 
 
 def _to_webp(raw: bytes, quality: int) -> bytes:
@@ -258,20 +389,33 @@ def _to_webp(raw: bytes, quality: int) -> bytes:
     return buf.tobytes()
 
 
+_PART_SUFFIX = ".part"
+
+
+def _remove_partial_downloads(folder: str) -> None:
+    """Delete .part leftovers from a previous run that was killed mid-write."""
+    for name in os.listdir(folder):
+        if name.endswith(_PART_SUFFIX):
+            try:
+                os.remove(os.path.join(folder, name))
+            except OSError:
+                pass
+
+
 def download_new_images(
     game: str,
-    out_dir: Optional[str] = None,
-    progress_callback: Optional[Callable[[str], None]] = None,
-    url: Optional[str] = None,
-    sets: Optional[Iterable[str]] = None,
+    out_dir: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+    url: str | None = None,
+    sets: Iterable[str] | None = None,
     fmt: str = "webp",
     quality: int = 95,
-    limit: Optional[int] = None,
+    limit: int | None = None,
     force: bool = False,
     delay: float = 0.05,
     dry_run: bool = False,
-    cancel_event: Optional[threading.Event] = None,
-) -> Optional[FetchStats]:
+    cancel_event: threading.Event | None = None,
+) -> FetchStats | None:
     """
     Download any missing card images for a game into out_dir.
 
@@ -298,7 +442,9 @@ def download_new_images(
 
     default_url, fetcher, target_fn = GAMES[key]
     resolved_url = url or default_url
-    resolved_out = out_dir or os.path.join("Card_Images", game.strip().capitalize())
+    resolved_out = out_dir or os.path.join(
+        BASE_DATABASE_PATH, resolve_game_folder(game) or game.strip().capitalize()
+    )
     ext = ".webp" if fmt == "webp" else ".jpg"
     wanted = {_norm(s) for s in sets} if sets else None
 
@@ -311,22 +457,36 @@ def download_new_images(
     targets = [t for t in target_fn(data) if wanted is None or _norm(t[0]) in wanted]
     stats = FetchStats()
     if not targets:
-        report("No cards matched." if wanted else
+        msg = ("No cards matched." if wanted else
                "No cards found — the source format may have changed.")
+        # Logged as well as reported: the GUI only flashes progress text, so
+        # a silently empty parse otherwise leaves no trace in the log file.
+        logger.warning("%s image fetch from %s: %s", game, resolved_url, msg)
+        report(msg)
         return stats
+
+    found_sets = sorted({t[0] for t in targets})
+    logger.info("%s image fetch: %d cards across sets %s", game, len(targets), ", ".join(found_sets))
 
     if not dry_run:
         os.makedirs(resolved_out, exist_ok=True)
+        _remove_partial_downloads(resolved_out)
 
     report(f"{len(targets)} card(s) to consider -> {resolved_out}  (format: {fmt})")
     for set_code, number, img_url in targets:
         if cancel_event is not None and cancel_event.is_set():
             report("Download cancelled.")
             break
-        fname = f"{_pad(set_code)}-{_pad(number)}{ext}"
+        fname = _safe_filename(set_code, number, ext)
+        if fname is None:
+            stats.failed += 1
+            logger.warning("Skipping card with unsafe code %r-%r", set_code, number)
+            report(f"  SKIPPED unsafe card code {set_code!r}-{number!r}")
+            continue
         dest = os.path.join(resolved_out, fname)
 
-        if not force and os.path.exists(dest):
+        # A 0-byte file is a failed write, not a card — fetch it again.
+        if not force and os.path.exists(dest) and os.path.getsize(dest) > 0:
             stats.skipped += 1
             continue
         if limit is not None and stats.downloaded >= limit:
@@ -339,13 +499,17 @@ def download_new_images(
         try:
             raw = _download(img_url)
             payload = _to_webp(raw, quality) if fmt == "webp" else raw
-            with open(dest, "wb") as f:
-                f.write(payload)
+            # Temp file "<name>.<random>.part", renamed into place when
+            # complete: a killed download never leaves a truncated image
+            # under the real name (which later runs would skip forever).
+            atomic_write_bytes(dest, payload, suffix=_PART_SUFFIX)
             stats.downloaded += 1
             report(f"  {fname}  ({len(payload) // 1024} KB)")
-        except Exception as e:
+        # Boundary: one bad image (network, decode, disk) is counted and the
+        # batch moves on; it must never abort the whole download.
+        except Exception as e:  # noqa: BLE001
             stats.failed += 1
-            logging.warning(f"Failed to fetch card image {fname}: {e}")
+            logger.warning("Failed to fetch card image %s: %s", fname, e)
             report(f"  FAILED {fname}: {e}")
         if delay:
             time.sleep(delay)

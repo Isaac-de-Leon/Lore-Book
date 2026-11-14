@@ -8,42 +8,29 @@ from lorebook.core.card_names import load_card_names, name_for, normalize_key
 
 
 def _write_names(tmp_path, game, mapping):
-    (tmp_path / f"card_names_{game}.json").write_text(
-        json.dumps(mapping), encoding="utf-8"
-    )
+    (tmp_path / f"card_names_{game}.json").write_text(json.dumps(mapping), encoding="utf-8")
 
 
-class TestNameLookup:
-    def test_padded_filename_codes_match_unpadded_source(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        _write_names(tmp_path, "Lorcana", {"9-41": "Elsa - Spirit of Winter"})
-        assert name_for("009", "041", "Lorcana") == "Elsa - Spirit of Winter"
+def test_names(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_names(tmp_path, "Lorcana", {"9-41": "Elsa", "010-018": "Scrooge"})
+    _write_names(tmp_path, "Riftbound", {"OGN-23c": "Jinx"})
 
-    def test_padded_source_matches_unpadded_lookup(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        _write_names(tmp_path, "Lorcana", {"009-041": "Elsa - Spirit of Winter"})
-        assert name_for("9", "41", "Lorcana") == "Elsa - Spirit of Winter"
+    assert name_for("009", "041", "Lorcana") == "Elsa"     # padded lookup, unpadded source
+    assert name_for("10", "18", "Lorcana") == "Scrooge"    # unpadded lookup, padded source
+    assert name_for("ogn", "23C", "Riftbound") == "Jinx"   # case-insensitive
+    assert name_for("009", "999", "Lorcana") is None
+    assert name_for("009", "041", "NoSuchGame") is None
+    assert name_for("", "041", "Lorcana") is None
 
-    def test_alphanumeric_codes_case_insensitive(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        _write_names(tmp_path, "Riftbound", {"OGN-23c": "Jinx"})
-        assert name_for("ogn", "23C", "Riftbound") == "Jinx"
+    assert normalize_key("000", "000") == "0-0"
+    assert normalize_key("009", "041") == normalize_key("9", "41")
 
-    def test_unknown_card_and_missing_file_return_none(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        _write_names(tmp_path, "Lorcana", {"9-41": "Elsa"})
-        assert name_for("009", "999", "Lorcana") is None
-        assert name_for("009", "041", "NoSuchGame") is None
-        assert name_for("", "041", "Lorcana") is None
+    (tmp_path / "card_names_Broken.json").write_text("{not json", encoding="utf-8")
+    assert load_card_names("Broken") == {}
 
-    def test_malformed_file_degrades_to_empty(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "card_names_Lorcana.json").write_text("{not json", encoding="utf-8")
-        assert load_card_names("Lorcana") == {}
-
-    def test_normalize_key_zero_handling(self):
-        assert normalize_key("000", "000") == "0-0"
-        assert normalize_key("009", "041") == normalize_key("9", "41")
+    # --- fetch-script mappers
+    _fetch_mappers()
 
 
 def _load_fetch_module():
@@ -56,47 +43,52 @@ def _load_fetch_module():
     return mod
 
 
-class TestFetchMappers:
-    def test_lorcana_mapper(self):
-        mod = _load_fetch_module()
-        data = {"cards": [
-            {"setCode": "9", "number": 41, "fullName": "Elsa - Spirit of Winter"},
-            {"setCode": "1", "number": 1, "name": "Ariel"},          # no fullName
-            {"setCode": "", "number": 2, "fullName": "Skipped"},     # missing set
-        ]}
-        assert mod.lorcana_names(data) == {
-            "9-41": "Elsa - Spirit of Winter",
-            "1-1": "Ariel",
-        }
+def _fetch_mappers():
+    mod = _load_fetch_module()
+    data = {"cards": [
+        {"setCode": "9", "number": 41, "fullName": "Elsa - Spirit of Winter"},
+        {"setCode": "1", "number": 1, "name": "Ariel"},          # no fullName
+        {"setCode": "", "number": 2, "fullName": "Skipped"},     # missing set
+    ]}
+    assert mod.lorcana_names(data) == {"9-41": "Elsa - Spirit of Winter", "1-1": "Ariel"}
 
-    def test_lorcana_mapper_prefers_main_set_over_promo(self):
-        # Promo printings share their home set's setCode/number in LorcanaJSON
-        # (Zeus "18/P3" vs Scrooge "18/204", both setCode 10). The main-set
-        # name must win regardless of order; promo-only keys are still kept.
-        mod = _load_fetch_module()
-        data = {"cards": [
-            {"setCode": "10", "number": 18, "fullName": "Zeus - Missing His Spark",
-             "fullIdentifier": "18/P3 · EN · 10"},
-            {"setCode": "10", "number": 18, "fullName": "Scrooge McDuck - Cavern Prospector",
-             "fullIdentifier": "18/204 · EN · 10"},
-            {"setCode": "10", "number": 99, "fullName": "Promo Only",
-             "fullIdentifier": "99/P3 · EN · 10"},
-        ]}
-        names = mod.lorcana_names(data)
-        assert names["10-18"] == "Scrooge McDuck - Cavern Prospector"
+    # Promo printings share their home set's setCode/number in LorcanaJSON
+    # (Zeus "18/P3" vs Scrooge "18/204"). The main-set name must win
+    # regardless of order; promo-only keys are still kept.
+    cards = [
+        {"setCode": "10", "number": 18, "fullName": "Zeus", "fullIdentifier": "18/P3 · EN · 10"},
+        {"setCode": "10", "number": 18, "fullName": "Scrooge", "fullIdentifier": "18/204 · EN · 10"},
+        {"setCode": "10", "number": 99, "fullName": "Promo Only", "fullIdentifier": "99/P3 · EN · 10"},
+    ]
+    for order in (cards, cards[::-1]):
+        names = mod.lorcana_names({"cards": order})
+        assert names["10-18"] == "Scrooge"
         assert names["10-99"] == "Promo Only"
-        # ...and with main-set first, a later promo must not overwrite it
-        data["cards"].reverse()
-        assert mod.lorcana_names(data)["10-18"] == "Scrooge McDuck - Cavern Prospector"
 
-    def test_riftbound_mapper_accepts_both_shapes_and_spellings(self):
-        mod = _load_fetch_module()
-        as_list = [{"set": "OGN", "number": "23c", "name": "Jinx"}]
-        wrapped = {"cards": [{"setCode": "OGN", "collectorNumber": 24, "name": "Vi"}]}
-        assert mod.riftbound_names(as_list) == {"OGN-23c": "Jinx"}
-        assert mod.riftbound_names(wrapped) == {"OGN-24": "Vi"}
+    jinx = {"set": "OGN", "number": "23c", "name": "Jinx", "image_url": "http://img/j.png"}
+    assert mod.riftbound_names([jinx]) == {"OGN-23c": "Jinx"}
+    wrapped = {"cards": [{"setCode": "OGN", "collectorNumber": 24, "name": "Vi", "image_url": "http://img/v.png"}]}
+    assert mod.riftbound_names(wrapped) == {"OGN-24": "Vi"}
 
-    def test_empty_sources_yield_empty(self):
-        mod = _load_fetch_module()
-        assert mod.lorcana_names({}) == {}
-        assert mod.riftbound_names(None) == {}
+    # Real Radiance data: Ahri's special printing also has collector number 1,
+    # and must not take over the name of RAD-001 (Amateur Demolitionist).
+    def card(rid, number, name):
+        return {"name": name, "riftbound_id": rid, "collector_number": number,
+                "set": {"set_id": "RAD"}, "media": {"image_url": f"http://img/{rid}.png"}}
+
+    cards = [card("rad-001-167", 1, "Amateur Demolitionist"), card("rad-sp1-005", 1, "Ahri, Confident"),
+             card("rad-r06", 6, "Order Rune"), card("rad-006-167", 6, "Scorched Earth"),
+             card("rad-023a-167", 23, "Ziggs, Short-Fused")]
+    assert mod.riftbound_names({"items": cards}) == {
+        "RAD-001": "Amateur Demolitionist", "RAD-sp1": "Ahri, Confident",
+        "RAD-r06": "Order Rune", "RAD-006": "Scorched Earth", "RAD-023a": "Ziggs, Short-Fused",
+    }
+    # Every downloaded file finds its own name.
+    from lorebook.core.image_fetcher import _safe_filename, riftbound_targets
+    names = {normalize_key(*k.split("-", 1)): v for k, v in mod.riftbound_names(cards).items()}
+    for set_code, number, _url in riftbound_targets(cards):
+        stem = _safe_filename(set_code, number, "")
+        assert names[normalize_key(*stem.split("-", 1))] is not None
+    assert names[normalize_key("RAD", "001")] == "Amateur Demolitionist"
+    assert mod.lorcana_names({}) == {}
+    assert mod.riftbound_names(None) == {}

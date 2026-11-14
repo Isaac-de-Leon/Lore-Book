@@ -9,8 +9,13 @@ Run once on a desktop (where full TensorFlow is installed); copy the resulting
 """
 import argparse
 import os
+import sys
 
-from lorebook.core.features import _default_tflite_model_path, _get_models
+try:
+    from lorebook.core.features import _default_tflite_model_path, _get_models
+except ImportError:  # running from a checkout without `pip install -e .`
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lorebook.core.features import _default_tflite_model_path, _get_models
 
 
 def main() -> None:
