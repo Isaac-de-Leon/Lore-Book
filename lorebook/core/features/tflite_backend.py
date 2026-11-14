@@ -11,10 +11,15 @@ from collections.abc import Sequence
 import numpy as np
 
 from lorebook.core.features.preprocessing import finalize_vector, preprocess_to_batch
+from lorebook.core.paths import data_path
 
 logger = logging.getLogger(__name__)
 
-# lorebook/core/features/tflite_backend.py -> four levels up is the repo root.
+MODEL_FILENAME = "mobilenetv2_features.tflite"
+
+# lorebook/core/features/tflite_backend.py -> four levels up is the checkout
+# root, where the model used to be looked for. For a package installed with
+# pip that is site-packages, so it is only a fallback now.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
@@ -22,10 +27,20 @@ def default_tflite_model_path() -> str:
     """
     Where the tflite feature model lives, resolved at call time (not import
     time) so LOREBOOK_TFLITE_MODEL takes effect whenever it is set.
+
+    Without the override it is in the app's data folder like every other
+    data file (data_path: the working directory when run from source). A
+    model already sitting at the checkout root is still found when the
+    command is run from another folder.
     """
-    return os.environ.get(
-        "LOREBOOK_TFLITE_MODEL", os.path.join(_REPO_ROOT, "mobilenetv2_features.tflite")
-    )
+    override = os.environ.get("LOREBOOK_TFLITE_MODEL")
+    if override:
+        return override
+    path = data_path(MODEL_FILENAME)
+    in_checkout = os.path.join(_REPO_ROOT, MODEL_FILENAME)
+    if not os.path.exists(path) and os.path.exists(in_checkout):
+        return in_checkout
+    return path
 
 
 def _check_tflite_input_dtype(dtype, model_path: str) -> None:

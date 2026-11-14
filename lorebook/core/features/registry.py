@@ -42,7 +42,8 @@ def get_extractor(backend: str | None = None):
         elif key == "tflite":
             _extractors[key] = TFLiteExtractor()
         else:
-            raise ValueError(f"Unknown extractor backend: {backend!r} (use one of {', '.join(BACKENDS)}).")
+            source = "" if backend else " (from LOREBOOK_BACKEND)"
+            raise ValueError(f"Unknown extractor backend: {key!r}{source} (use one of {', '.join(BACKENDS)}).")
     return _extractors[key]
 
 

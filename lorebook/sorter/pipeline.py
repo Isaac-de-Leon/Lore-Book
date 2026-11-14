@@ -183,8 +183,24 @@ class SortPipeline:
         if not outcome.matched or self.config.dry_run:
             return
         self._pending[(outcome.filename, outcome.is_foil)] += 1
-        if sum(self._pending.values()) >= self._flush_every:
+        if sum(self._pending.values()) < self._flush_every:
+            return
+        try:
             self.flush_csv()
+        except OSError as e:
+            # The card is already in its bin, so stopping here would only lose
+            # more. Keep the cards queued; the next card retries the write.
+            logger.warning("CSV write failed (%s); %d card(s) kept to retry.",
+                           e, sum(self._pending.values()))
+
+    def _final_flush(self) -> None:
+        """Write the remaining cards; if that fails, log each one before raising."""
+        try:
+            self.flush_csv()
+        except OSError:
+            for (filename, is_foil), count in self._pending.items():
+                logger.error("NOT RECORDED in the CSV: %d× %s%s", count, filename, " (foil)" if is_foil else "")
+            raise
 
     def _log(self, outcome: SortOutcome) -> None:
         """Log one line per card: what it matched, how confidently, and its bin."""
@@ -234,7 +250,7 @@ class SortPipeline:
             # Release/home even if the final CSV write fails (e.g. the file
             # is locked); the write error still propagates afterwards.
             try:
-                self.flush_csv()
+                self._final_flush()
             finally:
                 self.camera.release()
                 self.transport.home()

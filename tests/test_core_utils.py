@@ -381,3 +381,24 @@ def test_write_rows_is_atomic(tmp_path):
         write_rows(str(p), [None])
     assert _rows(p) == [HEADER] + rows
     assert sorted(os.listdir(tmp_path)) == ["out.csv"]
+
+
+def test_unknown_backend_error_names_the_value(monkeypatch):
+    with pytest.raises(ValueError, match=r"'bogus' \(use one of"):
+        get_extractor("Bogus")
+    # From the environment the message used to say "None".
+    monkeypatch.setenv("LOREBOOK_BACKEND", "nonsense")
+    with pytest.raises(ValueError, match=r"'nonsense' \(from LOREBOOK_BACKEND\)"):
+        get_extractor()
+
+
+def test_inferred_game_csv_goes_to_the_data_folder(tmp_path, monkeypatch):
+    data, cwd = tmp_path / "data", tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("LOREBOOK_DATA_DIR", str(data))
+    # No game passed: it is inferred from the path, and the file still belongs in the data folder.
+    update_cardlist(os.path.join("Card_Images", "Riftbound", "001-042.webp"), is_foil=False)
+    update_cardlist(os.path.join("Card_Images", "Lorcana", "001-042.webp"), is_foil=False)
+    assert sorted(os.listdir(data)) == ["LorcanaList.csv", "RiftboundList.csv"]
+    assert os.listdir(cwd) == []

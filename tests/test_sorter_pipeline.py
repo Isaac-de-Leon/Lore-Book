@@ -8,6 +8,8 @@ import os
 import numpy as np
 import pytest
 
+import lorebook.sorter.pipeline as pipeline_module
+
 # TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
 from lorebook.hardware.camera import CameraSource, MockCameraSource
 from lorebook.hardware.transport import MockTransport
@@ -234,3 +236,39 @@ def test_live_camera_gate_records_each_card_once(tmp_path, monkeypatch):
 
     # Without a gate (folder-replay behavior) every frame counts as a card.
     assert len(run(None)) == len(feed)
+
+
+def test_locked_csv_does_not_stop_the_run(tmp_path, monkeypatch, caplog):
+    """The CSV open in Excel mid-run: cards keep being sorted and are written once it frees up."""
+    monkeypatch.chdir(tmp_path)
+    real_write = pipeline_module.update_cardlist_batch
+    attempts = []
+
+    def locked_twice(cards, game=None, allow_negative=False):
+        attempts.append(len(cards))
+        if len(attempts) <= 2:
+            raise PermissionError(13, "file is in use")
+        real_write(cards, game=game, allow_negative=allow_negative)
+
+    monkeypatch.setattr(pipeline_module, "update_cardlist_batch", locked_twice)
+    transport = MockTransport()
+    outcomes = _make_pipeline(ArrayCameraSource(_frames(5)), SequenceExtractor([_unit(0)] * 5), transport,
+                              dry_run=False, csv_flush_interval=2).run()
+    assert len(outcomes) == 5 and transport.cards_advanced == 5
+    assert "kept to retry" in caplog.text
+    with open("LorcanaList.csv", newline="", encoding="utf-8") as f:
+        assert ["001", "001", "normal", "5"] in list(csv.reader(f))   # nothing lost, nothing doubled
+
+    # Still locked at the end: every card was routed, the error is raised, and
+    # the log names what never reached the CSV.
+    def always_locked(cards, game=None, allow_negative=False):
+        raise PermissionError(13, "file is in use")
+
+    monkeypatch.setattr(pipeline_module, "update_cardlist_batch", always_locked)
+    caplog.clear()
+    transport = MockTransport()
+    with pytest.raises(PermissionError):
+        _make_pipeline(ArrayCameraSource(_frames(3)), SequenceExtractor([_unit(0)] * 3), transport,
+                       dry_run=False, csv_flush_interval=2).run()
+    assert transport.cards_advanced == 3 and transport.homed
+    assert "NOT RECORDED in the CSV: 3× 001-001.webp" in caplog.text

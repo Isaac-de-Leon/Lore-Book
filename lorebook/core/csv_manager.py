@@ -6,8 +6,6 @@ import os
 
 from lorebook.core.fileio import atomic_write
 from lorebook.core.game_types import (
-    LORCANA_CSV,
-    RIFTBOUND_CSV,
     GameType,
     csv_for_game,
     game_type_from_name,
@@ -108,7 +106,8 @@ def write_rows(csv_path: str, rows: list[list[str]]) -> None:
 
 def _csv_for_game_type(game_type: GameType) -> str:
     """Map a GameType to its CSV file (legacy behavior: everything non-Riftbound → Lorcana)."""
-    return RIFTBOUND_CSV if game_type == GameType.RIFTBOUND else LORCANA_CSV
+    # Through csv_for_game so the file lands in the data folder, like every other write.
+    return csv_for_game("Riftbound" if game_type == GameType.RIFTBOUND else "Lorcana")
 
 
 RowUpdate = tuple[str, str, str, int]  # (set_code, card_code, variant, count delta)

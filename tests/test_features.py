@@ -5,7 +5,6 @@
 # is slow for one frame and is where a scan crashed natively on a worker
 # thread. Batch extraction (DB builds) keeps predict().
 
-import os
 import threading
 
 import numpy as np
@@ -191,14 +190,28 @@ def test_extract_batch_keeps_predict_and_none_slots(fake_models):
     assert all(r is not None and r.shape == (1280,) for r in (results[0], results[2]))
 
 
-def test_default_tflite_model_path(monkeypatch):
+def test_default_tflite_model_path(tmp_path, monkeypatch):
+    from lorebook.core.features import tflite_backend
     from lorebook.core.features.tflite_backend import default_tflite_model_path
 
-    # Defaults to the repo root (next to pyproject.toml), wherever the module sits in the package.
     monkeypatch.delenv("LOREBOOK_TFLITE_MODEL", raising=False)
-    folder, name = os.path.split(default_tflite_model_path())
-    assert name == "mobilenetv2_features.tflite"
-    assert os.path.exists(os.path.join(folder, "pyproject.toml"))
+    monkeypatch.chdir(tmp_path)
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    monkeypatch.setattr(tflite_backend, "_REPO_ROOT", str(checkout))
 
+    # Like every other data file: the data folder (the working directory from
+    # source), not a path derived from where the package is installed.
+    assert default_tflite_model_path() == "mobilenetv2_features.tflite"
+    monkeypatch.setenv("LOREBOOK_DATA_DIR", str(tmp_path / "data"))
+    assert default_tflite_model_path() == str(tmp_path / "data" / "mobilenetv2_features.tflite")
+    monkeypatch.delenv("LOREBOOK_DATA_DIR")
+
+    # A model left at the checkout root is still found from another folder...
+    (checkout / "mobilenetv2_features.tflite").write_bytes(b"model")
+    assert default_tflite_model_path() == str(checkout / "mobilenetv2_features.tflite")
+    # ...but one in the data folder wins, and the env var beats both.
+    (tmp_path / "mobilenetv2_features.tflite").write_bytes(b"model")
+    assert default_tflite_model_path() == "mobilenetv2_features.tflite"
     monkeypatch.setenv("LOREBOOK_TFLITE_MODEL", "elsewhere.tflite")
     assert default_tflite_model_path() == "elsewhere.tflite"
