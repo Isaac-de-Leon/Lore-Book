@@ -7,7 +7,7 @@ weights file Keras downloads (MobileNetV2, alpha 1.0, 224px, no top), with
 each BatchNormalization folded into its convolution. Only `onnx` and `h5py`
 are needed, and only once: the result is cached at default_model_path().
 
-Outputs match the Keras models in features.py:
+Outputs match the Keras models in features/keras_backend.py:
   "features"    (N, 1280)        global-average-pooled features (pre-normalization)
   "activations" (N, 7, 7, 1280)  last ReLU6 activations, NHWC (heatmap overlay)
 Input "input" is (N, 224, 224, 3) float32 NHWC, already scaled to [-1, 1].

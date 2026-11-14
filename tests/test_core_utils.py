@@ -20,7 +20,8 @@ from lorebook.core.csv_manager import (
 from lorebook.core.feature_cache import _cache_path
 
 # TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
-from lorebook.core.features import _check_tflite_input_dtype, get_extractor
+from lorebook.core.features import get_extractor
+from lorebook.core.features.tflite_backend import _check_tflite_input_dtype
 from lorebook.core.game_types import (
     GameType,
     csv_for_game,
@@ -212,9 +213,9 @@ def test_motion_gate():
 
 def test_get_extractor():
     # Constructing the tflite extractor must NOT load the interpreter.
-    assert type(get_extractor("keras")).__name__ == "_KerasExtractor"
-    assert type(get_extractor("TFLite")).__name__ == "_TFLiteExtractor"
-    assert type(get_extractor("onnx")).__name__ == "_OnnxExtractor"
+    assert type(get_extractor("keras")).__name__ == "KerasExtractor"
+    assert type(get_extractor("TFLite")).__name__ == "TFLiteExtractor"
+    assert type(get_extractor("onnx")).__name__ == "OnnxExtractor"
     assert get_extractor("keras") is get_extractor("keras")
     with pytest.raises(ValueError):
         get_extractor("bogus")
@@ -224,10 +225,11 @@ def test_get_extractor():
     import time
     import unittest.mock
 
-    import lorebook.core.features as features
+    from lorebook.core import features
+    from lorebook.core.features import keras_backend
 
     mobilenet = sys.modules["keras.applications"].MobileNetV2  # conftest stub
-    saved = (features._base_model, features._feat_model, features._act_model)
+    saved = (keras_backend._base_model, keras_backend._feat_model, keras_backend._act_model)
     calls = []
     def slow_build(*args, **kwargs):
         calls.append(1)
@@ -236,8 +238,8 @@ def test_get_extractor():
 
     mobilenet.side_effect = slow_build
     try:
-        features._base_model = features._feat_model = features._act_model = None
-        threads = [threading.Thread(target=features._get_models) for _ in range(4)]
+        keras_backend._base_model = keras_backend._feat_model = keras_backend._act_model = None
+        threads = [threading.Thread(target=keras_backend.get_models) for _ in range(4)]
         for t in threads:
             t.start()
         for t in threads:
@@ -245,7 +247,7 @@ def test_get_extractor():
         assert len(calls) == 1 and features.models_loaded()
     finally:
         mobilenet.side_effect = None
-        features._base_model, features._feat_model, features._act_model = saved
+        keras_backend._base_model, keras_backend._feat_model, keras_backend._act_model = saved
 
     # Importing features must not install process-wide warning filters or
     # override a TF log level the user already set.

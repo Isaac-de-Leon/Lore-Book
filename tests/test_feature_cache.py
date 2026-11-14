@@ -1,4 +1,4 @@
-# tests/test_card_database.py — feature-cache build/prune behavior (no TF, no camera).
+# tests/test_feature_cache.py — feature-cache build/prune behavior (no TF, no camera).
 
 import sqlite3
 import threading

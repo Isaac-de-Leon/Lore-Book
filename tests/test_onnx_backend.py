@@ -4,6 +4,7 @@
 # layer layout (needs h5py + onnx + onnxruntime, skipped otherwise). Parity with
 # real Keras vectors is a manual check: scripts/check_parity.py.
 
+import importlib.util
 import io
 
 import numpy as np
@@ -11,6 +12,7 @@ import pytest
 
 import lorebook.core.features as features
 import lorebook.core.onnx_model as onnx_model
+from lorebook.core.features import onnx_backend, registry
 
 
 def _synthetic_weights() -> bytes:
@@ -115,7 +117,7 @@ def test_default_backend(monkeypatch):
     monkeypatch.setenv("LOREBOOK_BACKEND", "TFLite")
     assert features.default_backend() == "tflite"
     monkeypatch.delenv("LOREBOOK_BACKEND")
-    has_ort = features.importlib.util.find_spec("onnxruntime") is not None
+    has_ort = importlib.util.find_spec("onnxruntime") is not None
     assert features.default_backend() == ("onnx" if has_ort else "keras")
 
 
@@ -136,7 +138,7 @@ def _card() -> np.ndarray:
 
 
 def test_onnx_extract_and_batch():
-    ext = features._OnnxExtractor()
+    ext = onnx_backend.OnnxExtractor()
     ext._session = _FakeSession()
     vec = ext.extract(_card())
     assert vec is not None and vec.shape == (1280,)
@@ -148,7 +150,7 @@ def test_onnx_extract_and_batch():
 
 
 def test_onnx_extract_failure_returns_none():
-    ext = features._OnnxExtractor()
+    ext = onnx_backend.OnnxExtractor()
 
     class Boom:
         def run(self, *a):
@@ -161,8 +163,8 @@ def test_onnx_extract_failure_returns_none():
 
 def test_overlay_uses_onnx_and_never_loads_when_nonblocking(monkeypatch):
     monkeypatch.setenv("LOREBOOK_BACKEND", "onnx")
-    ext = features._OnnxExtractor()
-    monkeypatch.setitem(features._extractors, "onnx", ext)
+    ext = onnx_backend.OnnxExtractor()
+    monkeypatch.setitem(registry._extractors, "onnx", ext)
     img = _card()
     assert features.visualize_activation_overlay(img, blocking=False) is img  # not loaded yet
     ext._session = _FakeSession()

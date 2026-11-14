@@ -171,7 +171,7 @@ class ScanWorker(QObject):
     - heatmap: the debug-mode activation overlay for a preview frame.
     - warm_up: load the model at startup so the first scan doesn't stall.
     The worker owns its GameDatabase; nothing else reads it. Model use is
-    serialized by features._model_lock, with scans taking priority over
+    serialized by features.keras_backend.model_lock, with scans taking priority over
     DB-build batches.
     """
 

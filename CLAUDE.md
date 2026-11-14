@@ -12,7 +12,7 @@ Lore-Book is a desktop trading-card scanner application. It uses a webcam to pho
 
 ```
 Lore-Book/
-├── UI.py                  # Entry point — creates app, shows MainWindow
+├── run_ui.py              # Entry point — creates app, shows MainWindow
 ├── pyproject.toml         # Package metadata (pip install -e .[gui] desktop; .[sorter] for the Pi)
 │
 ├── lorebook/              # Importable package
@@ -20,19 +20,27 @@ Lore-Book/
 │   ├── __main__.py        # Runs cli.main()
 │   ├── core/              # Game-agnostic logic (no Qt)
 │   │   ├── paths.py           # Writable-data root: CWD from source, %LOCALAPPDATA%\LoreBook frozen
-│   │   ├── game_types.py      # GameType enum, get_game_type, csv_for_game, constants
+│   │   ├── game_types.py      # GameType enum, get_game_type, csv_for_game, is_foil_only_card, CARD_IMAGES_DIR
+│   │   ├── games.py           # Game folders + card images: game_folders, list_image_files, split_filename, available_sets
 │   │   ├── image_utils.py     # ensure_valid_image, foil_score, focus_rect/crop_to_card, MotionGate
 │   │   ├── matching.py        # L2-normalize, cosine similarity, find_best_matches, MatchIndex
-│   │   ├── features.py        # get_extractor("onnx"|"keras"|"tflite"), extract_features(+_batch), heatmap
+│   │   ├── features/          # get_extractor("onnx"|"keras"|"tflite"), extract_features, heatmap (public API in __init__)
+│   │   │   ├── registry.py        # BACKENDS, default_backend, get_extractor, extract_features
+│   │   │   ├── preprocessing.py   # Shared 224×224 preprocessing + vector finalizing
+│   │   │   ├── onnx_backend.py    # OnnxExtractor (desktop default)
+│   │   │   ├── keras_backend.py   # KerasExtractor, model_lock, get_models
+│   │   │   ├── tflite_backend.py  # TFLiteExtractor (Raspberry Pi)
+│   │   │   └── heatmap.py         # visualize_activation_overlay (debug mode)
 │   │   ├── onnx_model.py      # Build mobilenetv2_features.onnx from the Keras weights (no TensorFlow)
-│   │   ├── card_database.py   # Feature cache build/load; GameDatabase (active game's vectors + index)
+│   │   ├── feature_cache.py   # Feature cache build/load; GameDatabase (active game's vectors + index)
 │   │   ├── build.py           # refresh_and_build: download art/prices + build caches (Qt-free job)
 │   │   ├── settings.py        # AppSettings: ui_settings.json model (validate, migrate, atomic save)
 │   │   ├── card_names.py      # Optional card-name lookup (card_names_<Game>.json)
 │   │   ├── card_prices.py     # Optional market-price lookup/format (card_prices_<Game>.json, currency_rates.json)
 │   │   ├── price_fetcher.py   # download_card_prices / download_currency_rates — Lorcast + Frankfurter
+│   │   ├── name_fetcher.py    # download_card_names — LorcanaJSON / the Riftbound image sources
 │   │   ├── image_fetcher.py   # download_new_images — card art from LorcanaJSON / Riot API (Riftcodex fallback)
-│   │   ├── csv_manager.py     # CSV read/write, update_cardlist(_batch), split_filename
+│   │   ├── csv_manager.py     # CSV read/write, update_cardlist(_batch)
 │   │   ├── fileio.py          # atomic_write(_bytes/_json) — every file write goes through it
 │   │   └── net.py             # fetch_json / fetch_bytes — shared User-Agent, timeouts, retry policy
 │   ├── hardware/          # Hardware abstraction (no Qt; mocks run on any desktop)
@@ -72,7 +80,7 @@ Lore-Book/
 │   ├── make_icon.py            # Regenerate lorebook/ui/assets/icon.ico + icon.png (run once, commit)
 │   ├── convert_to_tflite.py    # Export the feature model → mobilenetv2_features.tflite
 │   ├── check_parity.py         # Verify keras vs tflite vectors agree
-│   ├── fetch_card_names.py     # Download card names → card_names_<Game>.json (gitignored)
+│   ├── fetch_card_names.py     # CLI over name_fetcher — card names → card_names_<Game>.json
 │   ├── fetch_card_prices.py    # CLI over price_fetcher — market prices → card_prices_<Game>.json
 │   └── fetch_card_images.py    # CLI over image_fetcher — card art → Card_Images/<Game>/
 ├── docs/
@@ -98,10 +106,11 @@ Lore-Book/
     ├── test_core_utils.py     # pure helpers: game types, CSV, matching, image utils
     ├── test_cli.py
     ├── test_matching_index.py
-    ├── test_card_database.py
+    ├── test_feature_cache.py
     ├── test_features.py       # keras extractor call paths with fake models
     ├── test_onnx_backend.py   # ONNX model build (synthetic weights) + onnx extractor
     ├── test_card_names.py
+    ├── test_name_fetcher.py
     ├── test_card_prices.py
     ├── test_image_fetcher.py
     ├── test_camera.py
@@ -116,21 +125,23 @@ Lore-Book/
 | File | What it owns |
 |------|-------------|
 | `lorebook/core/paths.py` | `data_dir()`/`data_path()` — writable-data root (CWD-relative from source; `%LOCALAPPDATA%\LoreBook` when frozen; `LOREBOOK_DATA_DIR` overrides both), `configure_frozen_environment()` (KERAS_HOME) |
-| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, `game_folders()`/`resolve_game_folder()` (Card_Images discovery, case-preserving), `sets_to_store()`/`sets_to_display()` (set-filter semantics), constants |
+| `lorebook/core/game_types.py` | `GameType` enum, `get_game_type()`, `game_type_from_name()`, `csv_for_game()`, `is_foil_only_card()`, constants (`CARD_IMAGES_DIR`, `SUPPORTED_EXTS`, `LORCANA_MAX_NORMAL_CARD`) |
+| `lorebook/core/games.py` | `game_folders()`/`resolve_game_folder()` (Card_Images discovery, case-preserving), `list_image_files()`, `split_filename()` (`<Set>-<Card>` filename convention), `available_sets(image_dir)` |
 | `lorebook/core/image_utils.py` | `ensure_valid_image`, `foil_score`, `is_probably_foil`, `focus_rect`/`crop_to_card` (shared GUI/sorter card crop), `MotionGate` + `motion_sample` + `card_motion_gate` (GUI auto-scan and sorter live-camera trigger) |
-| `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
+| `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (written by `lorebook/core/name_fetcher.py`) |
+| `lorebook/core/name_fetcher.py` | `download_card_names()` (Lorcana: LorcanaJSON; Riftbound: `riftbound_printings()`, the same data and numbering as the image files; `GAMES` registry). CLI: `scripts/fetch_card_names.py` |
 | `lorebook/core/card_prices.py` | `price_for()`, `format_price()`, `rate_for()`, `prices_stale()`, `clear_price_cache()` — optional market prices from `card_prices_<Game>.json` + `currency_rates.json` (display only) |
 | `lorebook/core/price_fetcher.py` | `download_card_prices()` (Lorcast → TCGplayer USD prices; `GAMES` registry), `download_currency_rates()` (Frankfurter/ECB). Auto-run by the GUI when files are >24 h old; CLI: `scripts/fetch_card_prices.py` |
 | `lorebook/core/image_fetcher.py` | `download_new_images(game, FetchOptions(...))` — fetch missing card art into `Card_Images/<Game>/` (Lorcana: LorcanaJSON; Riftbound: Riot content API when `RIOT_API_KEY` is set, else Riftcodex plus the official card gallery for whole sets Riftcodex lacks). Auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py`. `selectable_games()` lists folders plus registered games with no folder yet; `ensure_game_folder()` creates one on Rebuild (never at startup, which builds every folder) |
 | `lorebook/core/matching.py` | `l2_normalize`, `cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
-| `lorebook/core/features.py` | `get_extractor(backend=None)` (onnx/keras/tflite; `None` → `default_backend()`: `LOREBOOK_BACKEND`, else onnx when onnxruntime is installed, else keras), `extract_features`, `visualize_activation_overlay`. Keras inference runs under `_model_lock`; single images call the model directly (`_infer`, never `predict()`), `extract_batch` keeps `predict()`, and `ensure_ready()` loads the model plus one warm-up inference |
+| `lorebook/core/features/` | `get_extractor(backend=None)` (onnx/keras/tflite; `None` → `default_backend()`: `LOREBOOK_BACKEND`, else onnx when onnxruntime is installed, else keras), `extract_features`, `visualize_activation_overlay`. The package's `__init__` is the public API; each backend has its own module. Keras inference runs under `keras_backend.model_lock`; single images call the model directly (`infer`, never `predict()`), `extract_batch` keeps `predict()`, and `ensure_ready()` loads the model plus one warm-up inference |
 | `lorebook/core/onnx_model.py` | `ensure_model()` — builds `mobilenetv2_features.onnx` (at `data_path()`, or `LOREBOOK_ONNX_MODEL`) on first use from the Keras MobileNetV2 `.h5` weights (Keras cache if present, else downloaded; sha256-checked), BatchNorm folded into convs. Needs `onnx` + `h5py`; outputs `features` (N,1280) and `activations` (N,7,7,1280) |
-| `lorebook/core/card_database.py` | `GameDatabase` (the active game's vectors + `MatchIndex`, `load`/`ensure`/`invalidate`), `load_cache(image_dir)`, `build_feature_database(image_dir, ...)` — the game's image folder is always passed explicitly (no module-global "current" path) |
+| `lorebook/core/feature_cache.py` | `GameDatabase` (the active game's vectors + `MatchIndex`, `load`/`ensure`/`invalidate`), `load_cache(image_dir)`, `build_feature_database(image_dir, ...)` — the game's image folder is always passed explicitly (no module-global "current" path) |
 | `lorebook/core/build.py` | `refresh_and_build()` — per game: download new art, refresh stale prices, build the cache; status/progress callbacks + cancel Event; returns `BuildReport` (Qt-free; the GUI runs it on `BuildWorker`) |
-| `lorebook/core/settings.py` | `AppSettings` — every `ui_settings.json` preference with defaults, per-field validation, migration, atomic `save()`; `THEME_NAMES`/`DEFAULT_THEME` |
+| `lorebook/core/settings.py` | `AppSettings` — every `ui_settings.json` preference with defaults, per-field validation, migration, atomic `save()`; `sets_to_store()`/`sets_to_display()` (what the `selected_sets` filter means); `THEME_NAMES`/`DEFAULT_THEME` |
 | `lorebook/core/fileio.py` | `atomic_write`, `atomic_write_bytes`, `atomic_write_json` — temp file + `os.replace`, keeps the target's permissions. Use these for any new file write |
 | `lorebook/core/net.py` | `fetch_json`, `fetch_bytes` (retries transient failures; 4xx other than 408/429 is final), `USER_AGENT`. Use these for any new HTTP call |
-| `lorebook/core/csv_manager.py` | `update_cardlist`, `update_cardlist_batch`, `split_filename`, `get_available_sets(image_dir)`, `read_collection_rows`, `read_rows`/`write_rows` (one CSV file) |
+| `lorebook/core/csv_manager.py` | `update_cardlist`, `update_cardlist_batch`, `read_collection_rows`, `clear_collection`, `read_rows`/`write_rows` (one CSV file) |
 | `lorebook/hardware/camera.py` | `open_capture` (shared with GUI), `CameraSource` + OpenCV/Mock implementations |
 | `lorebook/hardware/transport.py` | `Transport` interface, `MockTransport` (real gantry driver comes later) |
 | `lorebook/sorter/rules.py` | `Rule`, `SortRules`, `load_rules`, `decide_bin` |
@@ -147,7 +158,7 @@ Lore-Book/
 | `lorebook/ui/threads.py` | `WorkerThread` — moveToThread wrapper with `stop()` (requestInterruption + quit + wait); its QThread runs the event loop from a Python `run()` so `threading.local` state survives between slot calls |
 | `lorebook/ui/app_logging.py` | `setup_logging()` — rotating log + faulthandler crash log + excepthook |
 | `lorebook/ui/app.py` | `main()` — QApplication bootstrap (installed as `lorebook-ui`) |
-| `UI.py` | Thin wrapper around `lorebook.ui.app.main()` |
+| `run_ui.py` | Thin wrapper around `lorebook.ui.app.main()`; the PyInstaller entry script (`lorebook.spec`) |
 | `lorebook/cli.py` | `main()` — `python -m lorebook --game <Game> --build` / `--match IMAGE` (installed as `lorebook`) |
 
 > Imports use absolute package paths (e.g. `from lorebook.core.matching import find_best_matches`), in tests too. `CARD_IMAGES_DIR` (`lorebook/core/game_types.py`) is the `Card_Images/` root; a parameter named `image_dir` is one game's folder under it.
@@ -181,7 +192,7 @@ This scans all images in `Card_Images/Lorcana/` and writes `DBCardCache_Lorcana.
 
 ### Run the application
 ```bash
-python UI.py
+python run_ui.py
 ```
 
 ### Run the headless sorter (dry run — motion is mocked until the gantry exists)
@@ -229,7 +240,7 @@ Or run a single test:
 python -m pytest tests/test_core_utils.py::test_split_filename -v
 ```
 
-`tests/test_tf_integration.py` is the exception: it runs real TensorFlow + PySide6 (and downloads the MobileNetV2 weights on first run) in a child process, so it is skipped unless opted in. Run it after touching `features.py`, `threads.py` or `ScanWorker`:
+`tests/test_tf_integration.py` is the exception: it runs real TensorFlow + PySide6 (and downloads the MobileNetV2 weights on first run) in a child process, so it is skipped unless opted in. Run it after touching `lorebook/core/features/`, `threads.py` or `ScanWorker`:
 ```bash
 LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v
 ```

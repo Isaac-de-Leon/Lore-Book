@@ -65,8 +65,8 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
 
     import numpy as np
 
-    import lorebook.core.features as features
     from lorebook.core import feature_cache
+    from lorebook.core.features import registry
 
     vec = np.zeros(1280, np.float32)
     vec[0] = 1
@@ -81,7 +81,7 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
         def ensure_ready(self):
             pass
 
-    monkeypatch.setitem(features._extractors, "keras", FakeExtractor())
+    monkeypatch.setitem(registry._extractors, "keras", FakeExtractor())
     window.last_frame = np.zeros((720, 1280, 3), np.uint8)
     window.request_scan()
     deadline = time.time() + 5

@@ -31,7 +31,7 @@ python scripts/fetch_card_prices.py --game <Game>   # Lorcana only (see price_fe
 
 Then check the new files in `Card_Images/<Game>/`:
 - Filenames follow `<SetCode>-<CardCode>.webp`, zero-padded like the existing sets (`013-041`).
-  `split_filename()` / `get_available_sets()` depend on this.
+  `split_filename()` / `available_sets()` depend on this.
 - The count is plausible (Lorcana main sets: 204 regular cards plus Enchanted/Epic/Iconic above that).
 - Image files, `card_names_*.json`, `card_prices_*.json` and `DBCardCache_*.db` are all
   gitignored. **Never commit them.**

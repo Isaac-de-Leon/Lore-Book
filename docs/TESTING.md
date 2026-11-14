@@ -22,7 +22,7 @@ python scripts/fetch_card_images.py --game Lorcana   # optional: card art
 
 ## 1. Startup & database build
 
-- [ ] `python UI.py` — the progress bar runs for **each** game folder in turn
+- [ ] `python run_ui.py` — the progress bar runs for **each** game folder in turn
       (watch it reset to 0 between Lorcana and Riftbound) and ends with
       "All databases ready. Scan a card to begin."
       *(Round-1 fix: it used to go dark after the first game.)*
@@ -184,7 +184,7 @@ Behaviour shouldn't change: this was renames only, plus the build/match command 
       away prints `100% -` and the same N.
 - [ ] `python -m lorebook --game Lorcana --match Card_Images/Lorcana/001-040.webp` prints
       `1.0000  001-040.webp` first. `python -m lorebook` with no flags prints a usage error.
-- [ ] `python UI.py`: scan a card. The status line under the preview shows the score and file
+- [ ] `python run_ui.py`: scan a card. The status line under the preview shows the score and file
       name, Add shows the green "Added 1× …" message on the right, and Undo removes it again.
 - [ ] Settings: every game lists its sets, Apply keeps the selection, and Rebuild Database runs.
 - [ ] Auto-scan on: placing a card triggers exactly one scan.
@@ -196,7 +196,7 @@ sorter loop and the three window builders were split into smaller functions. Off
 the Scanner, Collection, Settings and match views are pixel-identical before and after, but a real
 camera and a real build were not exercised.
 
-- [ ] `python UI.py` with a new image dropped into `Card_Images/Lorcana/`: the progress dialog
+- [ ] `python run_ui.py` with a new image dropped into `Card_Images/Lorcana/`: the progress dialog
       counts up, ends with "All databases ready. Scan a card to begin.", and the new card scans.
 - [ ] Press Cancel during a Rebuild Database: the dialog shows "Cancelling…", then the status line
       reads "Database build cancelled." Rebuild again and it resumes rather than starting over.
@@ -209,3 +209,21 @@ camera and a real build were not exercised.
       fetch and writes nothing.
 - [ ] `python -m lorebook.sorter --game Lorcana --source Card_Images/Lorcana --max-cards 5`
       logs five `card=… → bin=…` lines and the per-bin totals.
+
+## Modules moved and `UI.py` renamed to `run_ui.py`
+
+Code moved between files without changing: game-folder helpers into `core/games.py`,
+`card_database.py` renamed `feature_cache.py`, name fetching into `core/name_fetcher.py`, and
+`features.py` split into the `core/features/` package. Real ONNX vectors and heatmaps are
+byte-identical before and after; the Keras and tflite backends and the installer build were not run.
+
+- [ ] `python run_ui.py` starts the app as `python UI.py` used to (and `UI.py` is gone).
+- [ ] Scan a card and step through A/D: same matches and scores as before.
+- [ ] Debug mode on: the heatmap overlay appears on the preview.
+- [ ] `python scripts/fetch_card_names.py --game Lorcana` prints `Wrote N card names to
+      card_names_Lorcana.json`, and card names still show on scans.
+- [ ] Release build (next tag): the installer builds from `run_ui.py` and the installed app starts.
+- [ ] Only if TensorFlow can load on the machine: `LOREBOOK_BACKEND=keras python run_ui.py` scans,
+      and `LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v` passes.
+- [ ] On the Pi: `python -m lorebook.sorter --backend tflite ...` still finds
+      `mobilenetv2_features.tflite` at the repo root.

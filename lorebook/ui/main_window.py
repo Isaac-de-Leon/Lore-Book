@@ -67,7 +67,7 @@ class MainWindow(QWidget):
     card database (ScanWorker owns both, including the debug heatmap), so a
     running build can't freeze the window. Scan results carry a token so a
     superseded scan's result is dropped. Model use is serialized by
-    features._model_lock, with a waiting scan served before the build's
+    features.keras_backend.model_lock, with a waiting scan served before the build's
     next batch.
     """
 

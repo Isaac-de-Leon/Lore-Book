@@ -5,12 +5,14 @@
 # is slow for one frame and is where a scan crashed natively on a worker
 # thread. Batch extraction (DB builds) keeps predict().
 
+import os
 import threading
 
 import numpy as np
 import pytest
 
 import lorebook.core.features as features
+from lorebook.core.features import keras_backend
 
 
 class _FakeTensor:
@@ -43,9 +45,9 @@ class FakeModel:
         result: list[bool] = []
 
         def try_acquire() -> None:
-            got = features._model_lock.acquire(blocking=False)
+            got = keras_backend.model_lock.acquire(blocking=False)
             if got:
-                features._model_lock.release()
+                keras_backend.model_lock.release()
             result.append(got)
 
         t = threading.Thread(target=try_acquire)
@@ -74,8 +76,8 @@ def fake_models(monkeypatch):
     """Install fake feature/activation models as the loaded Keras models."""
     feat = FakeModel((1280,))
     act = FakeModel((7, 7, 1280))
-    monkeypatch.setattr(features, "_feat_model", feat)
-    monkeypatch.setattr(features, "_act_model", act)
+    monkeypatch.setattr(keras_backend, "_feat_model", feat)
+    monkeypatch.setattr(keras_backend, "_act_model", act)
     return feat, act
 
 
@@ -148,7 +150,7 @@ def test_activation_overlay_non_blocking_skips_while_model_busy(fake_models):
     held, release = threading.Event(), threading.Event()
 
     def hold_lock() -> None:  # another thread: _model_lock is reentrant
-        with features._model_lock:
+        with keras_backend.model_lock:
             held.set()
             release.wait(5)
 
@@ -164,13 +166,13 @@ def test_activation_overlay_non_blocking_skips_while_model_busy(fake_models):
 
 
 def test_activation_overlay_non_blocking_never_loads_model(monkeypatch):
-    monkeypatch.setattr(features, "_feat_model", None)
-    monkeypatch.setattr(features, "_act_model", None)
+    monkeypatch.setattr(keras_backend, "_feat_model", None)
+    monkeypatch.setattr(keras_backend, "_act_model", None)
 
     def no_load():
         raise AssertionError("a non-blocking overlay must not load the model")
 
-    monkeypatch.setattr(features, "_get_models", no_load)
+    monkeypatch.setattr(keras_backend, "get_models", no_load)
     img = _card(240, 180)
 
     assert features.visualize_activation_overlay(img, blocking=False) is img
@@ -187,3 +189,16 @@ def test_extract_batch_keeps_predict_and_none_slots(fake_models):
     assert feat.calls == []
     assert results[1] is None
     assert all(r is not None and r.shape == (1280,) for r in (results[0], results[2]))
+
+
+def test_default_tflite_model_path(monkeypatch):
+    from lorebook.core.features.tflite_backend import default_tflite_model_path
+
+    # Defaults to the repo root (next to pyproject.toml), wherever the module sits in the package.
+    monkeypatch.delenv("LOREBOOK_TFLITE_MODEL", raising=False)
+    folder, name = os.path.split(default_tflite_model_path())
+    assert name == "mobilenetv2_features.tflite"
+    assert os.path.exists(os.path.join(folder, "pyproject.toml"))
+
+    monkeypatch.setenv("LOREBOOK_TFLITE_MODEL", "elsewhere.tflite")
+    assert default_tflite_model_path() == "elsewhere.tflite"

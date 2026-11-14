@@ -42,11 +42,12 @@ gui = [
 sorter = ["tflite-runtime"]
 
 [tool.setuptools]
-# Root-level UI.py is a runnable script (the PyInstaller entry), not part of
+# Root-level run_ui.py is a runnable script (the PyInstaller entry), not part of
 # the installable package; only the lorebook package is packaged.
 packages = [
     "lorebook",
     "lorebook.core",
+    "lorebook.core.features",
     "lorebook.ui",
     "lorebook.hardware",
     "lorebook.sorter",
@@ -104,4 +105,4 @@ max-args = 6
 # The hook is a tiny standalone script.
 ".claude/hooks/*.py" = ["D1"]
 # TF env vars and warning filters must be set before the imports they affect.
-"lorebook/core/features.py" = ["E402"]
+"lorebook/core/features/__init__.py" = ["E402"]
