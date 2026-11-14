@@ -15,9 +15,10 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
-from lorebook.core.card_database import build_feature_database, list_image_files
 from lorebook.core.card_prices import RATES_FILE, prices_stale
+from lorebook.core.feature_cache import build_feature_database
 from lorebook.core.game_types import CARD_IMAGES_DIR
+from lorebook.core.games import list_image_files
 from lorebook.core.image_fetcher import FetchOptions, download_new_images
 from lorebook.core.price_fetcher import download_card_prices, download_currency_rates
 

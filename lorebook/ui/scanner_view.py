@@ -28,8 +28,9 @@ from PySide6.QtWidgets import (
 
 from lorebook.core.card_names import name_for
 from lorebook.core.card_prices import format_price, price_for, rate_for
-from lorebook.core.csv_manager import split_filename, update_cardlist
+from lorebook.core.csv_manager import update_cardlist
 from lorebook.core.game_types import CARD_IMAGES_DIR, csv_for_game, game_type_from_name, is_foil_only_card
+from lorebook.core.games import split_filename
 from lorebook.core.settings import AppSettings
 from lorebook.ui.icons import get_icon
 from lorebook.ui.qt_images import show_bgr

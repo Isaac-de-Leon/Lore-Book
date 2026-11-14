@@ -9,13 +9,13 @@ else reads or writes ui_settings.json.
 import json
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, fields, replace
 from typing import Any
 
 from lorebook.core.card_prices import SUPPORTED_CURRENCIES
 from lorebook.core.fileio import atomic_write_json
-from lorebook.core.game_types import resolve_game_folder
+from lorebook.core.games import resolve_game_folder
 from lorebook.core.paths import data_path
 
 logger = logging.getLogger(__name__)
@@ -180,3 +180,32 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
         return default
     validator = _VALIDATORS.get(name)
     return validator(value, default) if validator else value
+
+
+def sets_to_store(checked: Iterable[str], available: Iterable[str]) -> list[str]:
+    """
+    Set filter to persist for a selected game. Every set ticked is stored as
+    [] ("all sets"), so sets released later are included automatically;
+    otherwise the ticked sets in folder order.
+    """
+    available = list(available)
+    checked = set(checked)
+    if not available or all(s in checked for s in available):
+        return []
+    return [s for s in available if s in checked]
+
+
+def sets_to_display(stored: Iterable[str], available: Iterable[str], game_selected: bool) -> list[str]:
+    """
+    Inverse of sets_to_store for the Settings tree: which sets to show ticked.
+    A selected game with [] ("all sets") shows every set ticked — the tree
+    derives the game's own box from its sets, so an all-unticked tree would
+    read as "game off" and deselect it on Apply.
+    """
+    if not game_selected:
+        return []
+    stored = set(stored)
+    available = list(available)
+    # A stale filter (none of its sets on disk any more) falls back to "all"
+    # rather than showing the game as off.
+    return [s for s in available if s in stored] or available

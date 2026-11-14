@@ -22,14 +22,10 @@ from PySide6.QtWidgets import (
 )
 
 from lorebook.core.card_prices import SUPPORTED_CURRENCIES
-from lorebook.core.csv_manager import get_available_sets
-from lorebook.core.game_types import (
-    CARD_IMAGES_DIR,
-    sets_to_display,
-    sets_to_store,
-)
+from lorebook.core.game_types import CARD_IMAGES_DIR
+from lorebook.core.games import available_sets
 from lorebook.core.image_fetcher import GAMES, selectable_games
-from lorebook.core.settings import AppSettings
+from lorebook.core.settings import AppSettings, sets_to_display, sets_to_store
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +172,7 @@ class SettingsWindow(QDialog):
         game_root.setCheckState(0, Qt.CheckState.Checked if is_selected else Qt.CheckState.Unchecked)
 
         try:
-            game_sets = get_available_sets(os.path.join(CARD_IMAGES_DIR, game_name))
+            game_sets = available_sets(os.path.join(CARD_IMAGES_DIR, game_name))
         except OSError as e:
             logger.warning("Error getting sets for %s: %s", game_name, e)
             return

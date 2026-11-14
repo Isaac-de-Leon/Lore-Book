@@ -10,7 +10,8 @@ from collections.abc import Callable, Iterator
 import cv2
 import numpy as np
 
-from lorebook.core.game_types import CARD_IMAGES_DIR, SUPPORTED_EXTS
+from lorebook.core.game_types import CARD_IMAGES_DIR
+from lorebook.core.games import list_image_files
 from lorebook.core.matching import MatchIndex
 from lorebook.core.paths import data_path
 
@@ -113,13 +114,6 @@ def _remove_cache_entries(cache_file: str, filenames: list[str]) -> None:
             )
     except sqlite3.Error as e:
         logger.error("Error pruning stale cache entries from %s: %s", cache_file, e)
-
-
-def list_image_files(folder: str) -> list[str]:
-    """Return sorted list of supported image filenames in folder."""
-    if not os.path.isdir(folder):
-        return []
-    return sorted(n for n in os.listdir(folder) if n.lower().endswith(SUPPORTED_EXTS))
 
 
 # Images per inference batch during builds. Reads are parallelized within a

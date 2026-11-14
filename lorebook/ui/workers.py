@@ -16,7 +16,7 @@ import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from lorebook.core.build import BuildReport, refresh_and_build
-from lorebook.core.card_database import GameDatabase
+from lorebook.core.feature_cache import GameDatabase
 from lorebook.core.features import extract_features, get_extractor, visualize_activation_overlay
 from lorebook.hardware.camera import open_capture
 

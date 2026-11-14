@@ -66,12 +66,12 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
     import numpy as np
 
     import lorebook.core.features as features
-    from lorebook.core import card_database
+    from lorebook.core import feature_cache
 
     vec = np.zeros(1280, np.float32)
     vec[0] = 1
-    card_database._init_db(card_database._cache_path("MTG"))
-    with card_database.sqlite3.connect(card_database._cache_path("MTG")) as conn:
+    feature_cache._init_db(feature_cache._cache_path("MTG"))
+    with feature_cache.sqlite3.connect(feature_cache._cache_path("MTG")) as conn:
         conn.execute("INSERT INTO features (filename, vector) VALUES (?, ?)", ("DOM-001.webp", vec.tobytes()))
 
     class FakeExtractor:

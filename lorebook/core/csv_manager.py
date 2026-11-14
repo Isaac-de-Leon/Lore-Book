@@ -4,7 +4,6 @@ import csv
 import logging
 import os
 
-from lorebook.core.card_database import list_image_files
 from lorebook.core.fileio import atomic_write
 from lorebook.core.game_types import (
     LORCANA_CSV,
@@ -15,30 +14,9 @@ from lorebook.core.game_types import (
     get_game_type,
     is_foil_only_card,
 )
+from lorebook.core.games import split_filename
 
 logger = logging.getLogger(__name__)
-
-
-def split_filename(matched_filename: str) -> tuple[str, str]:
-    """
-    Split a card image filename into (set_code, card_code).
-
-    Examples:
-        "001-042.webp"      → ("001", "042")
-        "ONG-23c-alt.jpg"   → ("ONG", "23c-alt")
-        "nosetcode.png"     → ("",    "nosetcode")
-    """
-    base = os.path.splitext(os.path.basename(matched_filename))[0]
-    parts = base.split("-", maxsplit=2)
-    if len(parts) < 2:
-        return "", base
-    return parts[0], "-".join(parts[1:])
-
-
-def get_available_sets(image_dir: str) -> list[str]:
-    """Return the sorted set codes of every card image in a game's image folder."""
-    set_codes = {split_filename(filename)[0] for filename in list_image_files(image_dir)}
-    return sorted(code for code in set_codes if code)
 
 
 class CsvReadError(OSError):

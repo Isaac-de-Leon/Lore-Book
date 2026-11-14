@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 
-from lorebook.core.card_database import load_cache
+from lorebook.core.feature_cache import load_cache
 from lorebook.core.features import BACKENDS, default_backend, get_extractor
 from lorebook.core.game_types import CARD_IMAGES_DIR
 from lorebook.core.image_utils import card_motion_gate

@@ -9,30 +9,26 @@ import sys
 import numpy as np
 import pytest
 
-from lorebook.core.card_database import _cache_path
 from lorebook.core.csv_manager import (
     CsvReadError,
     clear_collection,
     read_collection_rows,
     read_rows,
-    split_filename,
     update_cardlist,
     write_rows,
 )
+from lorebook.core.feature_cache import _cache_path
 
 # TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
 from lorebook.core.features import _check_tflite_input_dtype, get_extractor
 from lorebook.core.game_types import (
     GameType,
     csv_for_game,
-    game_folders,
     game_type_from_name,
     get_game_type,
     is_foil_only_card,
-    resolve_game_folder,
-    sets_to_display,
-    sets_to_store,
 )
+from lorebook.core.games import game_folders, resolve_game_folder, split_filename
 from lorebook.core.image_utils import (
     CARD_ASPECT,
     MotionGate,
@@ -43,6 +39,7 @@ from lorebook.core.image_utils import (
     is_probably_foil,
 )
 from lorebook.core.matching import cosine_score, find_best_matches, l2_normalize
+from lorebook.core.settings import sets_to_display, sets_to_store
 
 HEADER = ["Set Number", "Card Number", "Variant", "Count"]
 HEADER_BYTES = b"Set Number,Card Number,Variant,Count\r\n"

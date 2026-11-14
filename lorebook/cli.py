@@ -10,7 +10,7 @@ import argparse
 import os
 import sys
 
-from lorebook.core.card_database import build_feature_database, load_cache
+from lorebook.core.feature_cache import build_feature_database, load_cache
 from lorebook.core.features import extract_features
 from lorebook.core.game_types import CARD_IMAGES_DIR
 from lorebook.core.matching import find_best_matches

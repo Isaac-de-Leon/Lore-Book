@@ -6,8 +6,8 @@ import threading
 import cv2
 import numpy as np
 
-import lorebook.core.card_database as card_database
-from lorebook.core.card_database import (
+import lorebook.core.feature_cache as feature_cache
+from lorebook.core.feature_cache import (
     GameDatabase,
     _cache_path,
     _init_db,
@@ -47,7 +47,7 @@ def _make_images(folder, n):
 
 def test_batched_build(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(card_database, "_BATCH_SIZE", 2)
+    monkeypatch.setattr(feature_cache, "_BATCH_SIZE", 2)
     images = tmp_path / "Lorcana"
     _make_images(images, 5)
     (images / "001-999.png").write_text("not an image")  # unreadable: skipped, not fatal
@@ -105,7 +105,7 @@ def test_batched_build(tmp_path, monkeypatch):
 
 def test_cancel(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(card_database, "_BATCH_SIZE", 2)
+    monkeypatch.setattr(feature_cache, "_BATCH_SIZE", 2)
     images = tmp_path / "Lorcana"
     _make_images(images, 6)
 

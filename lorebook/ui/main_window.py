@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
 from lorebook import __version__
 from lorebook.core.build import BuildReport
 from lorebook.core.card_prices import clear_price_cache
-from lorebook.core.csv_manager import split_filename
-from lorebook.core.game_types import CARD_IMAGES_DIR, game_folders
+from lorebook.core.game_types import CARD_IMAGES_DIR
+from lorebook.core.games import game_folders, split_filename
 from lorebook.core.image_fetcher import ensure_game_folder
 from lorebook.core.image_utils import (
     card_motion_gate,

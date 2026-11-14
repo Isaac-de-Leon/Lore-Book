@@ -18,8 +18,9 @@ import numpy as np
 
 from lorebook.core.card_names import name_for
 from lorebook.core.card_prices import format_price, price_for
-from lorebook.core.csv_manager import split_filename, update_cardlist_batch
+from lorebook.core.csv_manager import update_cardlist_batch
 from lorebook.core.game_types import game_type_from_name, is_foil_only_card
+from lorebook.core.games import split_filename
 from lorebook.core.image_utils import MotionGate, crop_to_card, is_probably_foil, motion_sample
 from lorebook.core.matching import MatchIndex
 from lorebook.hardware.camera import CameraSource

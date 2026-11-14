@@ -4,7 +4,7 @@ Core, no Qt. Used by scripts/fetch_card_images.py (CLI) and by the GUI's
 Rebuild Database flow, which calls download_new_images() before each build so
 newly released sets populate automatically. Images are named
 "<setCode>-<number>.<ext>" (zero-padded to match the collection's 009-041
-style) so split_filename()/get_available_sets() pick up the set codes and
+style) so split_filename()/available_sets() pick up the set codes and
 card_names lookups line up. Existing files are skipped, so re-running only
 downloads what's new.
 
@@ -32,7 +32,8 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from lorebook.core.fileio import atomic_write_bytes
-from lorebook.core.game_types import CARD_IMAGES_DIR, game_folders, resolve_game_folder
+from lorebook.core.game_types import CARD_IMAGES_DIR
+from lorebook.core.games import game_folders, resolve_game_folder
 from lorebook.core.net import fetch_bytes, fetch_json
 
 logger = logging.getLogger(__name__)
