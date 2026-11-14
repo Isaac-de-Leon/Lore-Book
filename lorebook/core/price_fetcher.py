@@ -1,17 +1,18 @@
-# price_fetcher.py — download card market prices into card_prices_<Game>.json.
-#
-# Core, no Qt. Used by scripts/fetch_card_prices.py (CLI) and by the GUI's
-# background DB-build worker, which refreshes any prices file older than a day
-# (lorebook.core.card_prices.prices_stale) so scans show current values. A
-# fetch failure must never block the build or replace a good file — writes are
-# atomic and only happen after every set fetched cleanly.
-#
-# Sources (pass url= if a format changes):
-#   Lorcana — Lorcast API, TCGplayer-sourced USD prices   https://lorcast.com/docs/api
-#   Rates   — Frankfurter, ECB daily USD exchange rates   https://frankfurter.dev
-#
-# Games without an entry in GAMES are skipped silently (same contract as
-# image_fetcher): their scans simply show no price line.
+"""Download card market prices into card_prices_<Game>.json.
+
+Core, no Qt. Used by scripts/fetch_card_prices.py (CLI) and by the GUI's
+background DB-build worker, which refreshes any prices file older than a day
+(lorebook.core.card_prices.prices_stale) so scans show current values. A
+fetch failure must never block the build or replace a good file — writes are
+atomic and only happen after every set fetched cleanly.
+
+Sources (pass url= if a format changes):
+  Lorcana — Lorcast API, TCGplayer-sourced USD prices   https://lorcast.com/docs/api
+  Rates   — Frankfurter, ECB daily USD exchange rates   https://frankfurter.dev
+
+Games without an entry in GAMES are skipped silently (same contract as
+image_fetcher): their scans simply show no price line.
+"""
 
 import logging
 from collections.abc import Callable
@@ -33,6 +34,7 @@ RATES_URL = "https://api.frankfurter.dev/v1/latest?base=USD"
 
 
 def _as_price(value) -> float | None:
+    """Return value as a float, or None if it is not a number."""
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -97,10 +99,12 @@ GAMES = {
 
 
 def _now_iso() -> str:
+    """Return the current UTC time as an ISO 8601 string, to the second."""
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _write_json_atomic(path: str, payload: dict) -> None:
+    """Write a prices or rates file atomically, then drop the cached copy of it."""
     # The GUI's main thread may read these files while the build worker
     # writes them — write-then-replace so readers never see a torn file.
     # A unique temp name per write: concurrent writers (GUI refresh + CLI)

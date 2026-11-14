@@ -43,6 +43,7 @@ _SVG = (
 
 
 def render(size: int) -> Image.Image:
+    """Render the icon tile at size x size pixels and return it as an RGBA image."""
     renderer = QSvgRenderer(QByteArray(_SVG.encode()))
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
@@ -58,6 +59,7 @@ def render(size: int) -> Image.Image:
 
 
 def main() -> None:
+    """Write icon.png and the multi-size icon.ico into lorebook/ui/assets."""
     os.makedirs(OUT_DIR, exist_ok=True)
     app = QGuiApplication.instance() or QGuiApplication([])  # noqa: F841 — Qt needs an app for rendering
 

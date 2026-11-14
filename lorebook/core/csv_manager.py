@@ -1,4 +1,4 @@
-# csv_manager.py — CSV read/write and card-list management.
+"""CSV read/write and card-list management."""
 
 import csv
 import logging
@@ -118,6 +118,7 @@ def write_rows(csv_path: str, rows: list[list[str]]) -> None:
     target, so a crash mid-write can't destroy the existing collection file.
     """
     def write(f) -> None:
+        """Write the header and every row to the open file."""
         writer = csv.writer(f)
         writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
         for r in rows:
@@ -130,6 +131,60 @@ def write_rows(csv_path: str, rows: list[list[str]]) -> None:
 def _csv_for_game_type(game_type: GameType) -> str:
     """Map a GameType to its CSV file (legacy behavior: everything non-Riftbound → Lorcana)."""
     return RIFTBOUND_CSV if game_type == GameType.RIFTBOUND else LORCANA_CSV
+
+
+RowUpdate = tuple[str, str, str, int]  # (set_code, card_code, variant, count delta)
+
+
+def _as_count(count, matched_filename: str) -> int:
+    """Return count as an int, recording 1 (with a warning) when it is not a number."""
+    try:
+        return int(count)
+    except (TypeError, ValueError):
+        logger.warning("Non-numeric count %r for %s; recording 1", count, matched_filename)
+        return 1
+
+
+def _group_updates(cards, game: str | None, allow_negative: bool) -> dict[str, list[RowUpdate]]:
+    """Turn (filename, is_foil, count) cards into row updates grouped by target CSV file.
+
+    Zero counts are dropped, and so are negative ones unless allow_negative.
+    """
+    target = csv_for_game(game) if game is not None else None
+    by_file: dict[str, list[RowUpdate]] = {}
+    for matched_filename, is_foil, raw_count in cards:
+        count = _as_count(raw_count, matched_filename)
+        if count == 0 or (count < 0 and not allow_negative):
+            continue
+        game_type = game_type_from_name(game) if game is not None else get_game_type(matched_filename)
+        target_file = target or _csv_for_game_type(game_type)
+        set_code, card_code = split_filename(matched_filename)
+        # Foil-only rarities (Lorcana Enchanted/Epic/Iconic) are always recorded
+        # as foil — Dreamborn.ink rejects a "normal" row for them.
+        variant = "foil" if is_foil or is_foil_only_card(set_code, card_code, game_type) else "normal"
+        by_file.setdefault(target_file, []).append((set_code, card_code, variant, count))
+    return by_file
+
+
+def _apply_update(rows: list[list[str]], update: RowUpdate) -> bool:
+    """Add one update's count to its row (clamped at 0), inserting the row if new.
+
+    Returns True when rows changed. A decrement of a card that is not in the
+    list is a no-op.
+    """
+    set_code, card_code, variant, count = update
+    for row in rows:
+        if row[0] == set_code and row[1] == card_code and row[2] == variant:
+            try:
+                new_count = int(row[3]) + count
+            except (TypeError, ValueError):
+                new_count = count
+            row[3] = str(max(new_count, 0))
+            return True
+    if count > 0:
+        rows.append([set_code, card_code, variant, str(count)])
+        return True
+    return False
 
 
 def update_cardlist_batch(
@@ -152,44 +207,14 @@ def update_cardlist_batch(
     default so scan paths can never accidentally remove cards — only explicit
     corrections (the GUI's Undo) pass True.
     """
-    target = csv_for_game(game) if game is not None else None
-    by_file: dict = {}
-    for matched_filename, is_foil, count in cards:
-        try:
-            count = int(count)
-        except (TypeError, ValueError):
-            logger.warning("Non-numeric count %r for %s; recording 1", count, matched_filename)
-            count = 1
-        if count == 0 or (count < 0 and not allow_negative):
-            continue
-        game_type = game_type_from_name(game) if game is not None else get_game_type(matched_filename)
-        target_file = target or _csv_for_game_type(game_type)
-        set_code, card_code = split_filename(matched_filename)
-        # Foil-only rarities (Lorcana Enchanted/Epic/Iconic) are always recorded
-        # as foil — Dreamborn.ink rejects a "normal" row for them.
-        variant = "foil" if is_foil or is_foil_only_card(set_code, card_code, game_type) else "normal"
-        by_file.setdefault(target_file, []).append((set_code, card_code, variant, count))
-
-    for target_file, updates in by_file.items():
+    for target_file, updates in _group_updates(cards, game, allow_negative).items():
         # strict: a read failure must abort, not write back a partial file
-        existing = read_rows(target_file, strict=True)
+        rows = read_rows(target_file, strict=True)
         changed = False
-        for set_code, card_code, variant, count in updates:
-            for r in existing:
-                if r[0] == set_code and r[1] == card_code and r[2] == variant:
-                    try:
-                        new_count = int(r[3]) + count
-                    except (TypeError, ValueError):
-                        new_count = count
-                    r[3] = str(max(new_count, 0))
-                    changed = True
-                    break
-            else:
-                if count > 0:  # a decrement of an absent card stays a no-op
-                    existing.append([set_code, card_code, variant, str(count)])
-                    changed = True
+        for update in updates:
+            changed = _apply_update(rows, update) or changed
         if changed or not os.path.exists(target_file):
-            write_rows(target_file, existing)
+            write_rows(target_file, rows)
 
 
 def update_cardlist(

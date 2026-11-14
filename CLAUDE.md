@@ -121,7 +121,7 @@ Lore-Book/
 | `lorebook/core/card_names.py` | `name_for()` — optional display names from `card_names_<Game>.json` (see `scripts/fetch_card_names.py`) |
 | `lorebook/core/card_prices.py` | `price_for()`, `format_price()`, `rate_for()`, `prices_stale()`, `clear_price_cache()` — optional market prices from `card_prices_<Game>.json` + `currency_rates.json` (display only) |
 | `lorebook/core/price_fetcher.py` | `download_card_prices()` (Lorcast → TCGplayer USD prices; `GAMES` registry), `download_currency_rates()` (Frankfurter/ECB). Auto-run by the GUI when files are >24 h old; CLI: `scripts/fetch_card_prices.py` |
-| `lorebook/core/image_fetcher.py` | `download_new_images()` — fetch missing card art into `Card_Images/<Game>/` (Lorcana: LorcanaJSON; Riftbound: Riot content API when `RIOT_API_KEY` is set, else Riftcodex plus the official card gallery for whole sets Riftcodex lacks). Auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py`. `selectable_games()` lists folders plus registered games with no folder yet; `ensure_game_folder()` creates one on Rebuild (never at startup, which builds every folder) |
+| `lorebook/core/image_fetcher.py` | `download_new_images(game, FetchOptions(...))` — fetch missing card art into `Card_Images/<Game>/` (Lorcana: LorcanaJSON; Riftbound: Riot content API when `RIOT_API_KEY` is set, else Riftcodex plus the official card gallery for whole sets Riftcodex lacks). Auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py`. `selectable_games()` lists folders plus registered games with no folder yet; `ensure_game_folder()` creates one on Rebuild (never at startup, which builds every folder) |
 | `lorebook/core/matching.py` | `l2_normalize`, `cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
 | `lorebook/core/features.py` | `get_extractor(backend=None)` (onnx/keras/tflite; `None` → `default_backend()`: `LOREBOOK_BACKEND`, else onnx when onnxruntime is installed, else keras), `extract_features`, `visualize_activation_overlay`. Keras inference runs under `_model_lock`; single images call the model directly (`_infer`, never `predict()`), `extract_batch` keeps `predict()`, and `ensure_ready()` loads the model plus one warm-up inference |
 | `lorebook/core/onnx_model.py` | `ensure_model()` — builds `mobilenetv2_features.onnx` (at `data_path()`, or `LOREBOOK_ONNX_MODEL`) on first use from the Keras MobileNetV2 `.h5` weights (Keras cache if present, else downloaded; sha256-checked), BatchNorm folded into convs. Needs `onnx` + `h5py`; outputs `features` (N,1280) and `activations` (N,7,7,1280) |
@@ -134,7 +134,7 @@ Lore-Book/
 | `lorebook/hardware/camera.py` | `open_capture` (shared with GUI), `CameraSource` + OpenCV/Mock implementations |
 | `lorebook/hardware/transport.py` | `Transport` interface, `MockTransport` (real gantry driver comes later) |
 | `lorebook/sorter/rules.py` | `Rule`, `SortRules`, `load_rules`, `decide_bin` |
-| `lorebook/sorter/pipeline.py` | `SortPipeline`, `SortOutcome` — the headless sort loop |
+| `lorebook/sorter/pipeline.py` | `SortPipeline` (collaborators + a `SortConfig`: rules, game, thresholds, CSV and crop behavior), `SortOutcome` — the headless sort loop |
 | `lorebook/sorter/__main__.py` | `python -m lorebook.sorter` argument parsing and wiring |
 | `lorebook/ui/styles.py` | `THEMES` (dark/light token palettes), `build_stylesheet(theme)`, `theme_tokens()` |
 | `lorebook/ui/icons.py` | `get_icon(name, color, checked_color=None)` — inline SVG outline icons rendered to tinted QIcons (high-DPI safe, cached) |
@@ -240,8 +240,8 @@ LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v
 ruff check . && python -m pytest tests/ -v
 ```
 
-CI runs both, plus `mypy` and the headless Qt smoke test. Ruff (`pyproject.toml`: pyflakes +
-E4/E7/E9) is the main static check over `lorebook/ui/`, where the smoke test only covers startup
+CI runs both, plus `mypy` and the headless Qt smoke test. Ruff (`pyproject.toml`: pyflakes,
+naming, complexity/size limits and required docstrings) is the main static check over `lorebook/ui/`, where the smoke test only covers startup
 and shutdown. A `.claude/settings.json` hook lints each `.py`
 file after it is edited, and in cloud sessions the SessionStart hook installs CI's test deps.
 
@@ -350,6 +350,12 @@ the foil-only cutoff (`LORCANA_MAX_NORMAL_CARD`) and filename codes, then rebuil
   "false positive" are conclusions you have to test first: read the message, reproduce it, and check
   what the code does. Passing checks can also mislead, so ask whether a check can see the problem at
   all. If something stays unresolved, say so plainly in your final message rather than leaving it out.
+- **Small, documented functions.** Ruff enforces it: complexity ≤ 10, ≤ 12 branches, ≤ 50
+  statements and ≤ 6 arguments per function (`C901`/`PLR09xx`), and a docstring on every module,
+  class and function (`D1`; tests exempt). When a function trips a limit, split it into helpers
+  that each do one thing, or group related options in a dataclass (`FetchOptions`, `SortConfig`)
+  — don't raise the limit. Docstrings start with a one-line summary of what the function does;
+  add a second paragraph only for the non-obvious *why*.
 - **Commit messages** use conventional prefixes: `feat:`, `fix:`, `perf:`, `test:`, `docs:`,
   `data:` (collection CSV updates, user only).
 

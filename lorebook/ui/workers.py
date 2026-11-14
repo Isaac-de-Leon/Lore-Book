@@ -1,9 +1,10 @@
-# workers.py — QObject workers that run on their own QThread (ui/threads.py).
-#
-# Each worker exposes slots the GUI calls through queued signals, and reports
-# back only through its own signals (delivered on the GUI thread). Slots are
-# boundaries: whatever happens inside, the GUI must hear back, so each one
-# ends by emitting its result even on an unexpected error.
+"""QObject workers that run on their own QThread (ui/threads.py).
+
+Each worker exposes slots the GUI calls through queued signals, and reports
+back only through its own signals (delivered on the GUI thread). Slots are
+boundaries: whatever happens inside, the GUI must hear back, so each one
+ends by emitting its result even on an unexpected error.
+"""
 
 import contextlib
 import logging
@@ -35,6 +36,7 @@ class BuildWorker(QObject):
 
     @Slot(object, object)
     def run(self, games: list[str], cancel_event: threading.Event) -> None:
+        """Run the refresh-and-build job for games and emit done with its report, even on failure."""
         try:
             report = refresh_and_build(
                 games, cancel_event=cancel_event, status=self.status.emit, progress=self.progress.emit
@@ -64,6 +66,7 @@ class CameraWorker(QObject):
     READ_INTERVAL_MS = 5           # read() itself blocks until the next frame
 
     def __init__(self) -> None:
+        """Start with no camera open."""
         super().__init__()
         self._cap: cv2.VideoCapture | None = None
         self._timer: QTimer | None = None
@@ -77,6 +80,7 @@ class CameraWorker(QObject):
 
     @Slot(int)
     def start(self, camera_index: int) -> None:
+        """Open the camera and begin reading frames; emits failed if it can't be opened."""
         self._close()
         self.state_changed.emit("starting")
         try:
@@ -99,6 +103,7 @@ class CameraWorker(QObject):
 
     @Slot()
     def stop(self) -> None:
+        """Stop reading frames and release the camera."""
         self._close()
         self.state_changed.emit("idle")
 
@@ -111,11 +116,13 @@ class CameraWorker(QObject):
         self._release_capture()
 
     def _close(self) -> None:
+        """Stop the read timer and release the camera."""
         if self._timer is not None:
             self._timer.stop()
         self._release_capture()
 
     def _release_capture(self) -> None:
+        """Release the OpenCV capture, tolerating a camera that has already died."""
         if self._cap is not None:
             try:
                 with contextlib.suppress(cv2.error):  # a dead camera may refuse
@@ -124,6 +131,7 @@ class CameraWorker(QObject):
                 self._cap = None
 
     def _read_frame(self) -> None:
+        """Read one frame and emit it if the GUI is ready; give up after too many failed reads."""
         if self._cap is None:
             return
         try:
@@ -146,6 +154,8 @@ class CameraWorker(QObject):
 
 @dataclass
 class ScanResult:
+    """What one scan produced: the matches, or why there are none."""
+
     game: str
     matches: list[tuple[str, float]] | None   # None: no database, or extraction failed
     error: str | None = None
@@ -169,6 +179,7 @@ class ScanWorker(QObject):
     heatmap_ready = Signal(object)    # np.ndarray (BGR)
 
     def __init__(self) -> None:
+        """Create the worker with no game's vectors loaded yet."""
         super().__init__()
         self._db = GameDatabase()
 
@@ -187,6 +198,7 @@ class ScanWorker(QObject):
 
     @Slot(int, object, float, str)
     def scan(self, token: int, img_bgr: np.ndarray, threshold: float, game: str) -> None:
+        """Match one image against the game's database and emit done with the result."""
         try:
             if not self._db.ensure(game):  # reloads only after a game switch or rebuild
                 result = ScanResult(game, None, no_database=True)
@@ -202,6 +214,7 @@ class ScanWorker(QObject):
 
     @Slot(object)
     def heatmap(self, frame_bgr: np.ndarray) -> None:
+        """Emit the frame with the activation heatmap blended in, or unchanged if that fails."""
         try:
             out = visualize_activation_overlay(frame_bgr)
         except Exception as e:  # noqa: BLE001 — debug aid; show the plain frame instead

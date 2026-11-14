@@ -1,17 +1,18 @@
-# features.py — MobileNetV2 feature extraction and activation heatmap overlay.
-#
-# Extraction is pluggable behind get_extractor(backend):
-#   - "onnx"   : MobileNetV2 on ONNX Runtime (desktop default when onnxruntime
-#                is installed). The model is built from the Keras weights without
-#                TensorFlow (core/onnx_model.py) — Windows Smart App Control
-#                blocks TensorFlow's unsigned DLL, but allows onnxruntime.
-#   - "keras"  : MobileNetV2 via TensorFlow/Keras (fallback, also used to
-#                build the .tflite model).
-#   - "tflite" : the same MobileNetV2 features via a .tflite Interpreter
-#                (tflite_runtime preferred, falls back to tensorflow.lite).
-#                Lightweight enough to run on a Raspberry Pi for the sorter.
-# All backends share identical preprocessing, so the 1280-dim vectors they
-# produce are interchangeable and cache-compatible (see scripts/check_parity.py).
+"""MobileNetV2 feature extraction and activation heatmap overlay.
+
+Extraction is pluggable behind get_extractor(backend):
+  - "onnx"   : MobileNetV2 on ONNX Runtime (desktop default when onnxruntime
+               is installed). The model is built from the Keras weights without
+               TensorFlow (core/onnx_model.py) — Windows Smart App Control
+               blocks TensorFlow's unsigned DLL, but allows onnxruntime.
+  - "keras"  : MobileNetV2 via TensorFlow/Keras (fallback, also used to
+               build the .tflite model).
+  - "tflite" : the same MobileNetV2 features via a .tflite Interpreter
+               (tflite_runtime preferred, falls back to tensorflow.lite).
+               Lightweight enough to run on a Raspberry Pi for the sorter.
+All backends share identical preprocessing, so the 1280-dim vectors they
+produce are interchangeable and cache-compatible (see scripts/check_parity.py).
+"""
 
 import os
 
@@ -59,6 +60,7 @@ class _InteractivePriority:
     """Context manager: hold _model_lock with priority over batch extraction."""
 
     def __enter__(self) -> None:
+        """Take _model_lock, counting as a waiter until it is acquired so batch work yields."""
         global _interactive_waiters
         with _waiters_guard:
             _interactive_waiters += 1
@@ -69,6 +71,7 @@ class _InteractivePriority:
                 _interactive_waiters -= 1
 
     def __exit__(self, *exc) -> None:
+        """Release _model_lock."""
         _model_lock.release()
 
 
@@ -196,6 +199,7 @@ class _KerasExtractor:
             _infer(feat_model, np.zeros((1, 224, 224, 3), np.float32))
 
     def extract(self, img_or_path: np.ndarray | str) -> np.ndarray | None:
+        """Return the image's normalized 1280-dim vector, or None if it can't be extracted."""
         try:
             batch = _preprocess_to_batch(img_or_path)
             if batch is None:
@@ -261,6 +265,7 @@ class _TFLiteExtractor:
     """MobileNetV2 feature extractor backed by a .tflite Interpreter (lazy-loaded)."""
 
     def __init__(self, model_path: str | None = None):
+        """Remember the model path; the interpreter is loaded on first use."""
         self._explicit_model_path = model_path
         self._interpreter = None
         self._in_index = None
@@ -268,6 +273,7 @@ class _TFLiteExtractor:
 
     @property
     def model_path(self) -> str:
+        """Return the .tflite file to load: the explicit path, else the default location."""
         return self._explicit_model_path or _default_tflite_model_path()
 
     def ensure_ready(self) -> None:
@@ -303,6 +309,7 @@ class _TFLiteExtractor:
         return interp
 
     def extract(self, img_or_path: np.ndarray | str) -> np.ndarray | None:
+        """Return the image's normalized 1280-dim vector, or None if it can't be extracted."""
         try:
             interp = self._ensure_interpreter()
             batch = _preprocess_to_batch(img_or_path)
@@ -330,12 +337,14 @@ class _OnnxExtractor:
     """
 
     def __init__(self, model_path: str | None = None):
+        """Remember the model path; the model is built and loaded on first use."""
         self._explicit_model_path = model_path
         self._session = None
         self._load_lock = threading.Lock()
 
     @property
     def model_path(self) -> str:
+        """Return the .onnx file to load: the explicit path, else the default location."""
         from lorebook.core.onnx_model import default_model_path
         return self._explicit_model_path or default_model_path()
 
@@ -348,6 +357,7 @@ class _OnnxExtractor:
         self._run(np.zeros((1, 224, 224, 3), np.float32))
 
     def _ensure_session(self):
+        """Return the inference session, building the model and loading it on first use."""
         if self._session is not None:
             return self._session
         with self._load_lock:
@@ -363,6 +373,7 @@ class _OnnxExtractor:
         return self._session
 
     def _run(self, batch: np.ndarray, output: str = "features") -> np.ndarray:
+        """Run a preprocessed batch through the model and return the named output."""
         return self._ensure_session().run([output], {"input": batch})[0]
 
     def activations(self, batch: np.ndarray) -> np.ndarray:
@@ -370,6 +381,7 @@ class _OnnxExtractor:
         return self._run(batch, "activations")
 
     def extract(self, img_or_path: np.ndarray | str) -> np.ndarray | None:
+        """Return the image's normalized 1280-dim vector, or None if it can't be extracted."""
         try:
             batch = _preprocess_to_batch(img_or_path)
             if batch is None:

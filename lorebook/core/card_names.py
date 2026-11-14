@@ -1,10 +1,11 @@
-# card_names.py — optional card-name lookup (display only).
-#
-# Names come from a local card_names_<Game>.json generated once by
-# scripts/fetch_card_names.py ({"<set>-<number>": "Card Name", ...}). The file
-# is optional and gitignored: every lookup degrades to None when it's absent,
-# so nothing depends on it at runtime. Names never enter the collection CSV —
-# that file must stay 4-column for Dreamborn.ink bulk import.
+"""Optional card-name lookup (display only).
+
+Names come from a local card_names_<Game>.json generated once by
+scripts/fetch_card_names.py ({"<set>-<number>": "Card Name", ...}). The file
+is optional and gitignored: every lookup degrades to None when it's absent,
+so nothing depends on it at runtime. Names never enter the collection CSV —
+that file must stay 4-column for Dreamborn.ink bulk import.
+"""
 
 import json
 import logging
@@ -26,6 +27,7 @@ def normalize_key(set_code: str, card_code: str) -> str:
     map to '9-41', so LorcanaJSON's unpadded codes match our padded filenames.
     """
     def norm(part: str) -> str:
+        """Strip leading zeros, keeping a lone '0' and leaving an empty part empty."""
         stripped = part.lstrip("0")
         return stripped if stripped else ("0" if part else "")
     return f"{norm(set_code)}-{norm(card_code)}".lower()

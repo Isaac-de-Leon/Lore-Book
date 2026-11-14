@@ -1,16 +1,17 @@
-# onnx_model.py — build the MobileNetV2 feature model as ONNX, without TensorFlow.
-#
-# Windows Smart App Control blocks TensorFlow's unsigned native DLL, so the
-# desktop app runs feature extraction on ONNX Runtime (Microsoft-signed)
-# instead. The model is rebuilt here, layer by layer, from the same ImageNet
-# weights file Keras downloads (MobileNetV2, alpha 1.0, 224px, no top), with
-# each BatchNormalization folded into its convolution. Only `onnx` and `h5py`
-# are needed, and only once: the result is cached at default_model_path().
-#
-# Outputs match the Keras models in features.py:
-#   "features"    (N, 1280)        global-average-pooled features (pre-normalization)
-#   "activations" (N, 7, 7, 1280)  last ReLU6 activations, NHWC (heatmap overlay)
-# Input "input" is (N, 224, 224, 3) float32 NHWC, already scaled to [-1, 1].
+"""Build the MobileNetV2 feature model as ONNX, without TensorFlow.
+
+Windows Smart App Control blocks TensorFlow's unsigned native DLL, so the
+desktop app runs feature extraction on ONNX Runtime (Microsoft-signed)
+instead. The model is rebuilt here, layer by layer, from the same ImageNet
+weights file Keras downloads (MobileNetV2, alpha 1.0, 224px, no top), with
+each BatchNormalization folded into its convolution. Only `onnx` and `h5py`
+are needed, and only once: the result is cached at default_model_path().
+
+Outputs match the Keras models in features.py:
+  "features"    (N, 1280)        global-average-pooled features (pre-normalization)
+  "activations" (N, 7, 7, 1280)  last ReLU6 activations, NHWC (heatmap overlay)
+Input "input" is (N, 224, 224, 3) float32 NHWC, already scaled to [-1, 1].
+"""
 
 import hashlib
 import io
@@ -87,6 +88,7 @@ def _read_conv_bn_pairs(h5) -> list[tuple[str, np.ndarray, tuple[np.ndarray, ...
     which Keras version named the layers. Every conv is followed by its BN.
     """
     def _s(v) -> str:
+        """Return an HDF5 name as str (h5py may hand it back as bytes)."""
         return v.decode() if isinstance(v, bytes) else str(v)
 
     convs: list[tuple[str, np.ndarray]] = []
@@ -111,7 +113,7 @@ def _read_conv_bn_pairs(h5) -> list[tuple[str, np.ndarray, tuple[np.ndarray, ...
     return [(kind, kernel, bn) for (kind, kernel), bn in zip(convs, bns)]
 
 
-def build_model_bytes(weights: bytes) -> bytes:
+def build_model_bytes(weights: bytes) -> bytes:  # noqa: PLR0915 — one linear layer-by-layer model definition
     """Build the serialized ONNX model from the Keras .h5 weights file contents."""
     import h5py
     import onnx
@@ -125,6 +127,7 @@ def build_model_bytes(weights: bytes) -> bytes:
     counter = [0]
 
     def fresh(prefix: str) -> str:
+        """Return a unique node or tensor name starting with prefix."""
         counter[0] += 1
         return f"{prefix}_{counter[0]}"
 
@@ -132,6 +135,7 @@ def build_model_bytes(weights: bytes) -> bytes:
               numpy_helper.from_array(np.array(6.0, np.float32), "relu6_max")]
 
     def conv_bn(x: str, stride: int, relu6: bool) -> str:
+        """Add the next conv with its BatchNorm folded in (plus ReLU6 if asked); return its output name."""
         kind, kernel, (gamma, beta, mean, var) = next(layers)
         scale = gamma / np.sqrt(var + _BN_EPSILON)
         if kind == "dw":   # (kh, kw, C, 1) -> (C, 1, kh, kw)

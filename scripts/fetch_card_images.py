@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-# fetch_card_images.py — CLI for downloading card images into Card_Images/<Game>/.
-#
-# Thin wrapper around lorebook.core.image_fetcher.download_new_images(), which
-# is also called automatically by the GUI's Rebuild Database button. Re-run when
-# a new set releases — existing files are skipped, so only new cards download.
-#
-#   python scripts/fetch_card_images.py --game Lorcana
-#   python scripts/fetch_card_images.py --game Lorcana --set 9      # just set 9
-#   python scripts/fetch_card_images.py --game Lorcana --format jpg # keep source JPG
-#
-# After it finishes, fold the new images into the feature DB:
-#   python -m lorebook --game Lorcana --build
+"""CLI for downloading card images into Card_Images/<Game>/.
+
+Thin wrapper around lorebook.core.image_fetcher.download_new_images(), which
+is also called automatically by the GUI's Rebuild Database button. Re-run when
+a new set releases — existing files are skipped, so only new cards download.
+
+  python scripts/fetch_card_images.py --game Lorcana
+  python scripts/fetch_card_images.py --game Lorcana --set 9      # just set 9
+  python scripts/fetch_card_images.py --game Lorcana --format jpg # keep source JPG
+
+After it finishes, fold the new images into the feature DB:
+  python -m lorebook --game Lorcana --build
+"""
 
 import argparse
 import logging
@@ -18,13 +19,14 @@ import os
 import sys
 
 try:
-    from lorebook.core.image_fetcher import GAMES, download_new_images
+    from lorebook.core.image_fetcher import GAMES, FetchOptions, download_new_images
 except ImportError:  # running from a checkout without `pip install -e .`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from lorebook.core.image_fetcher import GAMES, download_new_images
+    from lorebook.core.image_fetcher import GAMES, FetchOptions, download_new_images
 
 
 def main(argv=None) -> int:
+    """Parse arguments, download the game's missing card images, and return the exit code."""
     p = argparse.ArgumentParser(description="Download card images into Card_Images/<Game>/.")
     p.add_argument("--game", default="Lorcana", help="Game folder name (default: Lorcana).")
     p.add_argument("--url", help="Override the source bulk-data URL.")
@@ -50,10 +52,8 @@ def main(argv=None) -> int:
         return 1
 
     try:
-        stats = download_new_images(
-            args.game,
+        options = FetchOptions(
             out_dir=args.out,
-            progress_callback=print,
             url=args.url,
             sets=args.sets,
             fmt=args.format,
@@ -63,6 +63,7 @@ def main(argv=None) -> int:
             delay=args.delay,
             dry_run=args.dry_run,
         )
+        stats = download_new_images(args.game, options, progress_callback=print)
     except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
         print(f"Download of card list failed: {e}", file=sys.stderr)
         return 1

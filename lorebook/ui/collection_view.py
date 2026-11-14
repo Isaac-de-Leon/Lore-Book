@@ -1,4 +1,4 @@
-# collection_view.py — Collection tab: browse a game's <Game>List.csv and export it.
+"""Collection tab: browse a game's <Game>List.csv and export it."""
 
 import logging
 import os
@@ -40,6 +40,7 @@ class CollectionView(QWidget):
     cleared = Signal(str)  # game whose collection CSV was emptied
 
     def __init__(self, initial_game: str | None = None, parent=None):
+        """Build the toolbar and table, then load initial_game's collection."""
         super().__init__(parent)
 
         # Toolbar row
@@ -105,6 +106,7 @@ class CollectionView(QWidget):
         self.clear_btn.setIcon(get_icon("trash", danger_color))
 
     def current_game(self) -> str:
+        """Return the game selected in the dropdown."""
         return self.game_combo.currentText()
 
     def refresh(self) -> None:

@@ -1,11 +1,11 @@
-# card_database.py — Feature cache management and database build pipeline.
+"""Feature cache management and database build pipeline."""
 
 import concurrent.futures
 import logging
 import os
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import cv2
 import numpy as np
@@ -48,6 +48,7 @@ Stamp = tuple[int, int]  # (st_mtime_ns, st_size) of a source image
 
 
 def _file_stamp(path: str) -> Stamp | None:
+    """Return a file's (mtime_ns, size) stamp, or None if it can't be read."""
     try:
         st = os.stat(path)
     except OSError:
@@ -132,6 +133,115 @@ def _read_image(filename: str, image_dir: str) -> tuple[str, np.ndarray | None]:
     return filename, cv2.imread(os.path.join(image_dir, filename), cv2.IMREAD_COLOR)
 
 
+def _prune_missing(feature_db: dict[str, np.ndarray], current_files: list[str], image_dir: str) -> None:
+    """Drop cached vectors whose image was deleted or renamed, so they can't keep matching.
+
+    Only when the folder itself exists: a missing folder (typo'd path,
+    unmounted drive) must not be read as "every image was deleted" and wipe
+    the cache.
+    """
+    if not os.path.isdir(image_dir):
+        return
+    stale = sorted(set(feature_db) - set(current_files))
+    if not stale:
+        return
+    for name in stale:
+        feature_db.pop(name, None)
+    _remove_cache_entries(_cache_path(image_dir), stale)
+    logger.info("Pruned %s stale cache entries from %s", len(stale), image_dir)
+
+
+def _drop_replaced(feature_db: dict[str, np.ndarray], disk: dict[str, Stamp | None], image_dir: str) -> None:
+    """Drop vectors whose image was replaced under the same name, so it is re-extracted.
+
+    A replaced image (e.g. re-downloaded with --force) no longer matches the
+    size/mtime recorded with its vector. Legacy rows without a stamp are
+    trusted and backfilled with the file's current stamp.
+    """
+    cache_file = _cache_path(image_dir)
+    stored = _load_stamps(cache_file)
+    changed = sorted(
+        f for f in disk
+        if f in feature_db and stored.get(f) is not None and stored[f] != disk[f]
+    )
+    if changed:
+        for name in changed:
+            feature_db.pop(name, None)
+        _remove_cache_entries(cache_file, changed)
+        logger.info("Re-extracting %s changed images in %s", len(changed), image_dir)
+    _save_stamps(cache_file, {
+        f: stamp for f in feature_db
+        if stored.get(f) is None and (stamp := disk.get(f)) is not None
+    })
+
+
+def _extract_chunk(
+    chunk: list[str], image_dir: str, extractor, pool: concurrent.futures.Executor
+) -> dict[str, np.ndarray]:
+    """Read one batch of images in parallel and extract their vectors in one call.
+
+    Returns {filename: vector} for the images that worked; unreadable images
+    and failed extractions are logged and left out.
+    """
+    readable = []
+    for filename, image in pool.map(lambda f: _read_image(f, image_dir), chunk):
+        if image is None:
+            logger.warning("Could not read image %s", filename)
+        else:
+            readable.append((filename, image))
+
+    vectors: dict[str, np.ndarray] = {}
+    extracted = extractor.extract_batch([image for _, image in readable]) if readable else []
+    for (filename, _), vector in zip(readable, extracted):
+        if vector is None:
+            logger.warning("Feature extraction failed for %s", filename)
+        else:
+            vectors[filename] = vector
+    return vectors
+
+
+def _extract_in_batches(
+    new_files: list[str],
+    image_dir: str,
+    extractor,
+    max_workers: int | None,
+    cancel_event: threading.Event | None,
+) -> Iterator[tuple[list[str], dict[str, np.ndarray]]]:
+    """Yield (filenames, {filename: vector}) for each batch of new images.
+
+    Stops before the next batch once cancel_event is set, so a cancelled
+    build keeps everything extracted so far.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for start in range(0, len(new_files), _BATCH_SIZE):
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("Build cancelled after %s/%s files in %s", start, len(new_files), image_dir)
+                return
+            chunk = new_files[start:start + _BATCH_SIZE]
+            yield chunk, _extract_chunk(chunk, image_dir, extractor, pool)
+
+
+def _save_cache(cache_file: str, feature_db: dict[str, np.ndarray], disk: dict[str, Stamp | None]) -> None:
+    """Write every vector, with its image's stamp, to the SQLite cache (errors are logged)."""
+    try:
+        _init_db(cache_file)
+        with sqlite3.connect(cache_file) as conn:
+            # Cast defensively: load_cache reads blobs as float32, so any
+            # other dtype here would corrupt the round-trip.
+            rows = []
+            for filename, vector in feature_db.items():
+                mtime_ns, size = disk.get(filename) or (None, None)
+                rows.append((filename, np.asarray(vector, dtype=np.float32).tobytes(), mtime_ns, size))
+            conn.executemany(
+                "INSERT OR REPLACE INTO features (filename, vector, mtime_ns, size) "
+                "VALUES (?, ?, ?, ?)",
+                rows,
+            )
+        logger.info("Saved %s entries to %s", len(feature_db), cache_file)
+    except (sqlite3.Error, OSError) as e:
+        logger.error("Error saving cache to %s: %s", cache_file, e)
+
+
 def build_feature_database(
     image_dir: str,
     progress_callback: Callable[[int, str | None], None] | None = None,
@@ -159,42 +269,13 @@ def build_feature_database(
     logger.info("Loaded %s cached entries from %s", len(feature_db), image_dir)
 
     current_files = list_image_files(image_dir)
-
-    # Prune cache entries for deleted/renamed images so they can't keep
-    # matching against cards that no longer exist. Only when the folder
-    # itself exists — a missing folder (typo'd path, unmounted drive)
-    # must not be read as "every image was deleted" and wipe the cache.
-    stale = sorted(set(feature_db) - set(current_files)) if os.path.isdir(image_dir) else []
-    if stale:
-        for name in stale:
-            feature_db.pop(name, None)
-        _remove_cache_entries(_cache_path(image_dir), stale)
-        logger.info("Pruned %s stale cache entries from %s", len(stale), image_dir)
-
-    # Re-extract images replaced under the same name (e.g. re-downloaded
-    # with --force): their recorded size/mtime no longer match the file.
-    # Legacy rows without a stamp are trusted and backfilled below.
-    cache_file = _cache_path(image_dir)
-    stored = _load_stamps(cache_file)
+    _prune_missing(feature_db, current_files, image_dir)
     disk = {f: _file_stamp(os.path.join(image_dir, f)) for f in current_files}
-    changed = sorted(
-        f for f in current_files
-        if f in feature_db and stored.get(f) is not None and stored[f] != disk[f]
-    )
-    if changed:
-        for name in changed:
-            feature_db.pop(name, None)
-        _remove_cache_entries(cache_file, changed)
-        logger.info("Re-extracting %s changed images in %s", len(changed), image_dir)
-    _save_stamps(cache_file, {
-        f: stamp for f in feature_db
-        if stored.get(f) is None and (stamp := disk.get(f)) is not None
-    })
+    _drop_replaced(feature_db, disk, image_dir)
 
     new_files = [f for f in current_files if f not in feature_db]
     total = len(new_files)
     logger.info("Processing %s new files in %s", total, image_dir)
-
     if total == 0:
         if progress_callback:
             progress_callback(100, None)
@@ -204,55 +285,16 @@ def build_feature_database(
         from lorebook.core.features import get_extractor  # lazy model-runtime import
         extractor = get_extractor()
 
-    successful = failed = done = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-        for start in range(0, total, _BATCH_SIZE):
-            if cancel_event is not None and cancel_event.is_set():
-                logger.info("Build cancelled after %s/%s files in %s", done, total, image_dir)
-                break
-            chunk = new_files[start:start + _BATCH_SIZE]
-            loaded = list(pool.map(lambda f: _read_image(f, image_dir), chunk))
+    extracted = done = 0
+    for chunk, vectors in _extract_in_batches(new_files, image_dir, extractor, max_workers, cancel_event):
+        feature_db.update(vectors)
+        extracted += len(vectors)
+        done += len(chunk)
+        if progress_callback:
+            progress_callback(int(done / total * 100), chunk[-1])
 
-            readable = []
-            for fname, img in loaded:
-                if img is None:
-                    failed += 1
-                    logger.warning("Could not read image %s", fname)
-                else:
-                    readable.append((fname, img))
-
-            vectors = extractor.extract_batch([img for _, img in readable]) if readable else []
-            for (fname, _), vec in zip(readable, vectors):
-                if vec is not None:
-                    feature_db[fname] = vec
-                    successful += 1
-                else:
-                    failed += 1
-                    logger.warning("Feature extraction failed for %s", fname)
-
-            done += len(chunk)
-            if progress_callback:
-                progress_callback(int(done / total * 100), chunk[-1])
-
-    try:
-        _init_db(cache_file)
-        with sqlite3.connect(cache_file) as conn:
-            # Cast defensively: load_cache reads blobs as float32, so any
-            # other dtype here would corrupt the round-trip.
-            rows = []
-            for k, v in feature_db.items():
-                m, sz = disk.get(k) or (None, None)
-                rows.append((k, np.asarray(v, dtype=np.float32).tobytes(), m, sz))
-            conn.executemany(
-                "INSERT OR REPLACE INTO features (filename, vector, mtime_ns, size) "
-                "VALUES (?, ?, ?, ?)",
-                rows,
-            )
-        logger.info("Saved %s entries to %s", len(feature_db), cache_file)
-    except (sqlite3.Error, OSError) as e:
-        logger.error("Error saving cache to %s: %s", cache_file, e)
-
-    logger.info("Build complete: %s ok, %s failed", successful, failed)
+    _save_cache(_cache_path(image_dir), feature_db, disk)
+    logger.info("Build complete: %s ok, %s failed", extracted, done - extracted)
     return feature_db
 
 
@@ -281,12 +323,14 @@ class GameDatabase:
     """
 
     def __init__(self, base: str = CARD_IMAGES_DIR):
+        """Create an empty database that loads games from folders under base."""
         self._base = base
         self.game: str | None = None
         self.vectors: dict[str, np.ndarray] = {}
         self.index = MatchIndex({})
 
     def __len__(self) -> int:
+        """Return the number of loaded reference vectors."""
         return len(self.vectors)
 
     def load(self, game: str) -> bool:

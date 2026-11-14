@@ -1,4 +1,4 @@
-# styles.py — Theme system: token palettes (dark/light) + Qt stylesheet generator.
+"""Theme system: token palettes (dark/light) + Qt stylesheet generator."""
 
 from string import Template
 

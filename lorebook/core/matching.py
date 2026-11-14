@@ -1,4 +1,4 @@
-# matching.py — Vector normalization and cosine-similarity matching.
+"""Vector normalization and cosine-similarity matching."""
 
 import logging
 
@@ -38,6 +38,7 @@ def cosine_score(a: np.ndarray, b: np.ndarray) -> float:
     Raises ValueError if either vector is not L2-normalized.
     """
     def _is_normalized(v: np.ndarray, tol: float = 1e-3) -> bool:
+        """Return True when v has unit length, within tol."""
         return bool(abs(np.linalg.norm(v) - 1.0) < tol)
 
     if not _is_normalized(a) or not _is_normalized(b):
@@ -84,6 +85,7 @@ class MatchIndex:
     """
 
     def __init__(self, feature_db: dict[str, np.ndarray]):
+        """Stack the usable vectors into one normalized matrix, skipping corrupt entries."""
         names: list[str] = []
         vectors: list[np.ndarray] = []
         dim: int | None = None
@@ -111,6 +113,7 @@ class MatchIndex:
         self._matrix = np.vstack(vectors) if vectors else np.empty((0, dim or 0), np.float32)
 
     def __len__(self) -> int:
+        """Return the number of indexed reference vectors."""
         return len(self._names)
 
     def find(self, input_features: np.ndarray, threshold: float = 0.70) -> list[tuple[str, float]]:

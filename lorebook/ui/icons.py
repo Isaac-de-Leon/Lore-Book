@@ -1,10 +1,11 @@
-# icons.py — crisp, theme-tintable SVG icons (no external assets or deps).
-#
-# Icons are 24x24 stroke outlines (Feather-style) embedded as SVG bodies and
-# rendered through QtSvg at several sizes, so they stay sharp on high-DPI
-# displays — unlike the unicode glyphs (▶ ■ ⚙) they replace. get_icon() tints
-# an icon with any color; pass checked_color to give a checkable button
-# (e.g. sidebar nav) a different tint in its checked state.
+"""Crisp, theme-tintable SVG icons (no external assets or deps).
+
+Icons are 24x24 stroke outlines (Feather-style) embedded as SVG bodies and
+rendered through QtSvg at several sizes, so they stay sharp on high-DPI
+displays — unlike the unicode glyphs (▶ ■ ⚙) they replace. get_icon() tints
+an icon with any color; pass checked_color to give a checkable button
+(e.g. sidebar nav) a different tint in its checked state.
+"""
 
 
 from PySide6.QtCore import QByteArray, Qt
@@ -85,6 +86,7 @@ _cache: dict[tuple[str, str, str | None], QIcon] = {}
 
 
 def _render(body: str, color: str, size: int) -> QPixmap:
+    """Render an icon's SVG body in one color onto a square transparent pixmap."""
     renderer = QSvgRenderer(QByteArray(_SVG.format(color=color, body=body).encode()))
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)

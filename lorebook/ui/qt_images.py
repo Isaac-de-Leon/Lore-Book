@@ -1,4 +1,4 @@
-# qt_images.py — render OpenCV BGR images onto Qt labels.
+"""Render OpenCV BGR images onto Qt labels."""
 
 import cv2
 import numpy as np

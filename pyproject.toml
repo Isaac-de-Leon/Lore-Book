@@ -80,12 +80,28 @@ line-length = 110
 # (no f-strings in log calls); I: sorted imports; BLE: no blind
 # `except Exception` — catch what can actually happen, or mark a real
 # boundary (worker thread, Qt callback, per-item batch loop, CLI top level)
-# with `# noqa: BLE001` and a reason. N: PEP 8 names.
-select = ["E4", "E7", "E9", "F", "UP", "G", "I", "BLE", "N"]
+# with `# noqa: BLE001` and a reason. N: PEP 8 names. C901/PLR09xx: keep
+# functions small enough to do one thing (complexity, branches, arguments,
+# statements) — split a function rather than raise a limit.
+select = ["E4", "E7", "E9", "F", "UP", "G", "I", "BLE", "N", "C901", "PLR0912", "PLR0913", "PLR0915", "D1"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pylint]
+# Six leaves room for a constructor's injected collaborators plus a config object.
+max-args = 6
 
 [tool.ruff.lint.per-file-ignores]
 # Qt event handlers and OpenCV stand-ins override camelCase methods.
 "lorebook/ui/*.py" = ["N802"]
 "tests/test_camera.py" = ["N802"]
+# One test walks a whole scenario step by step; length is not complexity there.
+"tests/*.py" = ["PLR0915", "D1"]
+# The hook is a tiny standalone script.
+".claude/hooks/*.py" = ["D1"]
 # TF env vars and warning filters must be set before the imports they affect.
 "lorebook/core/features.py" = ["E402"]

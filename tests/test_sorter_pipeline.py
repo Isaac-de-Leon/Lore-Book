@@ -11,7 +11,7 @@ import pytest
 # TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
 from lorebook.hardware.camera import CameraSource, MockCameraSource
 from lorebook.hardware.transport import MockTransport
-from lorebook.sorter.pipeline import SortPipeline
+from lorebook.sorter.pipeline import SortConfig, SortPipeline
 from lorebook.sorter.rules import Rule, SortRules
 
 
@@ -94,16 +94,19 @@ def _multi_bin_rules():
     )
 
 
-def _make_pipeline(camera, extractor, transport, *, rules=None, game="Lorcana", **kwargs):
+def _make_pipeline(camera, extractor, transport, *, rules=None, game="Lorcana", gate=None, **config):
     return SortPipeline(
         camera=camera,
         transport=transport,
         extractor=extractor,
         feature_db=FEATURE_DB,
-        rules=rules if rules is not None else _multi_bin_rules(),
-        game=game,
-        threshold=0.7,
-        **kwargs,
+        config=SortConfig(
+            rules=rules if rules is not None else _multi_bin_rules(),
+            game=game,
+            threshold=0.7,
+            **config,
+        ),
+        gate=gate,
     )
 
 

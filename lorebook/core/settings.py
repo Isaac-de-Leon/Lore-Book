@@ -1,13 +1,15 @@
-# settings.py — the app's persisted preferences (ui_settings.json), Qt-free.
-#
-# AppSettings is the single owner of what the settings are, their defaults,
-# how a file on disk is validated/migrated, and how it is saved (atomically).
-# The GUI edits a copy (SettingsWindow) and hands back the result; nothing
-# else reads or writes ui_settings.json.
+"""The app's persisted preferences (ui_settings.json), Qt-free.
+
+AppSettings is the single owner of what the settings are, their defaults,
+how a file on disk is validated/migrated, and how it is saved (atomically).
+The GUI edits a copy (SettingsWindow) and hands back the result; nothing
+else reads or writes ui_settings.json.
+"""
 
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields, replace
 from typing import Any
 
@@ -62,6 +64,7 @@ class AppSettings:
         return list(self.selected_sets.get(game.lower(), []))
 
     def copy(self) -> "AppSettings":
+        """Return an independent copy (the game and set maps are copied too)."""
         return replace(
             self,
             selected_games=dict(self.selected_games),
@@ -91,6 +94,7 @@ class AppSettings:
         return settings
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the settings as a plain dict, ready for JSON."""
         return asdict(self)
 
     @classmethod
@@ -119,6 +123,54 @@ class AppSettings:
             logger.error("Error saving settings: %s", e)
 
 
+def _fraction(value: Any, default: Any) -> float:
+    """Clamp a threshold to the 0.0–1.0 range."""
+    return max(0.0, min(1.0, float(value)))
+
+
+def _camera_index(value: Any, default: Any) -> int:
+    """Return a non-negative camera index."""
+    return max(0, int(value))
+
+
+def _selected_games(value: Any, default: Any) -> Any:
+    """Normalize the game map to {lowercased name: bool}; a non-mapping falls back to the default."""
+    if not isinstance(value, dict):
+        return default
+    return {str(k).lower(): bool(v) for k, v in value.items()}
+
+
+def _selected_sets(value: Any, default: Any) -> Any:
+    """Normalize the set filter to {lowercased game: [set codes]}, dropping non-list entries."""
+    if not isinstance(value, dict):
+        return default
+    return {str(k).lower(): [str(s) for s in v] for k, v in value.items() if isinstance(v, list)}
+
+
+def _currency(value: Any, default: Any) -> Any:
+    """Return the upper-cased currency code if it is supported, else the default."""
+    code = str(value).upper()
+    return code if code in SUPPORTED_CURRENCIES else default
+
+
+def _theme(value: Any, default: Any) -> Any:
+    """Return the lower-cased theme name if the UI ships it, else the default."""
+    name = str(value).lower()
+    return name if name in THEME_NAMES else default
+
+
+# Per-field (value, default) -> value normalizers; fields not listed are kept as loaded.
+_VALIDATORS: dict[str, Callable[[Any, Any], Any]] = {
+    "confidence_threshold": _fraction,
+    "foil_threshold": _fraction,
+    "camera_index": _camera_index,
+    "selected_games": _selected_games,
+    "selected_sets": _selected_sets,
+    "currency": _currency,
+    "theme": _theme,
+}
+
+
 def _coerce(name: str, value: Any, default: Any) -> Any:
     """Type-check one loaded value against its default; clamp/normalize it."""
     # bool before int: isinstance(True, int) is True.
@@ -126,22 +178,5 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
         return value if isinstance(value, bool) else default
     if isinstance(default, (int, float)) and (isinstance(value, bool) or not isinstance(value, (int, float))):
         return default
-    if name in ("confidence_threshold", "foil_threshold"):
-        return max(0.0, min(1.0, float(value)))
-    if name == "camera_index":
-        return max(0, int(value))
-    if name == "selected_games":
-        if not isinstance(value, dict):
-            return default
-        return {str(k).lower(): bool(v) for k, v in value.items()}
-    if name == "selected_sets":
-        if not isinstance(value, dict):
-            return default
-        return {str(k).lower(): [str(s) for s in v] for k, v in value.items() if isinstance(v, list)}
-    if name == "currency":
-        value = str(value).upper()
-        return value if value in SUPPORTED_CURRENCIES else default
-    if name == "theme":
-        value = str(value).lower()
-        return value if value in THEME_NAMES else default
-    return value
+    validator = _VALIDATORS.get(name)
+    return validator(value, default) if validator else value

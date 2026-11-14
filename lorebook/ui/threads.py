@@ -1,24 +1,25 @@
-# threads.py — one consistent way to run a worker QObject on its own QThread.
-#
-# Pattern (the one Qt recommends): a plain QObject worker is moved onto a
-# QThread; the GUI talks to it only through queued signals/slots, and the
-# worker talks back only through its own signals. Never put work in a QThread
-# subclass's run() and never touch a worker's attributes from the GUI thread
-# while it runs.
-#
-# The one subclass, _PythonThread, only runs the event loop from Python. On a
-# plain QThread, PySide creates a Python thread state for each slot call and
-# destroys it afterwards, which wipes threading.local between calls.
-# TensorFlow keeps its eager context in thread-locals, so a model loaded by
-# ScanWorker.warm_up crashed the next scan natively. Running exec() inside a
-# Python run() keeps one thread state for the thread's whole life.
-#
-# stop() asks the thread to finish (requestInterruption + quit) and waits.
-# A worker blocked in a long call (a network request, a camera open) can't
-# be interrupted mid-call, so stop() may time out; the app then exits without
-# destroying the still-running QThread (see lorebook.ui.app.main), which is
-# what would otherwise abort with "QThread: Destroyed while thread is still
-# running".
+"""One consistent way to run a worker QObject on its own QThread.
+
+Pattern (the one Qt recommends): a plain QObject worker is moved onto a
+QThread; the GUI talks to it only through queued signals/slots, and the
+worker talks back only through its own signals. Never put work in a QThread
+subclass's run() and never touch a worker's attributes from the GUI thread
+while it runs.
+
+The one subclass, _PythonThread, only runs the event loop from Python. On a
+plain QThread, PySide creates a Python thread state for each slot call and
+destroys it afterwards, which wipes threading.local between calls.
+TensorFlow keeps its eager context in thread-locals, so a model loaded by
+ScanWorker.warm_up crashed the next scan natively. Running exec() inside a
+Python run() keeps one thread state for the thread's whole life.
+
+stop() asks the thread to finish (requestInterruption + quit) and waits.
+A worker blocked in a long call (a network request, a camera open) can't
+be interrupted mid-call, so stop() may time out; the app then exits without
+destroying the still-running QThread (see lorebook.ui.app.main), which is
+what would otherwise abort with "QThread: Destroyed while thread is still
+running".
+"""
 
 import logging
 from typing import Generic, TypeVar
@@ -34,6 +35,7 @@ class _PythonThread(QThread):
     """A QThread whose event loop runs inside a Python frame (see top of file)."""
 
     def run(self) -> None:
+        """Run the thread's event loop from Python so thread-local state survives between slots."""
         self.exec()
 
 
@@ -41,6 +43,7 @@ class WorkerThread(Generic[W]):
     """Owns one QThread and the worker QObject that lives on it."""
 
     def __init__(self, worker: W, name: str):
+        """Create the thread, name it, and move the worker onto it (not started yet)."""
         self.worker = worker
         self.thread = _PythonThread()
         self.thread.setObjectName(name)
@@ -48,13 +51,16 @@ class WorkerThread(Generic[W]):
 
     @property
     def name(self) -> str:
+        """Return the thread's name, as shown in logs."""
         return self.thread.objectName()
 
     def start(self) -> None:
+        """Start the thread's event loop if it is not already running."""
         if not self.thread.isRunning():
             self.thread.start()
 
     def is_running(self) -> bool:
+        """Return True while the thread's event loop is running."""
         return self.thread.isRunning()
 
     def stop(self, timeout_ms: int = 3000) -> bool:

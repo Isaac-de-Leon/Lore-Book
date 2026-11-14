@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-# fetch_card_prices.py — CLI for downloading card market prices.
-#
-# Thin wrapper around lorebook.core.price_fetcher, which the GUI also calls
-# automatically whenever card_prices_<Game>.json is missing or older than a
-# day. Prices are TCGplayer-sourced USD values (display only — never written
-# to the collection CSV); currency_rates.json holds the daily USD exchange
-# rates used for non-USD display.
-#
-#   python scripts/fetch_card_prices.py --game Lorcana
-#   python scripts/fetch_card_prices.py --game Lorcana --skip-rates
+"""CLI for downloading card market prices.
+
+Thin wrapper around lorebook.core.price_fetcher, which the GUI also calls
+automatically whenever card_prices_<Game>.json is missing or older than a
+day. Prices are TCGplayer-sourced USD values (display only — never written
+to the collection CSV); currency_rates.json holds the daily USD exchange
+rates used for non-USD display.
+
+  python scripts/fetch_card_prices.py --game Lorcana
+  python scripts/fetch_card_prices.py --game Lorcana --skip-rates
+"""
 
 import argparse
 import os
@@ -30,6 +31,7 @@ except ImportError:  # running from a checkout without `pip install -e .`
 
 
 def main(argv=None) -> int:
+    """Parse arguments, download prices and exchange rates, and return the exit code."""
     p = argparse.ArgumentParser(description="Download card market prices → card_prices_<Game>.json.")
     p.add_argument("--game", default="Lorcana", help="Game folder name (default: Lorcana).")
     p.add_argument("--url", help="Override the price API base URL.")

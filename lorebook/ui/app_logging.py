@@ -1,4 +1,4 @@
-# app_logging.py — application-wide logging and crash diagnostics.
+"""Application-wide logging and crash diagnostics."""
 
 import faulthandler
 import logging
@@ -55,6 +55,7 @@ def setup_logging(log_file: str = "card_scanner.log") -> None:
     # Uncaught Python exceptions land in the main log too (PySide6 prints
     # them to stderr, which is invisible when launched outside a terminal).
     def _log_excepthook(exc_type, exc, tb):
+        """Log an uncaught exception, then hand it to Python's default hook."""
         logger.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
         sys.__excepthook__(exc_type, exc, tb)
 
@@ -75,6 +76,7 @@ class GuiStallWatchdog:
     """
 
     def __init__(self, parent, stall_seconds: float = 8.0) -> None:
+        """Open the dump file and start re-arming the stall timer every second."""
         from PySide6.QtCore import QTimer
 
         self._stall = stall_seconds
@@ -88,9 +90,11 @@ class GuiStallWatchdog:
         self._rearm()
 
     def _rearm(self) -> None:
+        """Push the stack-dump deadline stall_seconds into the future."""
         faulthandler.cancel_dump_traceback_later()
         faulthandler.dump_traceback_later(self._stall, repeat=False, file=self._file)
 
     def stop(self) -> None:
+        """Stop the watchdog so a deliberate wait is not reported as a hang."""
         self._timer.stop()
         faulthandler.cancel_dump_traceback_later()

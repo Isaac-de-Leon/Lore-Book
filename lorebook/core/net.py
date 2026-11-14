@@ -1,9 +1,10 @@
-# net.py — the one place the app talks HTTP (card lists, prices, images).
-#
-# A single User-Agent (some CDNs, e.g. Ravensburger's image host, 403 an
-# empty urllib agent), explicit timeouts, and one retry policy: transient
-# failures (timeouts, connection drops, 408/429, 5xx) are retried with
-# back-off; other 4xx answers are final.
+"""The one place the app talks HTTP (card lists, prices, images).
+
+A single User-Agent (some CDNs, e.g. Ravensburger's image host, 403 an
+empty urllib agent), explicit timeouts, and one retry policy: transient
+failures (timeouts, connection drops, 408/429, 5xx) are retried with
+back-off; other 4xx answers are final.
+"""
 
 import json
 import logging
@@ -18,6 +19,7 @@ USER_AGENT = "Lore-Book/1.0 (personal card-collection tool)"
 
 
 def _request(url: str, headers: dict | None = None) -> urllib.request.Request:
+    """Build a GET request carrying the app's User-Agent plus any extra headers."""
     return urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
 
 

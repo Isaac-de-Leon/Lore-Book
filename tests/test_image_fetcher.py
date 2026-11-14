@@ -10,6 +10,7 @@ from lorebook.core import image_fetcher, net
 from lorebook.core.image_fetcher import (
     RIFTBOUND_FALLBACK_URL,
     RIFTBOUND_RIOT_URL,
+    FetchOptions,
     FetchStats,
     _fetch_riftbound,
     _norm,
@@ -322,13 +323,16 @@ def test_download_new_images(tmp_path, monkeypatch):
     monkeypatch.setitem(image_fetcher.GAMES, "lorcana", ("stub://cards", lambda url: data, lorcana_targets))
     monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: jpg)
 
-    def run(sub, **kw):
+    def run(sub, progress_callback=None, cancel_event=None, **options):
         out = tmp_path / sub
         out.mkdir()
-        kw.setdefault("sets", ["009"])  # set filter is padding-insensitive
-        return out, download_new_images("Lorcana", out_dir=str(out), delay=0, **kw)
+        options.setdefault("sets", ["009"])  # set filter is padding-insensitive
+        return out, download_new_images(
+            "Lorcana", FetchOptions(out_dir=str(out), delay=0, **options),
+            progress_callback=progress_callback, cancel_event=cancel_event,
+        )
 
-    assert download_new_images("NotAGame", out_dir=str(tmp_path)) is None
+    assert download_new_images("NotAGame", FetchOptions(out_dir=str(tmp_path))) is None
 
     out, stats = run("webp")
     assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
@@ -342,10 +346,10 @@ def test_download_new_images(tmp_path, monkeypatch):
     out = tmp_path / "existing"
     out.mkdir()
     (out / "009-041.webp").write_bytes(b"already here")
-    stats = download_new_images("Lorcana", out_dir=str(out), sets=["9"], delay=0)
+    stats = download_new_images("Lorcana", FetchOptions(out_dir=str(out), sets=["9"], delay=0))
     assert stats == FetchStats(downloaded=1, skipped=1, failed=0)
     assert (out / "009-041.webp").read_bytes() == b"already here"
-    stats = download_new_images("Lorcana", out_dir=str(out), sets=["9"], force=True, delay=0)
+    stats = download_new_images("Lorcana", FetchOptions(out_dir=str(out), sets=["9"], force=True, delay=0))
     assert stats.downloaded == 2
     assert (out / "009-041.webp").read_bytes() != b"already here"
 
@@ -385,7 +389,7 @@ def test_download_new_images(tmp_path, monkeypatch):
     out.mkdir()
     (out / "009-041.webp").write_bytes(b"")
     (out / "009-042.webp.part").write_bytes(b"half")
-    stats = download_new_images("Lorcana", out_dir=str(out), sets=["9"], delay=0)
+    stats = download_new_images("Lorcana", FetchOptions(out_dir=str(out), sets=["9"], delay=0))
     assert stats.downloaded == 2
     assert sorted(p.name for p in out.iterdir()) == ["009-041.webp", "009-042.webp"]
     assert (out / "009-041.webp").stat().st_size > 0
@@ -414,7 +418,7 @@ def test_download_new_images(tmp_path, monkeypatch):
     monkeypatch.setitem(image_fetcher.GAMES, "riftbound", ("stub://cards", lambda url: rift, riftbound_targets))
     monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: jpg)
     out = tmp_path / "rift"
-    stats = download_new_images("Riftbound", out_dir=str(out), delay=0)
+    stats = download_new_images("Riftbound", FetchOptions(out_dir=str(out), delay=0))
     assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
     assert sorted(p.name for p in out.iterdir()) == ["OGN-001.webp", "OGN-23c.webp"]
 

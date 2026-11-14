@@ -19,6 +19,7 @@ except ImportError:  # running from a checkout without `pip install -e .`
 
 
 def main() -> None:
+    """Export the keras feature model to a .tflite file."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output", default=_default_tflite_model_path(), help="Output .tflite path."

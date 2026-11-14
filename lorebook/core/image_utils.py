@@ -1,4 +1,4 @@
-# image_utils.py — Image validation and foil detection utilities.
+"""Image validation and foil detection utilities."""
 
 import logging
 from typing import overload
@@ -95,6 +95,7 @@ class MotionGate:
 
     def __init__(self, steady_frames: int = 10, diff_threshold: float = 4.0,
                  min_std: float = 0.0):
+        """Set how long a card must sit still and how much change counts as motion."""
         self.steady_frames = max(1, steady_frames)
         self.diff_threshold = diff_threshold
         self.min_std = min_std
@@ -103,6 +104,7 @@ class MotionGate:
         self._armed = False  # motion must be seen before a trigger
 
     def reset(self) -> None:
+        """Forget the previous frame and disarm, as if no frame had been seen."""
         self._prev, self._steady, self._armed = None, 0, False
 
     def update(self, gray: np.ndarray | None) -> bool:

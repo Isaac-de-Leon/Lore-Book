@@ -24,6 +24,7 @@ MIN_COSINE = 0.99
 
 
 def main() -> int:
+    """Compare the keras and tflite vectors for each image; return 0 when they all agree."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("images", nargs="+", help="Card images to compare across backends.")
     parser.add_argument("--min-cosine", type=float, default=MIN_COSINE)

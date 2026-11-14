@@ -1,4 +1,4 @@
-# main_window.py — MainWindow: app shell that wires settings, data and workers to the pages.
+"""MainWindow: app shell that wires settings, data and workers to the pages."""
 
 import logging
 import os
@@ -81,6 +81,7 @@ class MainWindow(QWidget):
     build_requested = Signal(object, object)                   # game folders, cancel Event
 
     def __init__(self) -> None:
+        """Load settings, build the UI, start the workers and queue the startup database build."""
         super().__init__()
         self.setWindowTitle(f"Lore Book v{__version__}")
         self.resize(1000, 840)
@@ -116,8 +117,31 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ layout
 
     def _build_ui(self) -> None:
-        title_label = QLabel("LORE BOOK")
-        title_label.setObjectName("appTitle")
+        """Create the shell: sidebar on the left, header and pages on the right."""
+        self._build_header_widgets()
+        self._build_nav_buttons()
+        self._build_pages()
+
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(self._title_label)
+        top.addStretch()
+        top.addWidget(self.camera_btn)
+        content = QVBoxLayout()
+        content.setContentsMargins(16, 12, 16, 12)
+        content.setSpacing(8)
+        content.addLayout(top)
+        content.addWidget(self.stack, stretch=1)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._build_sidebar())
+        root.addLayout(content, stretch=1)
+
+    def _build_header_widgets(self) -> None:
+        """Create the title, the camera toggle and the sidebar logo."""
+        self._title_label = QLabel("LORE BOOK")
+        self._title_label.setObjectName("appTitle")
         # One smart camera toggle; label/icon/style track _camera_state.
         self.camera_btn = QPushButton("Start")
         self.camera_btn.setObjectName("cameraBtn")
@@ -129,7 +153,11 @@ class MainWindow(QWidget):
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.logo_label.setToolTip("Lore Book")
 
+    def _build_nav_buttons(self) -> None:
+        """Create the sidebar buttons: Scanner and Collection pages, and Settings."""
+
         def nav_button(tooltip: str, checkable: bool = False) -> QPushButton:
+            """Return an icon-only sidebar button."""
             btn = QPushButton()
             btn.setObjectName("navBtn")
             btn.setIconSize(QSize(22, 22))
@@ -145,6 +173,8 @@ class MainWindow(QWidget):
         self.settings_btn = nav_button("Settings")
         self.settings_btn.clicked.connect(self.open_settings)
 
+    def _build_pages(self) -> None:
+        """Create the Scanner and Collection pages and wire them to each other and the nav."""
         self.scanner = ScannerView(self.settings)
         self.scanner.scan_requested.connect(self.request_scan)
         self.collection_view = CollectionView(initial_game=self.get_active_game())
@@ -162,6 +192,8 @@ class MainWindow(QWidget):
         nav_group.addButton(self.nav_collection_btn, 1)
         nav_group.idClicked.connect(self.stack.setCurrentIndex)
 
+    def _build_sidebar(self) -> QFrame:
+        """Return the sidebar: logo, page buttons, and Settings at the bottom."""
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(64)
@@ -174,24 +206,10 @@ class MainWindow(QWidget):
         side.addWidget(self.nav_collection_btn, 0, Qt.AlignmentFlag.AlignHCenter)
         side.addStretch(1)
         side.addWidget(self.settings_btn, 0, Qt.AlignmentFlag.AlignHCenter)
-
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        top.addWidget(title_label)
-        top.addStretch()
-        top.addWidget(self.camera_btn)
-        content = QVBoxLayout()
-        content.setContentsMargins(16, 12, 16, 12)
-        content.setSpacing(8)
-        content.addLayout(top)
-        content.addWidget(self.stack, stretch=1)
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(sidebar)
-        root.addLayout(content, stretch=1)
+        return sidebar
 
     def _start_workers(self) -> None:
+        """Create the three worker threads, connect their signals and start them."""
         self._camera = WorkerThread(CameraWorker(), "lorebook-camera")
         self._scan = WorkerThread(ScanWorker(), "lorebook-scan")
         self._build = WorkerThread(BuildWorker(), "lorebook-build")
@@ -221,6 +239,7 @@ class MainWindow(QWidget):
             worker.start()
 
     def _workers(self) -> list[WorkerThread]:
+        """Return the camera, scan and build worker threads."""
         return [self._camera, self._scan, self._build]
 
     # ------------------------------------------------------------------ theme / scale
@@ -240,6 +259,7 @@ class MainWindow(QWidget):
         self.scanner.apply_scale(self.height())
 
     def resizeEvent(self, event) -> None:
+        """Rescale the Scanner page's fixed-size controls to the new window height."""
         self.scanner.apply_scale(self.height())
         super().resizeEvent(event)
 
@@ -250,12 +270,14 @@ class MainWindow(QWidget):
         return self.settings.active_game()
 
     def _make_settings_dialog(self) -> SettingsWindow:
+        """Return a Settings dialog wired to apply settings and request rebuilds."""
         dlg = SettingsWindow(self.settings, self)
         dlg.applied.connect(self._apply_settings)
         dlg.rebuild_requested.connect(self._rebuild_database)
         return dlg
 
     def open_settings(self) -> None:
+        """Show the Settings dialog and wait until it closes."""
         self._make_settings_dialog().exec()
 
     def _apply_settings(self, new: AppSettings) -> None:
@@ -266,11 +288,13 @@ class MainWindow(QWidget):
         self.scanner.apply_settings(new)
 
     def save_settings(self) -> None:
+        """Write the current settings to ui_settings.json."""
         self.settings.save()
 
     # ------------------------------------------------------------------ shutdown
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        """Save settings, release the camera and stop the workers before the window closes."""
         self.save_settings()
         # Release the camera, stop a running build at its next safe point
         # (downloads and cache writes are atomic), drop any in-flight scan.
@@ -331,18 +355,22 @@ class MainWindow(QWidget):
         self.build_requested.emit(folders, self._build_cancel_event)
 
     def _cancel_db_build(self) -> None:
+        """Ask the running database build to stop at its next safe point."""
         logger.info("Database build cancel requested")
         self._build_cancel_event.set()  # thread-safe; read by the build job
 
     def _on_build_status(self, text: str) -> None:
+        """Show the build's latest status line in the progress dialog."""
         if self._progress_dialog is not None:
             self._progress_dialog.set_status(text)
 
     def _on_build_progress(self, pct: int) -> None:
+        """Move the progress bar to the build's latest percentage."""
         if self._progress_dialog is not None:
             self._progress_dialog.set_progress(pct)
 
     def _on_build_done(self, report: BuildReport) -> None:
+        """Hide the progress dialog, report how the build ended and reload stale data."""
         self._build_running = False
         if self._progress_dialog is not None:
             self._progress_dialog.hide()
@@ -399,6 +427,7 @@ class MainWindow(QWidget):
         self._show_camera_stopped()
 
     def _show_camera_stopped(self) -> None:
+        """Reset the camera state and the preview to their stopped appearance."""
         self.watchdog.stop()
         self.last_frame = None
         self.last_frame_time = None
@@ -406,6 +435,7 @@ class MainWindow(QWidget):
         self.scanner.show_camera_message("Camera stopped")
 
     def _on_camera_state(self, state: str) -> None:
+        """Follow the camera worker's state: start the watchdog on running, reset on idle."""
         if state == "running":
             self.last_frame_time = time.monotonic()
             self.watchdog.start()
@@ -417,10 +447,12 @@ class MainWindow(QWidget):
             self._set_camera_state(state)
 
     def _on_camera_failed(self, message: str) -> None:
+        """Reset the camera UI and tell the user why the camera failed."""
         self._show_camera_stopped()
         QMessageBox.warning(self, "Camera Error", f"{message}\n\nTry a different camera index in Settings.")
 
     def _watchdog_tick(self) -> None:
+        """Stop the camera if no frame has arrived for three seconds."""
         if self.last_frame_time is not None and (time.monotonic() - self.last_frame_time) > 3.0:
             self.stop_camera()
             self._on_camera_failed("No frames received for 3 seconds. Camera stopped.")
@@ -450,6 +482,7 @@ class MainWindow(QWidget):
             self._camera.worker.frame_consumed()  # ready for the next frame
 
     def _on_heatmap(self, image: np.ndarray) -> None:
+        """Keep the latest debug heatmap and allow the next one to be requested."""
         self._heatmap_pending = False
         self._last_heatmap = image if self.settings.debug_mode else None
 
@@ -476,6 +509,7 @@ class MainWindow(QWidget):
         self.scan_job_requested.emit(self._scan_token, img, self.settings.confidence_threshold, game)
 
     def _on_scan_done(self, token: int, result: ScanResult) -> None:
+        """Show the scan worker's result, unless a newer scan has replaced it."""
         if token != self._scan_token:
             return  # superseded (or the window is closing)
         self._scan_busy = False
@@ -502,14 +536,17 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ pages / keyboard
 
     def _on_page_changed(self, index: int) -> None:
+        """Reload the collection table when its page is shown."""
         if self.stack.widget(index) is self.collection_view:
             self.collection_view.refresh()
 
     def focusInEvent(self, event) -> None:
+        """Keep keyboard focus on the window so the scan shortcuts keep working."""
         self.setFocus()
         super().focusInEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Route key presses to the Scanner page's shortcuts while that page is showing."""
         # Scan shortcuts are Scanner-page-only: browsing the collection table
         # must not trigger captures or foil toggles.
         if self.stack.currentWidget() is self.scanner and self.scanner.handle_key(event):

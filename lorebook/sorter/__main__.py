@@ -1,10 +1,11 @@
-# __main__.py — `python -m lorebook.sorter` headless sorter runner.
-#
-# Wires a camera source (live or a folder of images), a MockTransport, the
-# pluggable feature extractor, the per-game feature cache, and a rules config
-# into a SortPipeline, then runs the loop. Motion is always mocked here — this
-# is the dry-run / bring-up entry point that proves the software loop before
-# any sorting mechanism exists.
+"""`python -m lorebook.sorter` headless sorter runner.
+
+Wires a camera source (live or a folder of images), a MockTransport, the
+pluggable feature extractor, the per-game feature cache, and a rules config
+into a SortPipeline, then runs the loop. Motion is always mocked here — this
+is the dry-run / bring-up entry point that proves the software loop before
+any sorting mechanism exists.
+"""
 
 import argparse
 import logging
@@ -17,11 +18,12 @@ from lorebook.core.game_types import CARD_IMAGES_DIR
 from lorebook.core.image_utils import card_motion_gate
 from lorebook.hardware.camera import CameraSource, MockCameraSource, OpenCVCameraSource
 from lorebook.hardware.transport import MockTransport
-from lorebook.sorter.pipeline import SortPipeline
+from lorebook.sorter.pipeline import SortConfig, SortPipeline
 from lorebook.sorter.rules import SortRules, load_rules
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    """Return the argument parser for the headless sorter."""
     p = argparse.ArgumentParser(
         prog="python -m lorebook.sorter",
         description="Headless card sorter: capture → match → decide bin → (mock) route.",
@@ -56,6 +58,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    """Run the sorter from command-line arguments and return the process exit code."""
     args = build_arg_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     log = logging.getLogger("lorebook.sorter")
@@ -117,12 +120,14 @@ def main(argv=None) -> int:
         transport=transport,
         extractor=extractor,
         feature_db=feature_db,
-        rules=rules,
-        game=args.game,
-        threshold=args.threshold,
-        foil_threshold=args.foil_threshold,
-        dry_run=args.dry_run,
-        crop_to_focus=crop_to_focus,
+        config=SortConfig(
+            rules=rules,
+            game=args.game,
+            threshold=args.threshold,
+            foil_threshold=args.foil_threshold,
+            dry_run=args.dry_run,
+            crop_to_focus=crop_to_focus,
+        ),
         gate=gate,
     )
 

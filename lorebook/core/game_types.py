@@ -1,4 +1,4 @@
-# game_types.py — Game type enum, detection, and shared constants.
+"""Game type enum, detection, and shared constants."""
 
 import os
 from collections.abc import Iterable
@@ -14,6 +14,8 @@ RIFTBOUND_CSV = "RiftboundList.csv"
 
 
 class GameType(Enum):
+    """The games with built-in rules (foil-only cards, legacy CSV names); anything else is UNKNOWN."""
+
     LORCANA = "lorcana"
     RIFTBOUND = "riftbound"
     UNKNOWN = "unknown"

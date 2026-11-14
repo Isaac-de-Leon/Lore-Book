@@ -1,10 +1,11 @@
-# rules.py — configurable multi-bin sort-decision engine (pure, no hardware).
-#
-# A SortRules config is an ordered list of Rule conditions plus a fallthrough
-# reject_bin. decide_bin() returns the bin for the first rule whose every
-# *present* condition matches the card; if none match, the reject_bin. This is
-# multi-bin by construction — a two-way keep/reject sorter or a foil/normal
-# split are just smaller rule sets of the same engine.
+"""Configurable multi-bin sort-decision engine (pure, no hardware).
+
+A SortRules config is an ordered list of Rule conditions plus a fallthrough
+reject_bin. decide_bin() returns the bin for the first rule whose every
+*present* condition matches the card; if none match, the reject_bin. This is
+multi-bin by construction — a two-way keep/reject sorter or a foil/normal
+split are just smaller rule sets of the same engine.
+"""
 
 import json
 import logging
@@ -34,6 +35,7 @@ class Rule:
     min_confidence: float | None = None
 
     def matches(self, *, game: str, set_code: str, is_foil: bool, confidence: float) -> bool:
+        """Return True when every condition this rule sets matches the card."""
         if self.game is not None and self.game.lower() != (game or "").lower():
             return False
         if self.set_code is not None and self.set_code != set_code:
@@ -57,6 +59,7 @@ _RULE_FIELDS = {"bin", "game", "set_code", "foil", "min_confidence"}
 
 
 def _rule_from_dict(d: dict) -> Rule:
+    """Build a Rule from one JSON object, rejecting missing, unknown or mistyped fields."""
     if "bin" not in d:
         raise ValueError(f"rule is missing required 'bin' field: {d!r}")
 

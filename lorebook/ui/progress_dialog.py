@@ -1,4 +1,4 @@
-# progress_dialog.py — modeless popup showing DB build progress with a Cancel button.
+"""Modeless popup showing DB build progress with a Cancel button."""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -24,6 +24,7 @@ class BuildProgressDialog(QDialog):
     cancel_requested = Signal()
 
     def __init__(self, parent=None):
+        """Build the status line, progress bar and Cancel button."""
         super().__init__(parent)
         self.setWindowTitle("Building Card Database")
         # Stylesheet is inherited from the parent MainWindow (matches theme).
@@ -60,6 +61,7 @@ class BuildProgressDialog(QDialog):
     # ------------------------------------------------------------------ API
 
     def set_status(self, text: str) -> None:
+        """Show a status line, unless the dialog is already showing 'Cancelling…'."""
         if not self._cancelling:
             self.status_label.setText(text)
 
@@ -74,6 +76,7 @@ class BuildProgressDialog(QDialog):
         self.bar.setValue(min(pct, 100))
 
     def reset_for_new_build(self) -> None:
+        """Return the dialog to its initial state for a new build."""
         self._cancelling = False
         self.cancel_btn.setEnabled(True)
         self.bar.setRange(0, 100)
@@ -81,6 +84,7 @@ class BuildProgressDialog(QDialog):
         self.status_label.setText("Preparing…")
 
     def enter_cancelling_state(self) -> None:
+        """Disable Cancel and show 'Cancelling…' until the build stops."""
         self._cancelling = True
         self.cancel_btn.setEnabled(False)
         self.status_label.setText("Cancelling…")
@@ -88,12 +92,14 @@ class BuildProgressDialog(QDialog):
     # ------------------------------------------------------------------ events
 
     def _on_cancel_clicked(self) -> None:
+        """Request cancellation and stay open until the build has stopped."""
         # Don't close: the worker needs up to one batch/image/request to
         # unwind. MainWindow hides the dialog when build_done arrives.
         self.enter_cancelling_state()
         self.cancel_requested.emit()
 
     def closeEvent(self, event) -> None:
+        """Treat closing the dialog as Cancel, then let it close."""
         # Closing the only progress surface means cancel (QProgressDialog
         # convention); the hide is allowed so the user isn't trapped.
         if not self._cancelling:
@@ -102,6 +108,7 @@ class BuildProgressDialog(QDialog):
         super().closeEvent(event)
 
     def reject(self) -> None:  # Esc key
+        """Treat Esc as Cancel, then hide the dialog."""
         if not self._cancelling:
             self.enter_cancelling_state()
             self.cancel_requested.emit()

@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-# fetch_card_names.py — download card names and write card_names_<Game>.json.
-#
-# The output ({"<set>-<number>": "Card Name"}) is display-only data read by
-# lorebook.core.card_names; it is gitignored and safe to delete/regenerate.
-# Run once per game, and again when new sets release:
-#
-#   python scripts/fetch_card_names.py --game Lorcana
-#   python scripts/fetch_card_names.py --game Riftbound
-#
-# Sources (community-maintained; override with --url if a format changes):
-#   Lorcana   — LorcanaJSON bulk data   https://lorcanajson.org
-#   Riftbound — the same sources and numbering as the card images
-#               (lorebook.core.image_fetcher), so names always match filenames
+"""Download card names and write card_names_<Game>.json.
+
+The output ({"<set>-<number>": "Card Name"}) is display-only data read by
+lorebook.core.card_names; it is gitignored and safe to delete/regenerate.
+Run once per game, and again when new sets release:
+
+  python scripts/fetch_card_names.py --game Lorcana
+  python scripts/fetch_card_names.py --game Riftbound
+
+Sources (community-maintained; override with --url if a format changes):
+  Lorcana   — LorcanaJSON bulk data   https://lorcanajson.org
+  Riftbound — the same sources and numbering as the card images
+              (lorebook.core.image_fetcher), so names always match filenames
+"""
 
 import argparse
 import json
@@ -83,6 +84,7 @@ GAMES = {
 
 
 def main(argv=None) -> int:
+    """Parse arguments, download the game's card names, and return the exit code."""
     p = argparse.ArgumentParser(description="Fetch card names into card_names_<Game>.json.")
     p.add_argument("--game", required=True, help="Lorcana or Riftbound.")
     p.add_argument("--url", help="Override the source URL (e.g. a mirror or newer endpoint).")

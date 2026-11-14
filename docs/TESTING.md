@@ -188,3 +188,24 @@ Behaviour shouldn't change: this was renames only, plus the build/match command 
       name, Add shows the green "Added 1× …" message on the right, and Undo removes it again.
 - [ ] Settings: every game lists its sets, Apply keeps the selection, and Rebuild Database runs.
 - [ ] Auto-scan on: placing a card triggers exactly one scan.
+
+## Long functions split (no behaviour change)
+
+The cache build, the refresh-and-build job, the image downloader, the CSV batch update, the
+sorter loop and the three window builders were split into smaller functions. Offscreen renders of
+the Scanner, Collection, Settings and match views are pixel-identical before and after, but a real
+camera and a real build were not exercised.
+
+- [ ] `python UI.py` with a new image dropped into `Card_Images/Lorcana/`: the progress dialog
+      counts up, ends with "All databases ready. Scan a card to begin.", and the new card scans.
+- [ ] Press Cancel during a Rebuild Database: the dialog shows "Cancelling…", then the status line
+      reads "Database build cancelled." Rebuild again and it resumes rather than starting over.
+- [ ] Unplug the network and Rebuild Database: the build still finishes (warnings in
+      `logs/card_scanner.log`, no error dialog).
+- [ ] Settings: all rows are present in the same order as before (Theme, Camera, the four
+      checkboxes, both thresholds, Price currency, Debug mode, Filter Sets), and Apply works.
+- [ ] Scan, then Add with Foil ticked and count 2: the CSV row gains 2 foil; Undo removes them.
+- [ ] `python scripts/fetch_card_images.py --game Lorcana --set 1 --dry-run` lists what it would
+      fetch and writes nothing.
+- [ ] `python -m lorebook.sorter --game Lorcana --source Card_Images/Lorcana --max-cards 5`
+      logs five `card=… → bin=…` lines and the per-bin totals.
