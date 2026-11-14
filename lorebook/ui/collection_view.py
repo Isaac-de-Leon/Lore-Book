@@ -25,6 +25,8 @@ from lorebook.core.game_types import csv_for_game
 from lorebook.core.image_fetcher import selectable_games
 from lorebook.ui.icons import get_icon
 
+logger = logging.getLogger(__name__)
+
 _COLUMNS = ["Set", "Card", "Variant", "Count", "Name"]
 
 
@@ -39,7 +41,6 @@ class CollectionView(QWidget):
 
     def __init__(self, initial_game: str | None = None, parent=None):
         super().__init__(parent)
-        self.logger = logging.getLogger(__name__)
 
         # Toolbar row
         self.game_combo = QComboBox()
@@ -112,7 +113,7 @@ class CollectionView(QWidget):
         try:
             rows = read_collection_rows(game, strict=True) if game else []
         except CsvReadError as e:
-            self.logger.error(str(e))
+            logger.error(str(e))
             self.table.setRowCount(0)
             self.summary_label.setText(f"Couldn't read {csv_for_game(game)} — check the file.")
             return
@@ -160,10 +161,10 @@ class CollectionView(QWidget):
         try:
             shutil.copyfile(source, dest)
             self.summary_label.setText(f"Exported to {dest}")
-            self.logger.info("Exported %s to %s", source, dest)
+            logger.info("Exported %s to %s", source, dest)
         except OSError as e:
             self.summary_label.setText(f"Export failed: {e}")
-            self.logger.error("Error exporting %s to %s: %s", source, dest, e)
+            logger.error("Error exporting %s to %s: %s", source, dest, e)
 
     def _clear_csv(self) -> None:
         """Empty the selected game's collection CSV after an explicit confirm."""
@@ -190,7 +191,7 @@ class CollectionView(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
         clear_collection(game)
-        self.logger.info("Cleared collection CSV for %s", game)
+        logger.info("Cleared collection CSV for %s", game)
         # The scanner's single-level Undo now points at rows that no longer
         # exist — whoever owns it should disable it.
         self.cleared.emit(game)

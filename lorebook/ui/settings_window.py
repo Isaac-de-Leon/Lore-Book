@@ -24,12 +24,14 @@ from PySide6.QtWidgets import (
 from lorebook.core.card_prices import SUPPORTED_CURRENCIES
 from lorebook.core.csv_manager import get_available_sets
 from lorebook.core.game_types import (
-    BASE_DATABASE_PATH,
+    CARD_IMAGES_DIR,
     sets_to_display,
     sets_to_store,
 )
 from lorebook.core.image_fetcher import GAMES, selectable_games
 from lorebook.core.settings import AppSettings
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsWindow(QDialog):
@@ -43,8 +45,6 @@ class SettingsWindow(QDialog):
     touches its parent's state directly.
     """
 
-    logger = logging.getLogger("SettingsWindow")
-
     applied = Signal(object)        # AppSettings
     rebuild_requested = Signal()
 
@@ -57,7 +57,7 @@ class SettingsWindow(QDialog):
         self.setMinimumWidth(390)
         # Stylesheet is inherited from the parent MainWindow, so the dialog
         # always matches the active theme.
-        self.logger.info("Initializing settings window")
+        logger.info("Initializing settings window")
 
         layout = QFormLayout()
 
@@ -137,10 +137,9 @@ class SettingsWindow(QDialog):
             # the box is derived from them (Qt auto-tristate).
             game_root.setCheckState(0, Qt.CheckState.Checked if is_selected else Qt.CheckState.Unchecked)
 
-            # Pass db_path explicitly — avoids touching the global database path
-            game_db_path = os.path.join(BASE_DATABASE_PATH, game_name)
+            game_image_dir = os.path.join(CARD_IMAGES_DIR, game_name)
             try:
-                game_sets = get_available_sets(db_path=game_db_path)
+                game_sets = get_available_sets(game_image_dir)
                 if not game_sets and key in GAMES:
                     game_root.setToolTip(0, "No cards yet. Tick this game and press Rebuild Database to download them.")
                 ticked = set(sets_to_display(selected_sets.get(key, []), game_sets, is_selected))
@@ -150,7 +149,7 @@ class SettingsWindow(QDialog):
                     set_item.setCheckState(0, Qt.CheckState.Checked if set_code in ticked else Qt.CheckState.Unchecked)
                     set_item.setData(0, Qt.ItemDataRole.UserRole, set_code)
             except OSError as e:
-                self.logger.warning("Error getting sets for %s: %s", game_name, e)
+                logger.warning("Error getting sets for %s: %s", game_name, e)
 
         # One active game at a time: ticking a game (or any of its sets)
         # unticks the others, so the dialog never shows a selection that
@@ -225,7 +224,7 @@ class SettingsWindow(QDialog):
         close=False applies without dismissing the dialog (Rebuild Database).
         """
         new = self.result_settings()
-        self.logger.info(
+        logger.info(
             "Applying settings — games: %s, sets: %s", new.selected_games, new.selected_sets
         )
         self.applied.emit(new)

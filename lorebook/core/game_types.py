@@ -8,7 +8,7 @@ from pathlib import Path
 from lorebook.core.paths import data_path
 
 SUPPORTED_EXTS = (".webp", ".jpg", ".jpeg", ".png")
-BASE_DATABASE_PATH = data_path("Card_Images")
+CARD_IMAGES_DIR = data_path("Card_Images")
 LORCANA_CSV = "LorcanaList.csv"
 RIFTBOUND_CSV = "RiftboundList.csv"
 
@@ -19,7 +19,7 @@ class GameType(Enum):
     UNKNOWN = "unknown"
 
 
-def game_folders(base: str = BASE_DATABASE_PATH) -> list[str]:
+def game_folders(base: str = CARD_IMAGES_DIR) -> list[str]:
     """Game folder names under Card_Images/, sorted (hidden/cache folders skipped)."""
     try:
         names = os.listdir(base)
@@ -33,7 +33,7 @@ def game_folders(base: str = BASE_DATABASE_PATH) -> list[str]:
     )
 
 
-def resolve_game_folder(key: str, base: str = BASE_DATABASE_PATH) -> str | None:
+def resolve_game_folder(key: str, base: str = CARD_IMAGES_DIR) -> str | None:
     """
     Map a settings key (lowercased folder name, e.g. "mtg") back to the real
     folder name ("MTG"), or None when no such folder exists. Never rebuild
@@ -131,9 +131,9 @@ def get_game_type(filepath: str) -> "GameType":
         return GameType.UNKNOWN
     parts = list(Path(filepath).parts)
     lowered = [p.lower() for p in parts]
-    # Compare the folder *name*: BASE_DATABASE_PATH is a full per-user path
+    # Compare the folder *name*: CARD_IMAGES_DIR is a full per-user path
     # in installed builds (paths.data_path), never a single path part.
-    base = os.path.basename(BASE_DATABASE_PATH).lower()
+    base = os.path.basename(CARD_IMAGES_DIR).lower()
     if base in lowered and lowered.index(base) + 1 < len(parts) - 1:
         folder = parts[lowered.index(base) + 1]
     elif len(parts) >= 2:

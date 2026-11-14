@@ -3,7 +3,7 @@
 # Stubs TensorFlow/Keras in sys.modules before any test module imports
 # lorebook code, so the suite runs without those heavy packages installed
 # (no model download, no GPU). Also puts the repo root on sys.path so
-# `from PhotoMatching import ...` works from any pytest invocation dir.
+# `import lorebook` works from any pytest invocation dir without installing.
 
 import os
 import sys

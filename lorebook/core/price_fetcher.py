@@ -24,7 +24,7 @@ from lorebook.core.card_prices import (
     prices_file_for,
 )
 from lorebook.core.fileio import atomic_write_json
-from lorebook.core.net import fetch_json as _fetch_json
+from lorebook.core.net import fetch_json
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def _fetch_lorcana(base_url: str, progress_callback: Callable[[str], None] | Non
     under a fresh timestamp.
     """
     base = base_url.rstrip("/")
-    sets_payload = _fetch_json(f"{base}/sets")
+    sets_payload = fetch_json(f"{base}/sets")
     sets = sets_payload.get("results") if isinstance(sets_payload, dict) else sets_payload
 
     cards: list = []
@@ -82,7 +82,7 @@ def _fetch_lorcana(base_url: str, progress_callback: Callable[[str], None] | Non
             continue
         if progress_callback:
             progress_callback(f"Fetching prices for set {code}…")
-        page = _fetch_json(f"{base}/sets/{code}/cards")
+        page = fetch_json(f"{base}/sets/{code}/cards")
         if isinstance(page, dict):
             page = page.get("results") or page.get("cards") or []
         cards.extend(page or [])
@@ -141,7 +141,7 @@ def download_currency_rates(out_path: str | None = None,
     fetch failure (callers catch and keep the previous file — USD display
     never needs this file at all).
     """
-    data = _fetch_json(url or RATES_URL)
+    data = fetch_json(url or RATES_URL)
     raw = data.get("rates") if isinstance(data, dict) else None
     raw = raw if isinstance(raw, dict) else {}
 

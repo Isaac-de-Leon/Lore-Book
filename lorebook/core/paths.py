@@ -6,7 +6,7 @@
 # the app works when installed to a read-only program directory.
 #
 # LOREBOOK_DATA_DIR overrides both. Set it before launch — module constants
-# like BASE_DATABASE_PATH resolve at import time.
+# like CARD_IMAGES_DIR resolve at import time.
 #
 # This module must not import anything else from lorebook: it sits at the
 # bottom of the package import graph.

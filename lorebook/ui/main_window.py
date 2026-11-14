@@ -25,7 +25,7 @@ from lorebook import __version__
 from lorebook.core.build import BuildReport
 from lorebook.core.card_prices import clear_price_cache
 from lorebook.core.csv_manager import split_filename
-from lorebook.core.game_types import BASE_DATABASE_PATH, game_folders
+from lorebook.core.game_types import CARD_IMAGES_DIR, game_folders
 from lorebook.core.image_fetcher import ensure_game_folder
 from lorebook.core.image_utils import (
     card_motion_gate,
@@ -146,7 +146,7 @@ class MainWindow(QWidget):
         self.settings_btn.clicked.connect(self.open_settings)
 
         self.scanner = ScannerView(self.settings)
-        self.scanner.scan_requested.connect(self.capture_and_match)
+        self.scanner.scan_requested.connect(self.request_scan)
         self.collection_view = CollectionView(initial_game=self.get_active_game())
         self.scanner.collection_changed.connect(self.collection_view.refresh)
         self.collection_view.cleared.connect(lambda _game: self.scanner.forget_last_add())
@@ -304,10 +304,10 @@ class MainWindow(QWidget):
     def start_db_build_in_background(self) -> None:
         """Build every game folder's database on the build worker."""
         try:
-            os.makedirs(BASE_DATABASE_PATH, exist_ok=True)
-            folders = game_folders(BASE_DATABASE_PATH)
+            os.makedirs(CARD_IMAGES_DIR, exist_ok=True)
+            folders = game_folders(CARD_IMAGES_DIR)
         except OSError as e:
-            logger.error("Error scanning %s: %s", BASE_DATABASE_PATH, e)
+            logger.error("Error scanning %s: %s", CARD_IMAGES_DIR, e)
             self.scanner.set_status_text("Error scanning Card_Images directory")
             return
         if not folders:
@@ -435,7 +435,7 @@ class MainWindow(QWidget):
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
             self.last_frame = frame
             if self.settings.auto_scan and self._motion_gate.update(motion_sample(frame)):
-                self.capture_and_match()
+                self.request_scan()
             overlay = draw_focus_overlay(frame)
             if self.settings.debug_mode:
                 # The heatmap needs a model prediction: computed on the scan
@@ -455,7 +455,7 @@ class MainWindow(QWidget):
 
     # ------------------------------------------------------------------ scanning
 
-    def capture_and_match(self) -> None:
+    def request_scan(self) -> None:
         """Scan the current frame on the scan worker; results arrive in _on_scan_done."""
         if self._scan_busy:
             return  # one scan at a time; auto-scan simply skips this trigger

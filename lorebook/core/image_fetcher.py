@@ -31,9 +31,8 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from lorebook.core.fileio import atomic_write_bytes
-from lorebook.core.game_types import BASE_DATABASE_PATH, game_folders, resolve_game_folder
-from lorebook.core.net import fetch_bytes as _download
-from lorebook.core.net import fetch_json as _fetch_json
+from lorebook.core.game_types import CARD_IMAGES_DIR, game_folders, resolve_game_folder
+from lorebook.core.net import fetch_bytes, fetch_json
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +137,7 @@ def _fetch_riftbound_pages(url: str, size: int = 100) -> list:
     page_no, last_first_id = 1, None
     for _ in range(200):  # hard cap: never loop forever on a misbehaving API
         sep = "&" if "?" in url else "?"
-        data = _fetch_json(f"{url}{sep}size={size}&page={page_no}")
+        data = fetch_json(f"{url}{sep}size={size}&page={page_no}")
         if isinstance(data, dict):
             items = data.get("items") or data.get("cards") or []
             total = data.get("total")
@@ -188,7 +187,7 @@ def _gallery_cards(html: str) -> list[dict]:
 
 
 def _fetch_gallery_cards() -> list[dict]:
-    return _gallery_cards(_download(RIFTBOUND_GALLERY_URL).decode("utf-8", "replace"))
+    return _gallery_cards(fetch_bytes(RIFTBOUND_GALLERY_URL).decode("utf-8", "replace"))
 
 
 def fetch_riftbound_open_sources(url: str = RIFTBOUND_FALLBACK_URL) -> list:
@@ -226,12 +225,12 @@ def _fetch_riftbound(url: str):
             logger.info("RIOT_API_KEY not set; using %s", RIFTBOUND_FALLBACK_URL)
             return fetch_riftbound_open_sources()
         try:
-            return _fetch_json(url, headers={"X-Riot-Token": key})
+            return fetch_json(url, headers={"X-Riot-Token": key})
         except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
             logger.warning("Riot API fetch failed (%s); falling back to %s", e, RIFTBOUND_FALLBACK_URL)
             return fetch_riftbound_open_sources()
     if _is_riot_host(url):
-        return _fetch_json(url, headers={"X-Riot-Token": key} if key else None)
+        return fetch_json(url, headers={"X-Riot-Token": key} if key else None)
     return _fetch_riftbound_pages(url)
 
 
@@ -348,12 +347,12 @@ def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
 
 # game key (lowercased folder name) → (bulk-data URL, fetcher, targets fn)
 GAMES = {
-    "lorcana": (LORCANA_URL, _fetch_json, lorcana_targets),
+    "lorcana": (LORCANA_URL, fetch_json, lorcana_targets),
     "riftbound": (RIFTBOUND_RIOT_URL, _fetch_riftbound, riftbound_targets),
 }
 
 
-def selectable_games(base: str = BASE_DATABASE_PATH) -> list[str]:
+def selectable_games(base: str = CARD_IMAGES_DIR) -> list[str]:
     """
     Games to offer in the UI: every game folder, plus registered games with no
     folder yet. Their art only downloads once the folder exists, so listing
@@ -364,7 +363,7 @@ def selectable_games(base: str = BASE_DATABASE_PATH) -> list[str]:
     return sorted(found + [key.capitalize() for key in GAMES if key not in have])
 
 
-def ensure_game_folder(game: str | None, base: str = BASE_DATABASE_PATH) -> None:
+def ensure_game_folder(game: str | None, base: str = CARD_IMAGES_DIR) -> None:
     """
     Create the folder for a registered game so the next build downloads its
     art. Only called when the user asks for a rebuild: startup builds every
@@ -443,7 +442,7 @@ def download_new_images(
     default_url, fetcher, target_fn = GAMES[key]
     resolved_url = url or default_url
     resolved_out = out_dir or os.path.join(
-        BASE_DATABASE_PATH, resolve_game_folder(game) or game.strip().capitalize()
+        CARD_IMAGES_DIR, resolve_game_folder(game) or game.strip().capitalize()
     )
     ext = ".webp" if fmt == "webp" else ".jpg"
     wanted = {_norm(s) for s in sets} if sets else None
@@ -497,7 +496,7 @@ def download_new_images(
             continue
 
         try:
-            raw = _download(img_url)
+            raw = fetch_bytes(img_url)
             payload = _to_webp(raw, quality) if fmt == "webp" else raw
             # Temp file "<name>.<random>.part", renamed into place when
             # complete: a killed download never leaves a truncated image

@@ -83,7 +83,7 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
 
     monkeypatch.setitem(features._extractors, "keras", FakeExtractor())
     window.last_frame = np.zeros((720, 1280, 3), np.uint8)
-    window.capture_and_match()
+    window.request_scan()
     deadline = time.time() + 5
     while window._scan_busy and time.time() < deadline:
         app.processEvents()

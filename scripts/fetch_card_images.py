@@ -10,7 +10,7 @@
 #   python scripts/fetch_card_images.py --game Lorcana --format jpg # keep source JPG
 #
 # After it finishes, fold the new images into the feature DB:
-#   python PhotoMatching.py --game Lorcana --build
+#   python -m lorebook --game Lorcana --build
 
 import argparse
 import logging
@@ -70,7 +70,7 @@ def main(argv=None) -> int:
     if stats.downloaded == stats.skipped == stats.failed == 0:
         return 1  # nothing matched / source format changed (message already reported)
     if stats.downloaded and not args.dry_run:
-        print(f"Next: python PhotoMatching.py --game {args.game.strip().capitalize()} --build")
+        print(f"Next: python -m lorebook --game {args.game.strip().capitalize()} --build")
     return 1 if stats.failed and not stats.downloaded else 0
 
 

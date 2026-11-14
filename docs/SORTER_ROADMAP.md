@@ -47,7 +47,7 @@ lorebook/
 ├── sorter/          # ✅ headless orchestration, no Qt, no top-level hardware imports
 │   ├── pipeline.py      # SortPipeline: capture → crop → match → decide_bin → route → CSV
 │   ├── rules.py         # Rule/SortRules, decide_bin() + JSON loading (pure, validated)
-│   └── __main__.py      # python -m lorebook.sorter CLI (also PhotoMatching.py --sort)
+│   └── __main__.py      # python -m lorebook.sorter CLI
 └── hardware/        # ✅ hardware abstraction: interface + real + mock impls
     ├── camera.py        # open_capture + CameraSource (OpenCV real, Mock replay)
     └── transport.py     # Transport interface + MockTransport (real gantry driver = Phase 4)
@@ -82,7 +82,7 @@ configs/sort_rules.example.json   # example multi-bin rules file
 |---|---|---|
 | Feature extraction (pluggable backend) | `get_extractor("keras"\|"tflite").extract(_batch)` | `lorebook/core/features.py` |
 | Matching (vectorized) | `MatchIndex.find()` / `find_best_matches()` | `lorebook/core/matching.py` |
-| Feature cache load / build / select game | `load_cache()`, `build_feature_database()`, `set_database_path()` | `lorebook/core/card_database.py` |
+| Feature cache load / build | `load_cache(image_dir)`, `build_feature_database(image_dir)` | `lorebook/core/card_database.py` |
 | Foil detection | `is_probably_foil()` | `lorebook/core/image_utils.py` |
 | Card-area crop (shared with the GUI) | `focus_rect()` / `crop_to_card()` | `lorebook/core/image_utils.py` |
 | Card-presence detection (for feed sequencing) | `MotionGate` | `lorebook/core/image_utils.py` |
@@ -126,8 +126,7 @@ the GUI is unaffected.
 
 > Landed as `lorebook/hardware/camera.py` (shared `open_capture` + Mock replay source),
 > `lorebook/hardware/transport.py` (Mock), and `SortPipeline` in
-> `lorebook/sorter/pipeline.py`, run via `python -m lorebook.sorter` /
-> `PhotoMatching.py --sort`. Live-camera runs crop to the focus box (`--crop/--no-crop`);
+> `lorebook/sorter/pipeline.py`, run via `python -m lorebook.sorter`. Live-camera runs crop to the focus box (`--crop/--no-crop`);
 > CSV writes are batched and dry-run is the default.
 
 Prove the full software path end-to-end with motion stubbed.
@@ -135,8 +134,8 @@ Prove the full software path end-to-end with motion stubbed.
 - **Factor** the camera open/read logic out of `main_window.py` (`start_camera`/`_grab_frame`) into a
   `CameraSource` in `lorebook/hardware/camera.py`, reusing the existing platform backend-probe order
   (V4L2/DirectShow/MSMF). USB/OpenCV implementation now; a `picamera2`/libcamera implementation later.
-- **Build** a headless runner: `lorebook/sorter/pipeline.py` plus a `--sort` subcommand on
-  `PhotoMatching.py`. Per card it: `CameraSource.capture()` → `get_extractor(...).extract()` →
+- **Build** a headless runner: `lorebook/sorter/pipeline.py` plus the
+  `python -m lorebook.sorter` command. Per card it: `CameraSource.capture()` → `get_extractor(...).extract()` →
   `find_best_matches()` → `is_probably_foil()` → `decide_bin()` → **logs the chosen bin and calls
   `update_cardlist()`**, with `MotionController`/`CardPickup` replaced by logging mocks.
 
@@ -201,7 +200,7 @@ named bin from a script.
   laptop with no hardware (dry-run mode).
 - **Parity test** for the keras-vs-tflite extractor (Phase 1).
 - **Unit tests** for `decide_bin()` covering every example rules config (Phase 3).
-- Existing tests (`tests/test_photo_matching.py`) already need no camera/GPU — extend the same style.
+- Existing tests (`tests/test_core_utils.py`) already need no camera/GPU — extend the same style.
 
 ---
 

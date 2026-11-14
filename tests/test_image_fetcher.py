@@ -11,7 +11,6 @@ from lorebook.core.image_fetcher import (
     RIFTBOUND_FALLBACK_URL,
     RIFTBOUND_RIOT_URL,
     FetchStats,
-    _download,
     _fetch_riftbound,
     _norm,
     _pad,
@@ -19,6 +18,7 @@ from lorebook.core.image_fetcher import (
     lorcana_targets,
     riftbound_targets,
 )
+from lorebook.core.net import fetch_bytes
 
 PAGE1 = f"{RIFTBOUND_FALLBACK_URL}?size=100&page=1"
 
@@ -37,7 +37,7 @@ def _tiny_jpg() -> bytes:
 
 
 def _record(monkeypatch, responses):
-    """Stub _fetch_json: log (url, headers) calls, reply from `responses`
+    """Stub fetch_json: log (url, headers) calls, reply from `responses`
     (a callable or a static value)."""
     calls = []
 
@@ -45,7 +45,7 @@ def _record(monkeypatch, responses):
         calls.append((url, headers or {}))
         return responses(url) if callable(responses) else responses
 
-    monkeypatch.setattr(image_fetcher, "_fetch_json", fake)
+    monkeypatch.setattr(image_fetcher, "fetch_json", fake)
     monkeypatch.setattr(image_fetcher, "_fetch_gallery_cards", lambda: [])
     return calls
 
@@ -320,7 +320,7 @@ def test_download_new_images(tmp_path, monkeypatch):
     jpg = _tiny_jpg()
     data = {"cards": [_card("9", 41), _card("9", 42), _card("10", 1)]}
     monkeypatch.setitem(image_fetcher.GAMES, "lorcana", ("stub://cards", lambda url: data, lorcana_targets))
-    monkeypatch.setattr(image_fetcher, "_download", lambda url: jpg)
+    monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: jpg)
 
     def run(sub, **kw):
         out = tmp_path / sub
@@ -370,7 +370,7 @@ def test_download_new_images(tmp_path, monkeypatch):
         cancel.set()
         return jpg
 
-    monkeypatch.setattr(image_fetcher, "_download", download_then_cancel)
+    monkeypatch.setattr(image_fetcher, "fetch_bytes", download_then_cancel)
     messages = []
     out, stats = run("cancel", cancel_event=cancel, progress_callback=messages.append)
     assert stats.downloaded == 1 and [p.name for p in out.iterdir()] == ["009-041.webp"]
@@ -380,7 +380,7 @@ def test_download_new_images(tmp_path, monkeypatch):
 
     # A 0-byte image is a failed write and is fetched again; .part leftovers
     # from a killed run are cleaned up.
-    monkeypatch.setattr(image_fetcher, "_download", lambda url: jpg)
+    monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: jpg)
     out = tmp_path / "repair"
     out.mkdir()
     (out / "009-041.webp").write_bytes(b"")
@@ -391,7 +391,7 @@ def test_download_new_images(tmp_path, monkeypatch):
     assert (out / "009-041.webp").stat().st_size > 0
 
     # A write that fails midway leaves neither a truncated image nor a .part.
-    monkeypatch.setattr(image_fetcher, "_download", lambda url: "not bytes")  # write() raises
+    monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: "not bytes")  # write() raises
     out, stats = run("midwrite", fmt="jpg")
     assert stats.failed == 2 and list(out.iterdir()) == []
 
@@ -399,7 +399,7 @@ def test_download_new_images(tmp_path, monkeypatch):
     def boom(url):
         raise OSError("offline")
 
-    monkeypatch.setattr(image_fetcher, "_download", boom)
+    monkeypatch.setattr(image_fetcher, "fetch_bytes", boom)
     out, stats = run("fail")
     assert stats == FetchStats(downloaded=0, skipped=0, failed=2)
     monkeypatch.setitem(image_fetcher.GAMES, "lorcana", ("stub://cards", boom, lorcana_targets))
@@ -412,7 +412,7 @@ def test_download_new_images(tmp_path, monkeypatch):
         {"set": "OGN", "collector_number": "23c", "media": {"image_url": "http://img/23c.jpg"}},
     ]
     monkeypatch.setitem(image_fetcher.GAMES, "riftbound", ("stub://cards", lambda url: rift, riftbound_targets))
-    monkeypatch.setattr(image_fetcher, "_download", lambda url: jpg)
+    monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: jpg)
     out = tmp_path / "rift"
     stats = download_new_images("Riftbound", out_dir=str(out), delay=0)
     assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
@@ -432,6 +432,6 @@ def test_download_new_images(tmp_path, monkeypatch):
 
         monkeypatch.setattr(net.urllib.request, "urlopen", fail)
         with pytest.raises(urllib.error.HTTPError):
-            _download("http://img/x.jpg")
+            fetch_bytes("http://img/x.jpg")
         assert len(calls) == expected_calls
     assert len(sleeps) == 2  # only the 503 backed off

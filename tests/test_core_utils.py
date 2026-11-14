@@ -1,5 +1,5 @@
-# tests/test_photo_matching.py
-# Unit tests for pure utility functions in PhotoMatching.py.
+# tests/test_core_utils.py
+# Unit tests for the pure utility functions in lorebook.core.
 # Does NOT load TensorFlow models or require a camera.
 
 import csv
@@ -10,31 +10,39 @@ import numpy as np
 import pytest
 
 from lorebook.core.card_database import _cache_path
-from lorebook.core.csv_manager import CsvReadError, read_collection_rows
-from lorebook.core.features import _check_tflite_input_dtype
-from lorebook.core.game_types import game_folders, resolve_game_folder, sets_to_display, sets_to_store
-from lorebook.core.image_utils import CARD_ASPECT, MotionGate, crop_to_card, focus_rect
+from lorebook.core.csv_manager import (
+    CsvReadError,
+    clear_collection,
+    read_collection_rows,
+    read_rows,
+    split_filename,
+    update_cardlist,
+    write_rows,
+)
 
 # TF/Keras stubbing and sys.path setup happen in tests/conftest.py.
-from PhotoMatching import (
+from lorebook.core.features import _check_tflite_input_dtype, get_extractor
+from lorebook.core.game_types import (
     GameType,
-    _cosine_score,
-    _l2_normalize,
-    _normalize_existing_rows,
-    _split_filename,
-    _write_rows_4col,
-    clear_collection,
     csv_for_game,
-    ensure_valid_image,
-    find_best_matches,
-    foil_score,
+    game_folders,
     game_type_from_name,
-    get_extractor,
     get_game_type,
     is_foil_only_card,
-    is_probably_foil,
-    update_cardlist,
+    resolve_game_folder,
+    sets_to_display,
+    sets_to_store,
 )
+from lorebook.core.image_utils import (
+    CARD_ASPECT,
+    MotionGate,
+    crop_to_card,
+    ensure_valid_image,
+    focus_rect,
+    foil_score,
+    is_probably_foil,
+)
+from lorebook.core.matching import cosine_score, find_best_matches, l2_normalize
 
 HEADER = ["Set Number", "Card Number", "Variant", "Count"]
 HEADER_BYTES = b"Set Number,Card Number,Variant,Count\r\n"
@@ -106,37 +114,37 @@ def test_game_folders_and_set_filter(tmp_path):
 
 
 def test_split_filename():
-    assert _split_filename("001-042.webp") == ("001", "042")
-    assert _split_filename("ONG-23c-alt.jpg") == ("ONG", "23c-alt")  # suffix stays with card
-    assert _split_filename("/some/path/Card_Images/Lorcana/009-041.webp") == ("009", "041")
-    assert _split_filename("005-010") == ("005", "010")
-    assert _split_filename("nosetcode.png") == ("", "nosetcode")
-    assert _split_filename("X-.png") == ("X", "")
+    assert split_filename("001-042.webp") == ("001", "042")
+    assert split_filename("ONG-23c-alt.jpg") == ("ONG", "23c-alt")  # suffix stays with card
+    assert split_filename("/some/path/Card_Images/Lorcana/009-041.webp") == ("009", "041")
+    assert split_filename("005-010") == ("005", "010")
+    assert split_filename("nosetcode.png") == ("", "nosetcode")
+    assert split_filename("X-.png") == ("X", "")
 
 
 def test_vector_math():
-    v = _l2_normalize(np.array([-3.0, 4.0], dtype=np.float32))
+    v = l2_normalize(np.array([-3.0, 4.0], dtype=np.float32))
     assert abs(np.linalg.norm(v) - 1.0) < 1e-6
-    assert _l2_normalize(np.zeros(5, np.float32)).shape == (5,)  # zero vector: no raise
+    assert l2_normalize(np.zeros(5, np.float32)).shape == (5,)  # zero vector: no raise
     # float32 is a cache contract: blobs are read back with np.frombuffer(float32),
     # so a float64 result here silently corrupts every stored vector into NaN.
     for dtype in (np.float32, np.float64):
-        assert _l2_normalize(np.array([3.0, 4.0], dtype=dtype)).dtype == np.float32
+        assert l2_normalize(np.array([3.0, 4.0], dtype=dtype)).dtype == np.float32
 
     a = np.array([1.0, 0.0], np.float32)
     b = np.array([0.0, 1.0], np.float32)
-    assert abs(_cosine_score(a, a) - 1.0) < 1e-5
-    assert abs(_cosine_score(a, b)) < 1e-5
-    assert abs(_cosine_score(a, -a) + 1.0) < 1e-5
+    assert abs(cosine_score(a, a) - 1.0) < 1e-5
+    assert abs(cosine_score(a, b)) < 1e-5
+    assert abs(cosine_score(a, -a) + 1.0) < 1e-5
     with pytest.raises(ValueError):
-        _cosine_score(np.array([3.0, 4.0], np.float32), a)  # not normalized
+        cosine_score(np.array([3.0, 4.0], np.float32), a)  # not normalized
 
 
 def test_find_best_matches():
     db = {
-        "card_a.jpg": _l2_normalize(np.array([1.0, 0.0, 0.0], np.float32)),
-        "card_b.jpg": _l2_normalize(np.array([0.0, 1.0, 0.0], np.float32)),
-        "card_c.jpg": _l2_normalize(np.array([1.0, 1.0, 0.0], np.float32)),
+        "card_a.jpg": l2_normalize(np.array([1.0, 0.0, 0.0], np.float32)),
+        "card_b.jpg": l2_normalize(np.array([0.0, 1.0, 0.0], np.float32)),
+        "card_c.jpg": l2_normalize(np.array([1.0, 1.0, 0.0], np.float32)),
         "corrupt.jpg": np.array([5.0, 5.0, 5.0], np.float32),  # not unit-norm: skipped
     }
     matches = find_best_matches(db["card_a.jpg"].copy(), db, threshold=0.5)
@@ -315,7 +323,7 @@ def test_negative_counts_and_clear(tmp_path, monkeypatch):
 
 def test_csv_reading_normalizes_legacy_rows(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert _normalize_existing_rows("nonexistent.csv") == []
+    assert read_rows("nonexistent.csv") == []
     assert read_collection_rows("Riftbound") == []
 
     with open("LorcanaList.csv", "w", newline="", encoding="utf-8") as f:
@@ -332,7 +340,7 @@ def test_csv_reading_normalizes_legacy_rows(tmp_path, monkeypatch):
         ["009", "042", "normal", "2"],
         ["009", "043", "normal", "0"],
     ]
-    assert _normalize_existing_rows("LorcanaList.csv") == expected
+    assert read_rows("LorcanaList.csv") == expected
     assert read_collection_rows("Lorcana") == expected
 
     # Excel's byte-order mark doesn't turn the header into a data row.
@@ -354,23 +362,23 @@ def test_csv_reading_normalizes_legacy_rows(tmp_path, monkeypatch):
     assert isinstance(read_collection_rows("Riftbound"), list)  # lenient display: no raise
 
 
-def test_write_rows_4col_is_atomic(tmp_path):
+def test_write_rows_is_atomic(tmp_path):
     p = tmp_path / "out.csv"
-    _write_rows_4col(str(p), [])
+    write_rows(str(p), [])
     assert _rows(p) == [HEADER]
 
     rows = [["001", "001", "normal", "5"], ["002", "010", "foil", "1"]]
-    _write_rows_4col(str(p), rows)
+    write_rows(str(p), rows)
     assert _rows(p) == [HEADER] + rows
     assert sorted(os.listdir(tmp_path)) == ["out.csv"]  # no temp files left behind
 
     if os.name != "nt":  # POSIX file modes survive the atomic replace
         os.chmod(p, 0o640)
-        _write_rows_4col(str(p), rows)
+        write_rows(str(p), rows)
         assert (os.stat(p).st_mode & 0o777) == 0o640
 
     # A non-iterable row blows up mid-write; the original must survive.
     with pytest.raises(TypeError):
-        _write_rows_4col(str(p), [None])
+        write_rows(str(p), [None])
     assert _rows(p) == [HEADER] + rows
     assert sorted(os.listdir(tmp_path)) == ["out.csv"]

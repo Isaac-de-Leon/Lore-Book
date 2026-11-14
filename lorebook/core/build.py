@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from lorebook.core.card_database import build_feature_database, list_image_files
 from lorebook.core.card_prices import RATES_FILE, prices_stale
-from lorebook.core.game_types import BASE_DATABASE_PATH
+from lorebook.core.game_types import CARD_IMAGES_DIR
 from lorebook.core.image_fetcher import download_new_images
 from lorebook.core.price_fetcher import download_card_prices, download_currency_rates
 
@@ -44,7 +44,7 @@ def refresh_and_build(
     cancel_event: threading.Event,
     status: Callable[[str], None] = lambda _msg: None,
     progress: Callable[[int], None] = lambda _pct: None,
-    base: str = BASE_DATABASE_PATH,
+    base: str = CARD_IMAGES_DIR,
     extractor=None,
 ) -> BuildReport:
     """Download, refresh prices and build each game's cache; see module docstring.
@@ -109,7 +109,7 @@ def refresh_and_build(
 
         logger.info("Building DB for %s at %s", game, game_path)
         try:
-            db = build_feature_database(progress_callback=on_progress, db_path=game_path,
+            db = build_feature_database(game_path, progress_callback=on_progress,
                                         cancel_event=cancel_event, extractor=extractor)
         except Exception:  # noqa: BLE001 — fail this game, build the rest
             logger.exception("Database build for %s failed", game)

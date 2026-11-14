@@ -39,7 +39,7 @@ python scripts/fetch_card_names.py --game Riftbound
 Then build the feature database once:
 
 ```bash
-python PhotoMatching.py --game Lorcana --build
+python -m lorebook --game Lorcana --build
 ```
 
 ## Usage

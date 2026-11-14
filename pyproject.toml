@@ -18,6 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
+lorebook = "lorebook.cli:main"
 lorebook-ui = "lorebook.ui.app:main"
 lorebook-sort = "lorebook.sorter.__main__:main"
 
@@ -41,8 +42,8 @@ gui = [
 sorter = ["tflite-runtime"]
 
 [tool.setuptools]
-# Root-level UI.py / PhotoMatching.py are runnable scripts, not part of the
-# installable package; only the lorebook package is packaged.
+# Root-level UI.py is a runnable script (the PyInstaller entry), not part of
+# the installable package; only the lorebook package is packaged.
 packages = [
     "lorebook",
     "lorebook.core",
@@ -79,11 +80,12 @@ line-length = 110
 # (no f-strings in log calls); I: sorted imports; BLE: no blind
 # `except Exception` — catch what can actually happen, or mark a real
 # boundary (worker thread, Qt callback, per-item batch loop, CLI top level)
-# with `# noqa: BLE001` and a reason.
-select = ["E4", "E7", "E9", "F", "UP", "G", "I", "BLE"]
+# with `# noqa: BLE001` and a reason. N: PEP 8 names.
+select = ["E4", "E7", "E9", "F", "UP", "G", "I", "BLE", "N"]
 
 [tool.ruff.lint.per-file-ignores]
-# Backward-compat re-export shim: every import IS the public API.
-"PhotoMatching.py" = ["F401"]
+# Qt event handlers and OpenCV stand-ins override camelCase methods.
+"lorebook/ui/*.py" = ["N802"]
+"tests/test_camera.py" = ["N802"]
 # TF env vars and warning filters must be set before the imports they affect.
 "lorebook/core/features.py" = ["E402"]

@@ -13,7 +13,7 @@ import sys
 
 from lorebook.core.card_database import load_cache
 from lorebook.core.features import BACKENDS, default_backend, get_extractor
-from lorebook.core.game_types import BASE_DATABASE_PATH
+from lorebook.core.game_types import CARD_IMAGES_DIR
 from lorebook.core.image_utils import card_motion_gate
 from lorebook.hardware.camera import CameraSource, MockCameraSource, OpenCVCameraSource
 from lorebook.hardware.transport import MockTransport
@@ -61,10 +61,10 @@ def main(argv=None) -> int:
     log = logging.getLogger("lorebook.sorter")
 
     # Reference feature cache for the chosen game.
-    feature_db = load_cache(os.path.join(BASE_DATABASE_PATH, args.game))
+    feature_db = load_cache(os.path.join(CARD_IMAGES_DIR, args.game))
     if not feature_db:
         log.error("No feature database for %s. Build it first: "
-                  "python PhotoMatching.py --game %s --build", args.game, args.game)
+                  "python -m lorebook --game %s --build", args.game, args.game)
         return 1
 
     # Rules: load from file, or default to an all-reject config.

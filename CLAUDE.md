@@ -13,10 +13,11 @@ Lore-Book is a desktop trading-card scanner application. It uses a webcam to pho
 ```
 Lore-Book/
 ├── UI.py                  # Entry point — creates app, shows MainWindow
-├── PhotoMatching.py       # Backward-compat re-export shim + CLI (--build/--match/--sort)
 ├── pyproject.toml         # Package metadata (pip install -e .[gui] desktop; .[sorter] for the Pi)
 │
 ├── lorebook/              # Importable package
+│   ├── cli.py             # python -m lorebook: build a game's feature cache / match one image
+│   ├── __main__.py        # Runs cli.main()
 │   ├── core/              # Game-agnostic logic (no Qt)
 │   │   ├── paths.py           # Writable-data root: CWD from source, %LOCALAPPDATA%\LoreBook frozen
 │   │   ├── game_types.py      # GameType enum, get_game_type, csv_for_game, constants
@@ -94,7 +95,8 @@ Lore-Book/
     ├── test_paths.py
     ├── test_settings.py
     ├── test_build.py
-    ├── test_photo_matching.py
+    ├── test_core_utils.py     # pure helpers: game types, CSV, matching, image utils
+    ├── test_cli.py
     ├── test_matching_index.py
     ├── test_card_database.py
     ├── test_features.py       # keras extractor call paths with fake models
@@ -120,15 +122,15 @@ Lore-Book/
 | `lorebook/core/card_prices.py` | `price_for()`, `format_price()`, `rate_for()`, `prices_stale()`, `clear_price_cache()` — optional market prices from `card_prices_<Game>.json` + `currency_rates.json` (display only) |
 | `lorebook/core/price_fetcher.py` | `download_card_prices()` (Lorcast → TCGplayer USD prices; `GAMES` registry), `download_currency_rates()` (Frankfurter/ECB). Auto-run by the GUI when files are >24 h old; CLI: `scripts/fetch_card_prices.py` |
 | `lorebook/core/image_fetcher.py` | `download_new_images()` — fetch missing card art into `Card_Images/<Game>/` (Lorcana: LorcanaJSON; Riftbound: Riot content API when `RIOT_API_KEY` is set, else Riftcodex plus the official card gallery for whole sets Riftcodex lacks). Auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py`. `selectable_games()` lists folders plus registered games with no folder yet; `ensure_game_folder()` creates one on Rebuild (never at startup, which builds every folder) |
-| `lorebook/core/matching.py` | `_l2_normalize`, `_cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
+| `lorebook/core/matching.py` | `l2_normalize`, `cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
 | `lorebook/core/features.py` | `get_extractor(backend=None)` (onnx/keras/tflite; `None` → `default_backend()`: `LOREBOOK_BACKEND`, else onnx when onnxruntime is installed, else keras), `extract_features`, `visualize_activation_overlay`. Keras inference runs under `_model_lock`; single images call the model directly (`_infer`, never `predict()`), `extract_batch` keeps `predict()`, and `ensure_ready()` loads the model plus one warm-up inference |
 | `lorebook/core/onnx_model.py` | `ensure_model()` — builds `mobilenetv2_features.onnx` (at `data_path()`, or `LOREBOOK_ONNX_MODEL`) on first use from the Keras MobileNetV2 `.h5` weights (Keras cache if present, else downloaded; sha256-checked), BatchNorm folded into convs. Needs `onnx` + `h5py`; outputs `features` (N,1280) and `activations` (N,7,7,1280) |
-| `lorebook/core/card_database.py` | `GameDatabase` (the active game's vectors + `MatchIndex`, `load`/`ensure`/`invalidate`), `load_cache`, `build_feature_database`; legacy `set_database_path`/`get_database_path` (+ `databasePath`) kept for PhotoMatching/CLI callers |
+| `lorebook/core/card_database.py` | `GameDatabase` (the active game's vectors + `MatchIndex`, `load`/`ensure`/`invalidate`), `load_cache(image_dir)`, `build_feature_database(image_dir, ...)` — the game's image folder is always passed explicitly (no module-global "current" path) |
 | `lorebook/core/build.py` | `refresh_and_build()` — per game: download new art, refresh stale prices, build the cache; status/progress callbacks + cancel Event; returns `BuildReport` (Qt-free; the GUI runs it on `BuildWorker`) |
 | `lorebook/core/settings.py` | `AppSettings` — every `ui_settings.json` preference with defaults, per-field validation, migration, atomic `save()`; `THEME_NAMES`/`DEFAULT_THEME` |
 | `lorebook/core/fileio.py` | `atomic_write`, `atomic_write_bytes`, `atomic_write_json` — temp file + `os.replace`, keeps the target's permissions. Use these for any new file write |
 | `lorebook/core/net.py` | `fetch_json`, `fetch_bytes` (retries transient failures; 4xx other than 408/429 is final), `USER_AGENT`. Use these for any new HTTP call |
-| `lorebook/core/csv_manager.py` | `update_cardlist`, `update_cardlist_batch`, `split_filename`, `get_available_sets`, `read_collection_rows` |
+| `lorebook/core/csv_manager.py` | `update_cardlist`, `update_cardlist_batch`, `split_filename`, `get_available_sets(image_dir)`, `read_collection_rows`, `read_rows`/`write_rows` (one CSV file) |
 | `lorebook/hardware/camera.py` | `open_capture` (shared with GUI), `CameraSource` + OpenCV/Mock implementations |
 | `lorebook/hardware/transport.py` | `Transport` interface, `MockTransport` (real gantry driver comes later) |
 | `lorebook/sorter/rules.py` | `Rule`, `SortRules`, `load_rules`, `decide_bin` |
@@ -146,9 +148,9 @@ Lore-Book/
 | `lorebook/ui/app_logging.py` | `setup_logging()` — rotating log + faulthandler crash log + excepthook |
 | `lorebook/ui/app.py` | `main()` — QApplication bootstrap (installed as `lorebook-ui`) |
 | `UI.py` | Thin wrapper around `lorebook.ui.app.main()` |
-| `PhotoMatching.py` | Re-exports all of the above for backward compatibility; also runnable as CLI |
+| `lorebook/cli.py` | `main()` — `python -m lorebook --game <Game> --build` / `--match IMAGE` (installed as `lorebook`) |
 
-> Internal imports use absolute package paths (e.g. `from lorebook.core.matching import find_best_matches`). Tests and external callers can keep importing from the `PhotoMatching` shim unchanged.
+> Imports use absolute package paths (e.g. `from lorebook.core.matching import find_best_matches`), in tests too. `CARD_IMAGES_DIR` (`lorebook/core/game_types.py`) is the `Card_Images/` root; a parameter named `image_dir` is one game's folder under it.
 
 ---
 
@@ -173,7 +175,7 @@ lightweight core; add the `gui` extra for the desktop app (`pip install -e .[gui
 
 ### Build the feature database (first run)
 ```bash
-python PhotoMatching.py --game Lorcana --build
+python -m lorebook --game Lorcana --build
 ```
 This scans all images in `Card_Images/Lorcana/` and writes `DBCardCache_Lorcana.db`.
 
@@ -197,7 +199,7 @@ Live-camera runs also wait for each card to be placed and settle (`MotionGate`, 
 trigger as the GUI's auto-scan), so a card left under the camera is recorded once rather
 than once per frame; folder replays treat every image as a card. Override with
 `--trigger motion|every-frame`.
-`python PhotoMatching.py --sort …` is an equivalent alias. On a Raspberry Pi, install
+On a Raspberry Pi, install
 `pip install .[sorter]` (tflite-runtime only — no TensorFlow or Qt), generate the model
 once on a desktop with `python scripts/convert_to_tflite.py`, copy it over, and run with
 `--backend tflite`.
@@ -224,7 +226,7 @@ python -m pytest tests/ -v
 
 Or run a single test:
 ```bash
-python -m pytest tests/test_photo_matching.py::test_split_filename -v
+python -m pytest tests/test_core_utils.py::test_split_filename -v
 ```
 
 `tests/test_tf_integration.py` is the exception: it runs real TensorFlow + PySide6 (and downloads the MobileNetV2 weights on first run) in a child process, so it is skipped unless opted in. Run it after touching `features.py`, `threads.py` or `ScanWorker`:
@@ -318,7 +320,7 @@ the foil-only cutoff (`LORCANA_MAX_NORMAL_CARD`) and filename codes, then rebuil
 ## Common Tasks for Claude
 
 - **Add a feature** — edit the relevant module under `lorebook/core/` for logic, `lorebook/ui/` for UI wiring, `lorebook/sorter/`/`lorebook/hardware/` for the headless sorter.
-- **Fix a CSV parsing bug** — see `_normalize_existing_rows()` and `_write_rows_4col()` in `lorebook/core/csv_manager.py`. Writes are read-modify-write: the read is `strict` (an unreadable file raises `CsvReadError` and is left untouched), and the write is an atomic temp-file replace. Keep both properties.
+- **Fix a CSV parsing bug** — see `read_rows()` and `write_rows()` in `lorebook/core/csv_manager.py`. Writes are read-modify-write: the read is `strict` (an unreadable file raises `CsvReadError` and is left untouched), and the write is an atomic temp-file replace. Keep both properties.
 - **Tune foil detection** — adjust `foil_score()` weights or threshold in `is_probably_foil()` (`lorebook/core/image_utils.py`).
 - **Change match threshold** — core default is `0.70` in `find_best_matches()` / `MatchIndex.find()` (`lorebook/core/matching.py`); the GUI ships a stricter `0.90` default, exposed in Settings as confidence %. See `docs/MATCHING.md` for how the whole pipeline fits together.
 - **Show card names** — run `python scripts/fetch_card_names.py --game <Game>` once; the GUI/sorter pick up `card_names_<Game>.json` automatically (display-only, never written to the CSV). Riftbound names come from `riftbound_printings()`, the same data and numbering as the image files, so a name can't land on the wrong card.

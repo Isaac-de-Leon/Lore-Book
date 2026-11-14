@@ -26,7 +26,7 @@ try:
         is_promo_printing,
         riftbound_printings,
     )
-    from lorebook.core.net import fetch_json as _fetch_json
+    from lorebook.core.net import fetch_json
 except ImportError:  # running from a checkout without `pip install -e .`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from lorebook.core.card_names import names_file_for
@@ -36,7 +36,7 @@ except ImportError:  # running from a checkout without `pip install -e .`
         is_promo_printing,
         riftbound_printings,
     )
-    from lorebook.core.net import fetch_json as _fetch_json
+    from lorebook.core.net import fetch_json
 
 LORCANA_URL = "https://lorcanajson.org/files/current/en/allCards.json"
 
@@ -77,7 +77,7 @@ def riftbound_names(data) -> dict:
 
 
 GAMES = {
-    "lorcana": (LORCANA_URL, _fetch_json, lorcana_names),
+    "lorcana": (LORCANA_URL, fetch_json, lorcana_names),
     "riftbound": (RIFTBOUND_FALLBACK_URL, fetch_riftbound_open_sources, riftbound_names),
 }
 

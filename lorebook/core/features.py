@@ -55,7 +55,7 @@ _interactive_waiters = 0
 _waiters_guard = threading.Lock()
 
 
-class _interactive:
+class _InteractivePriority:
     """Context manager: hold _model_lock with priority over batch extraction."""
 
     def __enter__(self) -> None:
@@ -200,7 +200,7 @@ class _KerasExtractor:
             batch = _preprocess_to_batch(img_or_path)
             if batch is None:
                 return None
-            with _interactive():
+            with _InteractivePriority():
                 feat_model, _ = _get_models()
                 features = _infer(feat_model, batch)
             return _finalize(features)

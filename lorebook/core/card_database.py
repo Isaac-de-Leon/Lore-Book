@@ -10,43 +10,18 @@ from collections.abc import Callable
 import cv2
 import numpy as np
 
-from lorebook.core.game_types import BASE_DATABASE_PATH, SUPPORTED_EXTS
+from lorebook.core.game_types import CARD_IMAGES_DIR, SUPPORTED_EXTS
 from lorebook.core.matching import MatchIndex
 from lorebook.core.paths import data_path
 
 logger = logging.getLogger(__name__)
 
-# Current active database path — changed via set_database_path().
-database_path: str = os.path.join(BASE_DATABASE_PATH, "Lorcana")
 
-
-def set_database_path(game_name: str) -> None:
-    """Switch the module's default database folder (legacy API).
-
-    Kept for PhotoMatching's CLI and external callers; app code passes
-    db_path explicitly or uses GameDatabase instead.
-    """
-    global database_path
-    database_path = os.path.join(BASE_DATABASE_PATH, game_name)
-    os.makedirs(database_path, exist_ok=True)
-
-
-def __getattr__(name: str) -> str:
-    # Backward compat (PEP 562): the old camelCase global, always current.
-    if name == "databasePath":
-        return database_path
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def get_database_path() -> str:
-    """Return the current active database path."""
-    return database_path
-
-
-def _cache_path(db_path: str) -> str:
+def _cache_path(image_dir: str) -> str:
+    """Return the SQLite cache file for a game's image folder."""
     # Strip trailing separators so "Card_Images/Lorcana/" (e.g. from shell
     # tab-completion) resolves to "Lorcana", not "".
-    game = os.path.basename(db_path.rstrip("/\\")) or "default"
+    game = os.path.basename(image_dir.rstrip("/\\")) or "default"
     return data_path(f"DBCardCache_{game}.db")
 
 
@@ -110,9 +85,9 @@ def _save_stamps(cache_file: str, stamps: dict[str, Stamp]) -> None:
         logger.error("Error saving cache stamps to %s: %s", cache_file, e)
 
 
-def load_cache(db_path: str | None = None) -> dict[str, np.ndarray]:
-    """Load the feature cache from the SQLite database for the given (or current) database path."""
-    path = _cache_path(db_path or database_path)
+def load_cache(image_dir: str) -> dict[str, np.ndarray]:
+    """Load the cached {filename: vector} map for a game's image folder ({} if none)."""
+    path = _cache_path(image_dir)
     if not os.path.exists(path):
         return {}
     try:
@@ -152,20 +127,20 @@ def list_image_files(folder: str) -> list[str]:
 _BATCH_SIZE = 32
 
 
-def _read_image(filename: str, db_path: str) -> tuple[str, np.ndarray | None]:
+def _read_image(filename: str, image_dir: str) -> tuple[str, np.ndarray | None]:
     """Load one image for the build pipeline (thread-safe: no globals, no TF)."""
-    return filename, cv2.imread(os.path.join(db_path, filename), cv2.IMREAD_COLOR)
+    return filename, cv2.imread(os.path.join(image_dir, filename), cv2.IMREAD_COLOR)
 
 
 def build_feature_database(
+    image_dir: str,
     progress_callback: Callable[[int, str | None], None] | None = None,
     max_workers: int | None = None,
-    db_path: str | None = None,
     extractor=None,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, np.ndarray]:
     """
-    Build or update the feature database for db_path (defaults to database_path).
+    Build or update the feature cache for the images in image_dir.
 
     Processes only images not already in the cache, updates the cache file, and
     returns the full feature dict. Image reads run in a thread pool; feature
@@ -180,29 +155,28 @@ def build_feature_database(
     anything unexpected propagates to the caller (it is not swallowed into a
     silently partial result).
     """
-    resolved = db_path or database_path
-    feature_db: dict[str, np.ndarray] = load_cache(resolved)
-    logger.info("Loaded %s cached entries from %s", len(feature_db), resolved)
+    feature_db: dict[str, np.ndarray] = load_cache(image_dir)
+    logger.info("Loaded %s cached entries from %s", len(feature_db), image_dir)
 
-    current_files = list_image_files(resolved)
+    current_files = list_image_files(image_dir)
 
     # Prune cache entries for deleted/renamed images so they can't keep
     # matching against cards that no longer exist. Only when the folder
     # itself exists — a missing folder (typo'd path, unmounted drive)
     # must not be read as "every image was deleted" and wipe the cache.
-    stale = sorted(set(feature_db) - set(current_files)) if os.path.isdir(resolved) else []
+    stale = sorted(set(feature_db) - set(current_files)) if os.path.isdir(image_dir) else []
     if stale:
         for name in stale:
             feature_db.pop(name, None)
-        _remove_cache_entries(_cache_path(resolved), stale)
-        logger.info("Pruned %s stale cache entries from %s", len(stale), resolved)
+        _remove_cache_entries(_cache_path(image_dir), stale)
+        logger.info("Pruned %s stale cache entries from %s", len(stale), image_dir)
 
     # Re-extract images replaced under the same name (e.g. re-downloaded
     # with --force): their recorded size/mtime no longer match the file.
     # Legacy rows without a stamp are trusted and backfilled below.
-    cache_file = _cache_path(resolved)
+    cache_file = _cache_path(image_dir)
     stored = _load_stamps(cache_file)
-    disk = {f: _file_stamp(os.path.join(resolved, f)) for f in current_files}
+    disk = {f: _file_stamp(os.path.join(image_dir, f)) for f in current_files}
     changed = sorted(
         f for f in current_files
         if f in feature_db and stored.get(f) is not None and stored[f] != disk[f]
@@ -211,7 +185,7 @@ def build_feature_database(
         for name in changed:
             feature_db.pop(name, None)
         _remove_cache_entries(cache_file, changed)
-        logger.info("Re-extracting %s changed images in %s", len(changed), resolved)
+        logger.info("Re-extracting %s changed images in %s", len(changed), image_dir)
     _save_stamps(cache_file, {
         f: stamp for f in feature_db
         if stored.get(f) is None and (stamp := disk.get(f)) is not None
@@ -219,7 +193,7 @@ def build_feature_database(
 
     new_files = [f for f in current_files if f not in feature_db]
     total = len(new_files)
-    logger.info("Processing %s new files in %s", total, resolved)
+    logger.info("Processing %s new files in %s", total, image_dir)
 
     if total == 0:
         if progress_callback:
@@ -234,10 +208,10 @@ def build_feature_database(
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         for start in range(0, total, _BATCH_SIZE):
             if cancel_event is not None and cancel_event.is_set():
-                logger.info("Build cancelled after %s/%s files in %s", done, total, resolved)
+                logger.info("Build cancelled after %s/%s files in %s", done, total, image_dir)
                 break
             chunk = new_files[start:start + _BATCH_SIZE]
-            loaded = list(pool.map(lambda f: _read_image(f, resolved), chunk))
+            loaded = list(pool.map(lambda f: _read_image(f, image_dir), chunk))
 
             readable = []
             for fname, img in loaded:
@@ -282,9 +256,9 @@ def build_feature_database(
     return feature_db
 
 
-def clear_from_cache(filename: str, db_path: str | None = None) -> None:
+def clear_from_cache(filename: str, image_dir: str) -> None:
     """Remove a single entry from the SQLite cache (useful after deleting an image)."""
-    path = _cache_path(db_path or database_path)
+    path = _cache_path(image_dir)
     if not os.path.exists(path):
         return
     try:
@@ -306,7 +280,7 @@ class GameDatabase:
     get the immutable MatchIndex it hands out.
     """
 
-    def __init__(self, base: str = BASE_DATABASE_PATH):
+    def __init__(self, base: str = CARD_IMAGES_DIR):
         self._base = base
         self.game: str | None = None
         self.vectors: dict[str, np.ndarray] = {}

@@ -174,3 +174,17 @@ Behaviour shouldn't change: the short enum names resolved to the same objects as
       asks for confirmation.
 - [ ] Turn on Debug mode with the camera running: the heatmap overlay appears, and the window
       stays responsive during a Rebuild Database.
+
+## Legacy names removed (PhotoMatching.py → `python -m lorebook`)
+
+Behaviour shouldn't change: this was renames only, plus the build/match command moving into the package.
+
+- [ ] `python -m lorebook --game Lorcana --build` prints a percentage per batch and ends with
+      `DB entries: N` (N = number of images in `Card_Images/Lorcana/`). Running it again right
+      away prints `100% -` and the same N.
+- [ ] `python -m lorebook --game Lorcana --match Card_Images/Lorcana/001-040.webp` prints
+      `1.0000  001-040.webp` first. `python -m lorebook` with no flags prints a usage error.
+- [ ] `python UI.py`: scan a card. The status line under the preview shows the score and file
+      name, Add shows the green "Added 1× …" message on the right, and Undo removes it again.
+- [ ] Settings: every game lists its sets, Apply keeps the selection, and Rebuild Database runs.
+- [ ] Auto-scan on: placing a card triggers exactly one scan.

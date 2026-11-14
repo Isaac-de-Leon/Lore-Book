@@ -53,7 +53,7 @@ def _write_rates(tmp_path, rates, fetched_at=None):
 
 
 def _lorcast_stub(cards_by_set, rates=None):
-    """Fake _fetch_json: /sets lists the sets, /sets/<code>/cards returns cards."""
+    """Fake fetch_json: /sets lists the sets, /sets/<code>/cards returns cards."""
     def fake(url):
         if url.endswith("/sets"):
             return {"results": [{"code": code} for code in cards_by_set]}
@@ -148,7 +148,7 @@ def test_downloads(tmp_path, monkeypatch):
     assert price_for("9", "41", "Lorcana")["usd"] == 0.01
 
     card = {"set": {"code": "9"}, "collector_number": "41", "prices": {"usd": 1.24, "usd_foil": 3.8}}
-    monkeypatch.setattr(price_fetcher, "_fetch_json", _lorcast_stub({"9": [card]}))
+    monkeypatch.setattr(price_fetcher, "fetch_json", _lorcast_stub({"9": [card]}))
     assert download_card_prices("Lorcana") == 1
     written = json.loads((tmp_path / "card_prices_Lorcana.json").read_text("utf-8"))
     assert written["prices"] == {"9-41": {"usd": 1.24, "usd_foil": 3.8}}
@@ -159,14 +159,14 @@ def test_downloads(tmp_path, monkeypatch):
     assert not os.path.exists(tmp_path / "card_prices_NoSuchGame.json")
 
     # One failing set aborts the refresh and keeps the existing file.
-    monkeypatch.setattr(price_fetcher, "_fetch_json",
+    monkeypatch.setattr(price_fetcher, "fetch_json",
                         _lorcast_stub({"9": [card], "10": OSError("set 10 failed")}))
     with pytest.raises(OSError):
         download_card_prices("Lorcana")
     assert json.loads((tmp_path / "card_prices_Lorcana.json").read_text("utf-8")) == written
 
     # Currency rates: only supported currencies are kept.
-    monkeypatch.setattr(price_fetcher, "_fetch_json", lambda url: {
+    monkeypatch.setattr(price_fetcher, "fetch_json", lambda url: {
         "base": "USD", "rates": {"CAD": 1.37, "EUR": 0.92, "GBP": 0.79, "JPY": 155.0},
     })
     assert download_currency_rates() == 3
@@ -178,7 +178,7 @@ def test_downloads(tmp_path, monkeypatch):
     def offline(url):
         raise OSError("offline")
 
-    monkeypatch.setattr(price_fetcher, "_fetch_json", offline)
+    monkeypatch.setattr(price_fetcher, "fetch_json", offline)
     with pytest.raises(OSError):
         download_currency_rates()
     assert rate_for("CAD") == 1.37                      # existing file kept
@@ -207,7 +207,7 @@ def test_fetch_script(tmp_path, monkeypatch, capsys):
     assert "No price source" in capsys.readouterr().err
 
     card = {"set": {"code": "9"}, "collector_number": "41", "prices": {"usd": 1.24}}
-    monkeypatch.setattr(price_fetcher, "_fetch_json", _lorcast_stub({"9": [card]}, rates={"CAD": 1.37}))
+    monkeypatch.setattr(price_fetcher, "fetch_json", _lorcast_stub({"9": [card]}, rates={"CAD": 1.37}))
     assert mod.main(["--game", "Lorcana"]) == 0
     assert (tmp_path / "card_prices_Lorcana.json").exists()
     assert (tmp_path / RATES_FILE).exists()

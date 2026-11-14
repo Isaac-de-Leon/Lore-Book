@@ -32,11 +32,7 @@ def l2_normalize(vec: np.ndarray) -> np.ndarray:
     return v / n if n else v
 
 
-# Backward-compat alias (was private; features.py and callers need it).
-_l2_normalize = l2_normalize
-
-
-def _cosine_score(a: np.ndarray, b: np.ndarray) -> float:
+def cosine_score(a: np.ndarray, b: np.ndarray) -> float:
     """
     Cosine similarity for L2-normalized vectors.
     Raises ValueError if either vector is not L2-normalized.
@@ -65,7 +61,7 @@ def find_best_matches(
         if vec is None or np.size(vec) == 0:
             continue
         try:
-            score = _cosine_score(q, vec)
+            score = cosine_score(q, vec)
         except ValueError:
             # One corrupt/unnormalized cache vector must not kill the scan.
             logger.warning("Skipping unnormalized/corrupt DB vector for %s", fname)

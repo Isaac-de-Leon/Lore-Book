@@ -41,7 +41,7 @@ Then check the new files in `Card_Images/<Game>/`:
 - **Foil-only cutoff**: `LORCANA_MAX_NORMAL_CARD = 204` in `lorebook/core/game_types.py`.
   Check the new set's highest *non-foil* card number in the LorcanaJSON data
   (`rarity` / `foilTypes` fields). If the set breaks the 204 assumption, make
-  `is_foil_only_card()` set-aware, add a test in `tests/test_photo_matching.py`, and
+  `is_foil_only_card()` set-aware, add a test in `tests/test_core_utils.py`, and
   update the CSV Format section of CLAUDE.md. Don't just bump the constant, because older sets still use 204.
 - **Promo collisions**: if new promo printings share a set/number with main-set cards,
   `_is_promo_printing()` in `image_fetcher.py` should still prefer the main printing. Spot-check one.
@@ -50,7 +50,7 @@ Then check the new files in `Card_Images/<Game>/`:
 ## 4. Rebuild the database
 
 ```bash
-python PhotoMatching.py --game <Game> --build
+python -m lorebook --game <Game> --build
 ```
 
 (In the GUI this is the Rebuild Database button, which also runs step 2's image fetch.) This needs

@@ -4,6 +4,7 @@ import csv
 import logging
 import os
 
+from lorebook.core.card_database import list_image_files
 from lorebook.core.fileio import atomic_write
 from lorebook.core.game_types import (
     LORCANA_CSV,
@@ -34,29 +35,10 @@ def split_filename(matched_filename: str) -> tuple[str, str]:
     return parts[0], "-".join(parts[1:])
 
 
-# Backward-compat alias (was private; other packages legitimately need it).
-_split_filename = split_filename
-
-
-def get_available_sets(
-    game_type: GameType | None = None,
-    db_path: str | None = None,
-) -> list[str]:
-    """
-    Return a sorted list of all set codes found in db_path (or the current database path).
-
-    game_type is accepted for API compatibility but no longer restricts results —
-    all set codes present in the folder are returned regardless of format.
-    """
-    from lorebook.core.card_database import get_database_path, list_image_files
-
-    resolved = db_path or get_database_path()
-    sets = set()
-    for fname in list_image_files(resolved):
-        set_code, _ = split_filename(fname)
-        if set_code:
-            sets.add(set_code)
-    return sorted(sets)
+def get_available_sets(image_dir: str) -> list[str]:
+    """Return the sorted set codes of every card image in a game's image folder."""
+    set_codes = {split_filename(filename)[0] for filename in list_image_files(image_dir)}
+    return sorted(code for code in set_codes if code)
 
 
 class CsvReadError(OSError):
@@ -68,7 +50,7 @@ class CsvReadError(OSError):
     """
 
 
-def _normalize_existing_rows(csv_path: str, strict: bool = False) -> list[list[str]]:
+def read_rows(csv_path: str, strict: bool = False) -> list[list[str]]:
     """
     Read a CSV and normalize every row to exactly 4 columns:
     [Set Number, Card Number, Variant, Count].
@@ -115,7 +97,7 @@ def read_collection_rows(game: str, strict: bool = False) -> list[list[str]]:
     strict, an unreadable file raises CsvReadError instead of returning
     a partial list.
     """
-    return _normalize_existing_rows(csv_for_game(game), strict=strict)
+    return read_rows(csv_for_game(game), strict=strict)
 
 
 def clear_collection(game: str) -> None:
@@ -125,10 +107,10 @@ def clear_collection(game: str) -> None:
     Uses the same atomic temp-file replace as every other write, so an
     interrupted clear can't corrupt the file.
     """
-    _write_rows_4col(csv_for_game(game), [])
+    write_rows(csv_for_game(game), [])
 
 
-def _write_rows_4col(csv_path: str, rows: list[list[str]]) -> None:
+def write_rows(csv_path: str, rows: list[list[str]]) -> None:
     """
     Write rows to CSV with a 4-column header.
 
@@ -190,7 +172,7 @@ def update_cardlist_batch(
 
     for target_file, updates in by_file.items():
         # strict: a read failure must abort, not write back a partial file
-        existing = _normalize_existing_rows(target_file, strict=True)
+        existing = read_rows(target_file, strict=True)
         changed = False
         for set_code, card_code, variant, count in updates:
             for r in existing:
@@ -207,7 +189,7 @@ def update_cardlist_batch(
                     existing.append([set_code, card_code, variant, str(count)])
                     changed = True
         if changed or not os.path.exists(target_file):
-            _write_rows_4col(target_file, existing)
+            write_rows(target_file, existing)
 
 
 def update_cardlist(
