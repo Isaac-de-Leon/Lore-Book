@@ -97,6 +97,7 @@ class MainWindow(QWidget):
         self._scan_token = 0
         self._scan_busy = False
         self._build_running = False
+        self._rebuild_queued = False  # Rebuild was pressed while a build was running
         self._build_cancel_event = threading.Event()
         self._progress_dialog: BuildProgressDialog | None = None
 
@@ -299,6 +300,7 @@ class MainWindow(QWidget):
         # Release the camera, stop a running build at its next safe point
         # (downloads and cache writes are atomic), drop any in-flight scan.
         self.stop_camera()
+        self._rebuild_queued = False
         self._build_cancel_event.set()
         self._scan_token += 1
         self.stop_workers()
@@ -341,8 +343,11 @@ class MainWindow(QWidget):
         if self._progress_dialog is None:
             self._progress_dialog = BuildProgressDialog(self)
             self._progress_dialog.cancel_requested.connect(self._cancel_db_build)
-        # One build at a time — Rebuild during the startup build re-shows its dialog.
+        # One build at a time. The running build was given its folder list when
+        # it started, so run again when it finishes to pick up what changed
+        # since (a game folder Rebuild just created, newly added images).
         if self._build_running:
+            self._rebuild_queued = True
             self._progress_dialog.show()
             self._progress_dialog.raise_()
             return
@@ -357,6 +362,7 @@ class MainWindow(QWidget):
     def _cancel_db_build(self) -> None:
         """Ask the running database build to stop at its next safe point."""
         logger.info("Database build cancel requested")
+        self._rebuild_queued = False    # Cancel means stop, not "stop, then start over"
         self._build_cancel_event.set()  # thread-safe; read by the build job
 
     def _on_build_status(self, text: str) -> None:
@@ -387,6 +393,9 @@ class MainWindow(QWidget):
         clear_price_cache()        # price/rate files may have been rewritten
         if report.prices_refreshed:
             self.scanner.refresh_current_match()
+        queued, self._rebuild_queued = self._rebuild_queued, False
+        if queued and not report.cancelled:
+            self.start_db_build_in_background()
 
     # ------------------------------------------------------------------ camera
 

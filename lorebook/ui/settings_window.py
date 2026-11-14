@@ -123,9 +123,8 @@ class SettingsWindow(QDialog):
         self.auto_scan_checkbox.setChecked(settings.auto_scan)
         layout.addRow(self.auto_scan_checkbox)
 
-        self.confidence_input = QLineEdit(
-            str(int(100 * settings.confidence_threshold))
-        )
+        # :g, not int(): 100 * 0.57 is 56.99999999999999, which int() showed as 56.
+        self.confidence_input = QLineEdit(f"{100 * settings.confidence_threshold:g}")
         layout.addRow("Confidence Threshold (%):", self.confidence_input)
 
         self.foil_threshold_input = QLineEdit(

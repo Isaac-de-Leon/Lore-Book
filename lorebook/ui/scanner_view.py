@@ -58,10 +58,18 @@ class ScannerView(QWidget):
         self.current_match_idx = 0
         self.matches_game: str | None = None   # the game the shown matches belong to
         self._last_add: tuple[str, bool, int, str] | None = None  # (fname, foil, count, game)
+        self._added: set[str] = set()    # matches from the current scan already in the CSV
+        self._scan_failed = False        # the shown matches are from an earlier scan
         self._foil_locked = False        # Foil checkbox forced on for foil-only rarities
         self._foil_before_lock = False   # user's checkbox state to restore on unlock
 
         self._build_widgets()
+
+        # One timer for the Add/Undo message, restarted per message: separate
+        # one-shot timers let an old message's timeout wipe a newer message.
+        self._csv_status_timer = QTimer(self)
+        self._csv_status_timer.setSingleShot(True)
+        self._csv_status_timer.timeout.connect(lambda: self.csv_status.setText(""))
 
     # ------------------------------------------------------------------ layout
 
@@ -265,7 +273,8 @@ class ScannerView(QWidget):
     def scan_failed(self, text: str) -> None:
         """Show why the scan produced nothing and disable Add."""
         self.status_label.setText(text)
-        self.add_csv_btn.setEnabled(False)
+        self._scan_failed = True  # any matches still on screen belong to an earlier card
+        self._update_add_enabled()
 
     def show_matches(self, matches: list[tuple[str, float]], game: str) -> None:
         """Show scan results (already filtered to the selected sets)."""
@@ -275,8 +284,9 @@ class ScannerView(QWidget):
         self.matches_game = game
         self.last_matches = matches[:20]
         self.current_match_idx = 0
+        self._added.clear()
+        self._scan_failed = False
         self._show_match_at(0)
-        self.add_csv_btn.setEnabled(True)
         # After _show_match_at so the warning isn't overwritten by its label text.
         if len(matches) >= 2 and (matches[0][1] - matches[1][1]) < self.AMBIGUOUS_GAP:
             self.status_label.setText(
@@ -294,7 +304,8 @@ class ScannerView(QWidget):
         self.last_matches = []
         self.current_match_idx = 0
         self.matches_game = None
-        self.add_csv_btn.setEnabled(False)
+        self._added.clear()
+        self._update_add_enabled()
         if self._foil_locked:
             self._foil_locked = False
             self.foil_check.setEnabled(True)
@@ -329,6 +340,7 @@ class ScannerView(QWidget):
         self.match_price_label.setText(format_price(price, currency, rate_for(currency)))
         self.match_pos_label.setText(f"{idx + 1} / {len(self.last_matches)}")
         self.status_label.setText(f"{score:.3f}  {fname}")
+        self._update_add_enabled()
 
         if game:
             path = os.path.join(CARD_IMAGES_DIR, game, fname)
@@ -354,6 +366,15 @@ class ScannerView(QWidget):
             self.foil_check.setEnabled(True)
             self.foil_check.setChecked(self._foil_before_lock)
 
+    def _update_add_enabled(self) -> None:
+        """Enable Add only for a match from the latest scan that has not been added yet.
+
+        Adding disables the button so a second click can't double-count the
+        card; Undo, or stepping to a different match, makes it available again.
+        """
+        shown = self.last_matches[self.current_match_idx][0] if self.last_matches else None
+        self.add_csv_btn.setEnabled(shown is not None and not self._scan_failed and shown not in self._added)
+
     def prev_match(self) -> None:
         """Show the previous alternative match."""
         if self.last_matches:
@@ -371,8 +392,9 @@ class ScannerView(QWidget):
         color = self._tokens.get("danger" if is_error else "success", "")
         self.csv_status.setStyleSheet(f"color: {color}; padding-left: 8px;")
         self.csv_status.setText(message)
+        self._csv_status_timer.stop()
         if timeout_ms > 0:
-            QTimer.singleShot(timeout_ms, lambda: self.csv_status.setText(""))
+            self._csv_status_timer.start(timeout_ms)
 
     def add_to_csv(self) -> None:
         """Write the current match to its game's collection CSV."""
@@ -403,7 +425,8 @@ class ScannerView(QWidget):
         self._last_add = (fname, is_foil, count, game)
         self.undo_btn.setEnabled(True)
         self.flash_csv_status(f"Added {count}× {fname} to {target}")
-        self.add_csv_btn.setEnabled(False)
+        self._added.add(fname)
+        self._update_add_enabled()
         self.collection_changed.emit()
 
     def undo_last_add(self) -> None:
@@ -421,12 +444,16 @@ class ScannerView(QWidget):
         self._last_add = None
         self.undo_btn.setEnabled(False)
         self.flash_csv_status(f"Removed {count}× {fname}")
+        self._added.discard(fname)
+        self._update_add_enabled()
         self.collection_changed.emit()
 
     def forget_last_add(self) -> None:
         """The collection was cleared elsewhere: Undo would point at nothing."""
         self._last_add = None
         self.undo_btn.setEnabled(False)
+        self._added.clear()  # nothing from this scan is in the CSV any more
+        self._update_add_enabled()
 
     # ------------------------------------------------------------------ keyboard
 

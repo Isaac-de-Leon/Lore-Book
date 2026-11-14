@@ -227,3 +227,38 @@ byte-identical before and after; the Keras and tflite backends and the installer
       and `LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v` passes.
 - [ ] On the Pi: `python -m lorebook.sorter --backend tflite ...` still finds
       `mobilenetv2_features.tflite` at the repo root.
+
+## Bug fixes: Collection, Scanner, Settings, rebuild, sorter
+
+- [ ] **Clear with the file locked.** Open `LorcanaList.csv` in Excel, then Collection → Clear… →
+      Yes: the summary reads "Not cleared — LorcanaList.csv could not be updated (open in another
+      program?)" and the table is unchanged. Close Excel, Clear again: it empties.
+- [ ] **Export.** Collection → Export CSV…: the dialog opens in Documents with
+      `LorcanaList.csv` pre-filled (asking before replacing an existing file). Navigating to the
+      collection file itself and saving shows "That is the collection file itself — pick another
+      name or folder."
+- [ ] **New game folder.** With the app running, create `Card_Images/Pokemon/`, switch to the
+      Scanner page and back to Collection: Pokemon is in the Game dropdown, and the game that was
+      selected still is.
+- [ ] **Add after Undo.** Scan a card, Add (the button greys out), Undo: Add is clickable again.
+      Add, press `D`: Add is clickable for the alternative; press `A`: greyed out again for the
+      card already added.
+- [ ] **Status message.** Add a card, then within three seconds Add with the CSV open in Excel:
+      the red "Not added…" message stays for about eight seconds instead of vanishing with the
+      green one.
+- [ ] **Confidence threshold.** Settings → set Confidence Threshold to 57 → Apply → reopen
+      Settings: it shows 57 (it used to show 56). Same for 29 and 58.
+- [ ] **Rebuild during a build.** Start the app with new images to process, and while the
+      progress dialog is still running open Settings, tick a game that has no folder yet and
+      press Rebuild Database: when the first build ends a second one starts and builds that
+      game. Pressing Cancel instead stops without starting again.
+- [ ] **Sorter with the CSV locked.** Run `python -m lorebook.sorter --game Lorcana --source
+      Card_Images/Lorcana --no-dry-run --max-cards 60` with `LorcanaList.csv` open in Excel:
+      the log shows "CSV write failed … kept to retry" and sorting continues. Close Excel
+      during the run: the cards are written. Left open to the end: each card is listed as
+      "NOT RECORDED in the CSV" and the command ends with an error.
+- [ ] **tflite model on the Pi.** After `pip install .[sorter]`, run `lorebook-sort --backend
+      tflite …` from the folder holding `mobilenetv2_features.tflite`: the model is found.
+      From a folder without it, the error names the path it looked at.
+- [ ] `LOREBOOK_BACKEND=nonsense python -m lorebook --game Lorcana --match some.jpg` reports
+      "Unknown extractor backend: 'nonsense' (from LOREBOOK_BACKEND)".
