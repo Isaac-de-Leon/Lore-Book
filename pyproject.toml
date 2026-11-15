@@ -83,10 +83,11 @@ testpaths = ["tests"]
 source = ["lorebook"]
 
 [tool.coverage.report]
-# Measured 91% when this was set; the gap is mostly lorebook/ui/app.py (only
-# runs when the real app starts) and camera/dialog paths in the two big views.
+# Measured 95% when this was set. What is left is lorebook/ui/app.py (only runs
+# when the real app starts), fallbacks for optional packages (only one side
+# can run in a given install) and handlers for rare I/O failures.
 # Raise it as tests are added; don't lower it to get a change through.
-fail_under = 88
+fail_under = 92
 show_missing = true
 skip_covered = true
 exclude_also = ["if TYPE_CHECKING:"]

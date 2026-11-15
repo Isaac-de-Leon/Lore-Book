@@ -2,7 +2,7 @@
 #
 # Each worker's slots are plain methods, so they are exercised on the test
 # thread with fakes for the camera, the model and the build job. Running them
-# on a real WorkerThread is covered by tests/test_gui_smoke.py.
+# on real threads is covered by tests/test_main_window.py; WorkerThread itself is tested at the end.
 
 import os
 import threading
@@ -201,3 +201,47 @@ def test_scan_worker_warm_up_and_heatmap_never_raise(monkeypatch):
     monkeypatch.setattr(workers, "visualize_activation_overlay", crash)
     worker.heatmap(FRAME)
     assert heatmaps[-1] is FRAME  # the plain frame is shown instead
+
+
+def test_worker_thread_keeps_thread_locals_between_slot_calls():
+    # TensorFlow keeps its graph/eager context in thread-locals; a plain
+    # moveToThread QThread wiped them between slot calls, so a model loaded by
+    # warm_up crashed the next scan's predict (native access violation).
+    import threading
+    import time
+
+    from PySide6.QtCore import QObject, Signal, Slot
+
+    from lorebook.ui.threads import WorkerThread
+
+    app = QApplication.instance()
+    main_thread = threading.get_ident()
+    local = threading.local()
+    seen: list = []
+
+    class Worker(QObject):
+        @Slot(int)
+        def step(self, n: int) -> None:
+            seen.append((threading.get_ident(), getattr(local, "value", None)))
+            local.value = n
+
+    class Sender(QObject):
+        go = Signal(int)
+
+    wt = WorkerThread(Worker(), "test-locals")
+    sender = Sender()
+    sender.go.connect(wt.worker.step)
+    wt.start()
+    try:
+        for n in range(3):
+            sender.go.emit(n)
+        deadline = time.monotonic() + 5
+        while len(seen) < 3 and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+    finally:
+        assert wt.stop()
+    # On the main thread the locals would survive anyway and prove nothing.
+    idents = {ident for ident, _ in seen}
+    assert len(idents) == 1 and main_thread not in idents
+    assert [value for _, value in seen] == [None, 0, 1]

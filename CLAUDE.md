@@ -100,7 +100,9 @@ Lore-Book/
 ├── requirements.txt       # Pinned desktop runtime lock (direct deps first, then transitive)
 ├── requirements-dev.txt   # Pinned pytest / pytest-cov / ruff / mypy (also what CI installs)
 └── tests/                 # No camera / GPU / TF needed (stubbed in conftest.py)
-    ├── conftest.py
+    ├── conftest.py            # TF stubs; every test starts in an empty tmp folder with real dialogs blocked;
+    │                          #   Qt fixtures: qt_app, window (fake camera + build job), message_boxes, save_dialog
+    ├── test_test_safety.py    # the guard rails in conftest.py: temp folder per test, no real dialogs
     ├── test_paths.py
     ├── test_settings.py
     ├── test_build.py
@@ -119,8 +121,11 @@ Lore-Book/
     ├── test_sorter_rules.py
     ├── test_sorter_pipeline.py
     ├── test_sorter_cli.py     # python -m lorebook.sorter wiring
-    ├── test_gui_smoke.py      # headless Qt: main window, Settings, Scanner, Collection (skipped without PySide6)
-    ├── test_workers.py        # camera / scan / build workers with fakes (headless Qt)
+    ├── test_main_window.py    # headless Qt: settings, builds, camera, scanning, shortcuts on a real MainWindow
+    ├── test_scanner_view.py   # headless Qt: results, foil lock, Add/Undo, shortcuts
+    ├── test_collection_view.py # headless Qt: table, Clear, Export, game list
+    ├── test_settings_window.py # headless Qt: thresholds, game/set tree
+    ├── test_workers.py        # camera / scan / build workers with fakes, WorkerThread (headless Qt)
     ├── test_ui_widgets.py     # progress dialog, image rendering, icons, styles, logging (headless Qt)
     └── test_tf_integration.py # real TF on the scan worker thread (opt-in: LOREBOOK_TF_TESTS=1)
 ```
@@ -265,8 +270,8 @@ ruff format . && ruff check . && python -m pytest tests/ -v
 ```
 
 CI runs all three (formatting as `ruff format --check`), plus `mypy` and, on Linux and Windows, the full suite with the Qt tests and coverage. Ruff (`pyproject.toml`: pyflakes,
-naming, complexity/size limits and required docstrings) is the main static check over `lorebook/ui/`, where the smoke test only covers startup
-and shutdown. A `.claude/settings.json` hook lints each `.py`
+naming, complexity/size limits and required docstrings) catches what the tests can't: the Qt tests run headless with a fake camera, so they
+cover the logic but not how the app looks or behaves with real hardware. A `.claude/settings.json` hook lints each `.py`
 file after it is edited, and in cloud sessions the SessionStart hook installs CI's test deps.
 
 ### What can't be verified here
@@ -360,7 +365,12 @@ the foil-only cutoff (`LORCANA_MAX_NORMAL_CARD`) and filename codes, then rebuil
 
 - **Collection CSVs are the user's real data.** `LorcanaList.csv` / `RiftboundList.csv` are
   committed and only change in `data:` commits made by the user. Never edit, clear or regenerate
-  them as part of feature work. Tests write to `tmp_path`.
+  them as part of feature work. Tests write to `tmp_path`: an autouse fixture in
+  `tests/conftest.py` starts every test in its own empty folder, makes any real message box or
+  file dialog fail the test, and points Export at the temp folder. Use the `message_boxes` and
+  `save_dialog` fixtures to answer dialogs, never `monkeypatch.undo()` to get back to the
+  checkout, and apply the same care to throwaway scripts: one that accepted Export's default
+  path once overwrote a file in the user's Documents folder.
 - **GUI threading.** Workers (`lorebook/ui/workers.py`) talk to the window only through queued
   signals. Widgets and `settings` are GUI-thread-only, and the GUI thread never touches the model or the
   card database (`ScanWorker` owns both); the only direct cross-thread
