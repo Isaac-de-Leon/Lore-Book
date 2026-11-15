@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 
+from lorebook.core.features.preprocessing import FEATURE_DIM, INPUT_SIZE
 from lorebook.core.fileio import atomic_write_bytes
 from lorebook.core.net import fetch_bytes
 from lorebook.core.paths import data_path
@@ -33,8 +34,6 @@ WEIGHTS_FILENAME = "mobilenet_v2_weights_tf_dim_ordering_tf_kernels_1.0_224_no_t
 WEIGHTS_URL = "https://storage.googleapis.com/tensorflow/keras-applications/mobilenet_v2/" + WEIGHTS_FILENAME
 WEIGHTS_SHA256 = "f8aff69536bd77a692c594f559c798c19bf7f3f36668fc9fa00b21c6aab4797c"
 
-INPUT_SIZE = 224
-FEATURE_DIM = 1280
 _BN_EPSILON = 1e-3  # keras.applications.MobileNetV2's BatchNormalization epsilon
 _OPSET = 13
 

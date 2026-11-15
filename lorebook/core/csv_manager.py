@@ -4,6 +4,7 @@ import csv
 import logging
 import os
 from collections.abc import Iterable
+from enum import StrEnum
 from typing import IO, Any
 
 from lorebook.core.fileio import atomic_write
@@ -17,6 +18,13 @@ from lorebook.core.game_types import (
 from lorebook.core.games import split_filename
 
 logger = logging.getLogger(__name__)
+
+
+class Variant(StrEnum):
+    """The Variant column of a collection CSV, spelled the way Dreamborn.ink expects."""
+
+    NORMAL = "normal"
+    FOIL = "foil"
 
 
 class CsvReadError(OSError):
@@ -144,7 +152,8 @@ def _group_updates(
         set_code, card_code = split_filename(matched_filename)
         # Foil-only rarities (Lorcana Enchanted/Epic/Iconic) are always recorded
         # as foil — Dreamborn.ink rejects a "normal" row for them.
-        variant = "foil" if is_foil or is_foil_only_card(set_code, card_code, game_type) else "normal"
+        foil = is_foil or is_foil_only_card(set_code, card_code, game_type)
+        variant = Variant.FOIL if foil else Variant.NORMAL
         by_file.setdefault(target_file, []).append((set_code, card_code, variant, count))
     return by_file
 

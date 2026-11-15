@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from lorebook.core.features.extractor import ImageInput
-from lorebook.core.features.preprocessing import finalize_vector, preprocess_to_batch
+from lorebook.core.features.preprocessing import blank_batch, finalize_vector, preprocess_to_batch
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class OnnxExtractor:
 
     def ensure_ready(self) -> None:
         """Build/load the model and run one warm-up inference, raising on failure."""
-        self._run(np.zeros((1, 224, 224, 3), np.float32))
+        self._run(blank_batch())
 
     def _ensure_session(self) -> Any:
         """Return the inference session, building the model and loading it on first use."""

@@ -8,8 +8,8 @@ import numpy as np
 
 from lorebook.core.features import keras_backend
 from lorebook.core.features.onnx_backend import OnnxExtractor
-from lorebook.core.features.preprocessing import mobilenet_preprocess
-from lorebook.core.features.registry import default_backend, get_extractor
+from lorebook.core.features.preprocessing import INPUT_SIZE, mobilenet_preprocess
+from lorebook.core.features.registry import Backend, default_backend, get_extractor
 
 
 def visualize_activation_overlay(img_bgr: np.ndarray, model: Any = None, blocking: bool = True) -> np.ndarray:
@@ -21,8 +21,8 @@ def visualize_activation_overlay(img_bgr: np.ndarray, model: Any = None, blockin
     """
     if img_bgr is None or img_bgr.size == 0:
         return img_bgr
-    if model is None and default_backend() == "onnx":
-        onnx = cast(OnnxExtractor, get_extractor("onnx"))  # the only backend with activations()
+    if model is None and default_backend() == Backend.ONNX:
+        onnx = cast(OnnxExtractor, get_extractor(Backend.ONNX))  # the only backend with activations()
         if not blocking and not onnx.loaded():
             return img_bgr
         return _activation_overlay(img_bgr, onnx.activations)
@@ -47,7 +47,7 @@ def _activation_overlay(
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
 
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    resized = cv2.resize(img_rgb, (224, 224), interpolation=cv2.INTER_AREA)
+    resized = cv2.resize(img_rgb, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_AREA)
     batch = np.expand_dims(resized.astype(np.float32), axis=0)
     activations = activations_fn(mobilenet_preprocess(batch))[0]  # (7,7,1280)
 

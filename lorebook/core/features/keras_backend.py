@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from lorebook.core.features.extractor import ImageInput
-from lorebook.core.features.preprocessing import finalize_vector, preprocess_to_batch
+from lorebook.core.features.preprocessing import blank_batch, finalize_vector, preprocess_to_batch
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class KerasExtractor:
         TensorFlow's first-call setup."""
         with model_lock:
             feat_model, _ = get_models()
-            infer(feat_model, np.zeros((1, 224, 224, 3), np.float32))
+            infer(feat_model, blank_batch())
 
     def extract(self, img_or_path: ImageInput) -> np.ndarray | None:
         """Return the image's normalized 1280-dim vector, or None if it can't be extracted."""

@@ -2,6 +2,8 @@
 
 import importlib.util
 import os
+from collections.abc import Callable
+from enum import StrEnum
 
 import numpy as np
 
@@ -10,7 +12,22 @@ from lorebook.core.features.keras_backend import KerasExtractor
 from lorebook.core.features.onnx_backend import OnnxExtractor
 from lorebook.core.features.tflite_backend import TFLiteExtractor
 
-BACKENDS = ("onnx", "keras", "tflite")
+
+class Backend(StrEnum):
+    """The feature backends, by the name used on the command line and in LOREBOOK_BACKEND."""
+
+    ONNX = "onnx"
+    KERAS = "keras"
+    TFLITE = "tflite"
+
+
+BACKENDS = tuple(backend.value for backend in Backend)
+
+_FACTORIES: dict[str, Callable[[], FeatureExtractor]] = {
+    Backend.ONNX: OnnxExtractor,
+    Backend.KERAS: KerasExtractor,
+    Backend.TFLITE: TFLiteExtractor,
+}
 
 
 def default_backend() -> str:
@@ -21,7 +38,7 @@ def default_backend() -> str:
     override = os.environ.get("LOREBOOK_BACKEND")
     if override:
         return override.lower()
-    return "onnx" if importlib.util.find_spec("onnxruntime") is not None else "keras"
+    return Backend.ONNX if importlib.util.find_spec("onnxruntime") is not None else Backend.KERAS
 
 
 _extractors: dict[str, FeatureExtractor] = {}
@@ -36,17 +53,13 @@ def get_extractor(backend: str | None = None) -> FeatureExtractor:
     """
     key = (backend or default_backend()).lower()
     if key not in _extractors:
-        if key == "onnx":
-            _extractors[key] = OnnxExtractor()
-        elif key == "keras":
-            _extractors[key] = KerasExtractor()
-        elif key == "tflite":
-            _extractors[key] = TFLiteExtractor()
-        else:
+        factory = _FACTORIES.get(key)
+        if factory is None:
             source = "" if backend else " (from LOREBOOK_BACKEND)"
             raise ValueError(
                 f"Unknown extractor backend: {key!r}{source} (use one of {', '.join(BACKENDS)})."
             )
+        _extractors[key] = factory()
     return _extractors[key]
 
 

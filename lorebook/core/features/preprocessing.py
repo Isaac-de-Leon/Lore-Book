@@ -15,6 +15,16 @@ from lorebook.core.matching import l2_normalize
 
 logger = logging.getLogger(__name__)
 
+# MobileNetV2's input is INPUT_SIZE x INPUT_SIZE pixels and its pooled output has
+# FEATURE_DIM values. Every backend, the ONNX model builder and the cache agree on these.
+INPUT_SIZE = 224
+FEATURE_DIM = 1280
+
+
+def blank_batch() -> np.ndarray:
+    """Return an all-zero (1, INPUT_SIZE, INPUT_SIZE, 3) batch, used to warm a model up."""
+    return np.zeros((1, INPUT_SIZE, INPUT_SIZE, 3), np.float32)
+
 
 def mobilenet_preprocess(batch: np.ndarray) -> np.ndarray:
     """
@@ -47,7 +57,7 @@ def preprocess_to_batch(img_or_path: ImageInput) -> np.ndarray | None:
         return None
 
     img_rgb = cv2.cvtColor(valid, cv2.COLOR_BGR2RGB)
-    resized = cv2.resize(img_rgb, (224, 224), interpolation=cv2.INTER_AREA)
+    resized = cv2.resize(img_rgb, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_AREA)
     batch = np.expand_dims(resized.astype(np.float32), axis=0)
     return mobilenet_preprocess(batch)
 
@@ -55,7 +65,7 @@ def preprocess_to_batch(img_or_path: ImageInput) -> np.ndarray | None:
 def finalize_vector(features: np.ndarray) -> np.ndarray | None:
     """Flatten, validate the 1280-dim shape, and L2-normalize a raw feature vector."""
     features = np.asarray(features).flatten().astype(np.float32)
-    if features.size != 1280:
+    if features.size != FEATURE_DIM:
         logger.error("Unexpected feature dimension: %s", features.size)
         return None
     return l2_normalize(features)

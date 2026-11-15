@@ -42,7 +42,7 @@ from lorebook.ui.scanner_view import ScannerView
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import DEFAULT_THEME, THEMES, build_stylesheet, theme_tokens
 from lorebook.ui.threads import WorkerThread
-from lorebook.ui.workers import BuildWorker, CameraWorker, ScanResult, ScanWorker
+from lorebook.ui.workers import BuildWorker, CameraState, CameraWorker, ScanResult, ScanWorker
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class MainWindow(QWidget):
 
         self.last_frame: np.ndarray | None = None
         self.last_frame_time: float | None = None
-        self._camera_state = "idle"  # idle | starting | running
+        self._camera_state = CameraState.IDLE
         self._scan_token = 0
         self._scan_busy = False
         self._build_running = False
@@ -402,31 +402,31 @@ class MainWindow(QWidget):
 
     def _on_camera_btn(self) -> None:
         """The smart toggle: Start when idle, Stop when running."""
-        if self._camera_state == "running":
+        if self._camera_state == CameraState.RUNNING:
             self.stop_camera()
-        elif self._camera_state == "idle":
+        elif self._camera_state == CameraState.IDLE:
             self.start_camera()
 
-    def _set_camera_state(self, state: str) -> None:
+    def _set_camera_state(self, state: CameraState) -> None:
         """Sync the camera toggle's text/icon/enabled + [cam=...] QSS state."""
         self._camera_state = state
         tokens = theme_tokens(self.settings.theme)
         text, icon, color, enabled = {
-            "starting": ("Starting…", "camera", tokens["muted"], False),
-            "running": ("Stop", "stop", tokens["danger"], True),
+            CameraState.STARTING: ("Starting…", "camera", tokens["muted"], False),
+            CameraState.RUNNING: ("Stop", "stop", tokens["danger"], True),
         }.get(state, ("Start", "play", tokens["on_accent"], True))
         self.camera_btn.setText(text)
         self.camera_btn.setIcon(get_icon(icon, color))
         self.camera_btn.setEnabled(enabled)
         # Property-based QSS needs an explicit repolish to take effect
-        self.camera_btn.setProperty("cam", state)
+        self.camera_btn.setProperty("cam", state.value)  # styles.py: cameraBtn[cam="..."]
         self.camera_btn.style().unpolish(self.camera_btn)
         self.camera_btn.style().polish(self.camera_btn)
 
     def start_camera(self) -> None:
         """Ask the camera worker to open the camera (probing + warm-up run there)."""
         self.last_frame = None
-        self._set_camera_state("starting")
+        self._set_camera_state(CameraState.STARTING)
         self.scanner.show_camera_message("Starting camera…")
         self.scanner.set_status_text("Starting camera…")
         self.camera_start_requested.emit(self.settings.camera_index)
@@ -441,20 +441,21 @@ class MainWindow(QWidget):
         self.watchdog.stop()
         self.last_frame = None
         self.last_frame_time = None
-        self._set_camera_state("idle")
+        self._set_camera_state(CameraState.IDLE)
         self.scanner.show_camera_message("Camera stopped")
 
     def _on_camera_state(self, state: str) -> None:
         """Follow the camera worker's state: start the watchdog on running, reset on idle."""
-        if state == "running":
+        camera_state = CameraState(state)  # the signal carries plain text
+        if camera_state == CameraState.RUNNING:
             self.last_frame_time = time.monotonic()
             self.watchdog.start()
-            self._set_camera_state("running")
+            self._set_camera_state(CameraState.RUNNING)
             self.scanner.set_status_text("Camera running …")
-        elif state == "idle":
+        elif camera_state == CameraState.IDLE:
             self._show_camera_stopped()
         else:
-            self._set_camera_state(state)
+            self._set_camera_state(camera_state)
 
     def _on_camera_failed(self, message: str) -> None:
         """Reset the camera UI and tell the user why the camera failed."""
@@ -470,7 +471,7 @@ class MainWindow(QWidget):
     def _on_frame(self, frame: np.ndarray) -> None:
         """A new camera frame: keep it, maybe auto-scan, show it with the overlay."""
         try:
-            if self._camera_state != "running":
+            if self._camera_state != CameraState.RUNNING:
                 return  # a frame sent before a Stop/failure arrived late
             self.last_frame_time = time.monotonic()
             if self.settings.rotate_display:

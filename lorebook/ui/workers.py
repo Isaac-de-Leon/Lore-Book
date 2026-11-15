@@ -10,6 +10,7 @@ import contextlib
 import logging
 import threading
 from dataclasses import dataclass
+from enum import StrEnum
 
 import cv2
 import numpy as np
@@ -21,6 +22,14 @@ from lorebook.core.features import extract_features, get_extractor, visualize_ac
 from lorebook.hardware.camera import open_capture
 
 logger = logging.getLogger(__name__)
+
+
+class CameraState(StrEnum):
+    """Where the camera is in its lifecycle; sent as text by CameraWorker.state_changed."""
+
+    IDLE = "idle"
+    STARTING = "starting"
+    RUNNING = "running"
 
 
 class BuildWorker(QObject):
@@ -55,7 +64,7 @@ class CameraWorker(QObject):
     frame_ready one at a time: the next is only sent after the GUI calls
     frame_consumed(), so a slow GUI drops frames instead of queueing a backlog.
 
-    States (state_changed): "starting" → "running" → "idle".
+    States (state_changed, see CameraState): STARTING → RUNNING → IDLE.
     """
 
     state_changed = Signal(str)
@@ -82,13 +91,13 @@ class CameraWorker(QObject):
     def start(self, camera_index: int) -> None:
         """Open the camera and begin reading frames; emits failed if it can't be opened."""
         self._close()
-        self.state_changed.emit("starting")
+        self.state_changed.emit(CameraState.STARTING)
         try:
             cap = open_capture(camera_index)
         # Boundary: whatever happens, the GUI must hear back (it sits in
         # "Starting…" until state_changed/failed arrives).
         except Exception as e:  # noqa: BLE001
-            self.state_changed.emit("idle")
+            self.state_changed.emit(CameraState.IDLE)
             self.failed.emit(str(e))
             return
         self._cap = cap
@@ -99,13 +108,13 @@ class CameraWorker(QObject):
             self._timer.setInterval(self.READ_INTERVAL_MS)
             self._timer.timeout.connect(self._read_frame)
         self._timer.start()
-        self.state_changed.emit("running")
+        self.state_changed.emit(CameraState.RUNNING)
 
     @Slot()
     def stop(self) -> None:
         """Stop reading frames and release the camera."""
         self._close()
-        self.state_changed.emit("idle")
+        self.state_changed.emit(CameraState.IDLE)
 
     def release(self) -> None:
         """Free the camera after the thread has stopped (shutdown path).
@@ -143,7 +152,7 @@ class CameraWorker(QObject):
             self._fails += 1
             if self._fails > self.MAX_READ_FAILS:
                 self._close()
-                self.state_changed.emit("idle")
+                self.state_changed.emit(CameraState.IDLE)
                 self.failed.emit("Camera not delivering frames.")
             return
         self._fails = 0
