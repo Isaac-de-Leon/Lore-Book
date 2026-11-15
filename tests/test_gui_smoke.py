@@ -48,7 +48,7 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
     roots = tree_roots(dialog)
     assert roots["Riftbound"].childCount() == 0
     assert not (tmp_path / "Card_Images" / "Riftbound").exists()
-    roots["Riftbound"].setCheckState(0, Qt.Checked)
+    roots["Riftbound"].setCheckState(0, Qt.CheckState.Checked)
     dialog._rebuild_database()
     assert window.get_active_game() == "Riftbound" and builds == [1]
     assert (tmp_path / "Card_Images" / "Riftbound").is_dir()
@@ -56,7 +56,7 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
     # A new game folder is selectable, keeps its case, and replaces the old one.
     dialog = window._make_settings_dialog()
     roots = tree_roots(dialog)
-    roots["MTG"].setCheckState(0, Qt.Checked)
+    roots["MTG"].setCheckState(0, Qt.CheckState.Checked)
     dialog.apply_settings()
     assert window.get_active_game() == "MTG"
     assert not window.settings.selected_games["lorcana"] and not window.settings.selected_games["riftbound"]

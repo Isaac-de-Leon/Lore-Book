@@ -1,14 +1,18 @@
 """Activation heatmap overlay (the debug-mode view of what the model looks at)."""
 
+from collections.abc import Callable
+from typing import Any, cast
+
 import cv2
 import numpy as np
 
 from lorebook.core.features import keras_backend
+from lorebook.core.features.onnx_backend import OnnxExtractor
 from lorebook.core.features.preprocessing import mobilenet_preprocess
 from lorebook.core.features.registry import default_backend, get_extractor
 
 
-def visualize_activation_overlay(img_bgr: np.ndarray, model=None, blocking: bool = True) -> np.ndarray:
+def visualize_activation_overlay(img_bgr: np.ndarray, model: Any = None, blocking: bool = True) -> np.ndarray:
     """Return the image with a jet-colormap heatmap of average last-conv activations blended in.
 
     blocking=False is for per-frame callers on the GUI thread: if the model
@@ -18,7 +22,7 @@ def visualize_activation_overlay(img_bgr: np.ndarray, model=None, blocking: bool
     if img_bgr is None or img_bgr.size == 0:
         return img_bgr
     if model is None and default_backend() == "onnx":
-        onnx = get_extractor("onnx")
+        onnx = cast(OnnxExtractor, get_extractor("onnx"))  # the only backend with activations()
         if not blocking and not onnx.loaded():
             return img_bgr
         return _activation_overlay(img_bgr, onnx.activations)
@@ -33,7 +37,9 @@ def visualize_activation_overlay(img_bgr: np.ndarray, model=None, blocking: bool
         keras_backend.model_lock.release()
 
 
-def _activation_overlay(img_bgr: np.ndarray, activations_fn) -> np.ndarray:
+def _activation_overlay(
+    img_bgr: np.ndarray, activations_fn: Callable[[np.ndarray], np.ndarray]
+) -> np.ndarray:
     """activations_fn maps a preprocessed (1, 224, 224, 3) batch to (1, 7, 7, 1280)."""
     if img_bgr.ndim == 2:
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)

@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from lorebook.core.card_prices import RATES_FILE, prices_stale
 from lorebook.core.feature_cache import build_feature_database
+from lorebook.core.features.extractor import FeatureExtractor
 from lorebook.core.game_types import CARD_IMAGES_DIR
 from lorebook.core.games import list_image_files
 from lorebook.core.image_fetcher import FetchOptions, download_new_images
@@ -56,7 +57,7 @@ class _BuildJob:
         cancel_event: threading.Event,
         status: Callable[[str], None],
         progress: Callable[[int], None],
-        extractor=None,
+        extractor: FeatureExtractor | None = None,
     ) -> None:
         """Store what every step needs and start an empty report."""
         self.cancel_event = cancel_event
@@ -157,7 +158,7 @@ def refresh_and_build(
     status: Callable[[str], None] = lambda _msg: None,
     progress: Callable[[int], None] = lambda _pct: None,
     base: str = CARD_IMAGES_DIR,
-    extractor=None,
+    extractor: FeatureExtractor | None = None,
 ) -> BuildReport:
     """Download, refresh prices and build each game's cache; see module docstring.
 

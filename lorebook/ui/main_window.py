@@ -8,7 +8,7 @@ import time
 import cv2
 import numpy as np
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QKeyEvent
+from PySide6.QtGui import QCloseEvent, QFocusEvent, QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -260,7 +260,7 @@ class MainWindow(QWidget):
         self.collection_view.apply_icons(tokens["text"], tokens["danger"])
         self.scanner.apply_scale(self.height())
 
-    def resizeEvent(self, event) -> None:
+    def resizeEvent(self, event: QResizeEvent) -> None:
         """Rescale the Scanner page's fixed-size controls to the new window height."""
         self.scanner.apply_scale(self.height())
         super().resizeEvent(event)
@@ -550,7 +550,7 @@ class MainWindow(QWidget):
         if self.stack.widget(index) is self.collection_view:
             self.collection_view.refresh()
 
-    def focusInEvent(self, event) -> None:
+    def focusInEvent(self, event: QFocusEvent) -> None:
         """Keep keyboard focus on the window so the scan shortcuts keep working."""
         self.setFocus()
         super().focusInEvent(event)

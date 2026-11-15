@@ -5,8 +5,13 @@ import logging
 import logging.handlers
 import os
 import sys
+from types import TracebackType
+from typing import TYPE_CHECKING
 
 from lorebook.core.paths import data_path
+
+if TYPE_CHECKING:
+    from PySide6.QtCore import QObject
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +57,7 @@ def setup_logging(log_file: str = "card_scanner.log") -> None:
 
     # Uncaught Python exceptions land in the main log too (PySide6 prints
     # them to stderr, which is invisible when launched outside a terminal).
-    def _log_excepthook(exc_type, exc, tb):
+    def _log_excepthook(exc_type: type[BaseException], exc: BaseException, tb: TracebackType | None) -> None:
         """Log an uncaught exception, then hand it to Python's default hook."""
         logger.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
         sys.__excepthook__(exc_type, exc, tb)
@@ -73,7 +78,7 @@ class GuiStallWatchdog:
     timer; if the GUI thread blocks, re-arming stops and the dump fires once.
     """
 
-    def __init__(self, parent, stall_seconds: float = 8.0) -> None:
+    def __init__(self, parent: "QObject", stall_seconds: float = 8.0) -> None:
         """Open the dump file and start re-arming the stall timer every second."""
         from PySide6.QtCore import QTimer
 

@@ -1,6 +1,7 @@
 """Modeless popup showing DB build progress with a Cancel button."""
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -8,6 +9,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 
@@ -23,12 +25,12 @@ class BuildProgressDialog(QDialog):
 
     cancel_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         """Build the status line, progress bar and Cancel button."""
         super().__init__(parent)
         self.setWindowTitle("Building Card Database")
         # Stylesheet is inherited from the parent MainWindow (matches theme).
-        self.setWindowModality(Qt.NonModal)
+        self.setWindowModality(Qt.WindowModality.NonModal)
         self.setFixedWidth(440)
 
         self.status_label = QLabel("Preparing…")
@@ -98,7 +100,7 @@ class BuildProgressDialog(QDialog):
         self.enter_cancelling_state()
         self.cancel_requested.emit()
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, event: QCloseEvent) -> None:
         """Treat closing the dialog as Cancel, then let it close."""
         # Closing the only progress surface means cancel (QProgressDialog
         # convention); the hide is allowed so the user isn't trapped.

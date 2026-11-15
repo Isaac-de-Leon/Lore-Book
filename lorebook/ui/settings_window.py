@@ -44,7 +44,7 @@ class SettingsWindow(QDialog):
     applied = Signal(object)  # AppSettings
     rebuild_requested = Signal()
 
-    def __init__(self, settings: AppSettings, parent=None):
+    def __init__(self, settings: AppSettings, parent: QWidget | None = None) -> None:
         """Build the dialog pre-filled from settings (which is copied, never modified)."""
         super().__init__(parent)
         self._settings = settings.copy()
@@ -188,7 +188,7 @@ class SettingsWindow(QDialog):
             )
             set_item.setData(0, Qt.ItemDataRole.UserRole, set_code)
 
-    def _fit_to_screen(self, parent) -> None:
+    def _fit_to_screen(self, parent: QWidget | None) -> None:
         """Size the dialog to 715px tall, capped to the screen's usable height."""
         screen = (parent.screen() if parent is not None else None) or QGuiApplication.primaryScreen()
         avail = screen.availableGeometry().height() if screen is not None else 715
@@ -251,7 +251,7 @@ class SettingsWindow(QDialog):
         finally:
             self.set_tree.blockSignals(False)
 
-    def _rebuild_database(self):
+    def _rebuild_database(self) -> None:
         """Apply current settings, request a background DB rebuild, then close."""
         self.apply_settings(close=False)
         self.rebuild_requested.emit()

@@ -5,6 +5,7 @@ import os
 
 import numpy as np
 
+from lorebook.core.features.extractor import FeatureExtractor, ImageInput
 from lorebook.core.features.keras_backend import KerasExtractor
 from lorebook.core.features.onnx_backend import OnnxExtractor
 from lorebook.core.features.tflite_backend import TFLiteExtractor
@@ -23,10 +24,10 @@ def default_backend() -> str:
     return "onnx" if importlib.util.find_spec("onnxruntime") is not None else "keras"
 
 
-_extractors: dict = {}
+_extractors: dict[str, FeatureExtractor] = {}
 
 
-def get_extractor(backend: str | None = None):
+def get_extractor(backend: str | None = None) -> FeatureExtractor:
     """
     Return a cached feature extractor for the given backend (default_backend() if None).
 
@@ -49,7 +50,7 @@ def get_extractor(backend: str | None = None):
     return _extractors[key]
 
 
-def extract_features(img_or_path: np.ndarray | str) -> np.ndarray | None:
+def extract_features(img_or_path: ImageInput) -> np.ndarray | None:
     """
     Extract a normalized 1280-dim feature vector from an image or file path.
 

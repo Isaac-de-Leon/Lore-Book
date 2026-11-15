@@ -18,6 +18,7 @@ import io
 import logging
 import os
 import threading
+from typing import Any
 
 import numpy as np
 
@@ -90,7 +91,7 @@ def _load_weights_bytes() -> bytes:
     return data
 
 
-def _read_conv_bn_pairs(h5) -> list[tuple[str, np.ndarray, tuple[np.ndarray, ...]]]:
+def _read_conv_bn_pairs(h5: Any) -> list[tuple[str, np.ndarray, tuple[np.ndarray, ...]]]:
     """
     Return [(kind, kernel, (gamma, beta, mean, var)), ...] in model order.
 
@@ -98,7 +99,7 @@ def _read_conv_bn_pairs(h5) -> list[tuple[str, np.ndarray, tuple[np.ndarray, ...
     which Keras version named the layers. Every conv is followed by its BN.
     """
 
-    def _s(v) -> str:
+    def _s(v: Any) -> str:
         """Return an HDF5 name as str (h5py may hand it back as bytes)."""
         return v.decode() if isinstance(v, bytes) else str(v)
 

@@ -8,9 +8,11 @@ import threading
 import time
 import warnings
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
+from lorebook.core.features.extractor import ImageInput
 from lorebook.core.features.preprocessing import finalize_vector, preprocess_to_batch
 
 logger = logging.getLogger(__name__)
@@ -51,7 +53,7 @@ class _InteractivePriority:
             with _waiters_guard:
                 _interactive_waiters -= 1
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc: object) -> None:
         """Release model_lock."""
         model_lock.release()
 
@@ -63,7 +65,7 @@ def _yield_to_interactive(max_wait_s: float = 30.0) -> None:
         time.sleep(0.005)
 
 
-def get_models():
+def get_models() -> tuple[Any, Any]:
     """Return (feature_model, activation_model), lazy-initialized on first call.
 
     Imports TensorFlow/Keras on first use only (keras backend / heatmap overlay).
@@ -98,7 +100,7 @@ def models_loaded() -> bool:
     return _feat_model is not None and _act_model is not None
 
 
-def infer(model, batch: np.ndarray) -> np.ndarray:
+def infer(model: Any, batch: np.ndarray) -> np.ndarray:
     """
     Run one small batch through a Keras model and return a NumPy array.
 
@@ -122,7 +124,7 @@ class KerasExtractor:
             feat_model, _ = get_models()
             infer(feat_model, np.zeros((1, 224, 224, 3), np.float32))
 
-    def extract(self, img_or_path: np.ndarray | str) -> np.ndarray | None:
+    def extract(self, img_or_path: ImageInput) -> np.ndarray | None:
         """Return the image's normalized 1280-dim vector, or None if it can't be extracted."""
         try:
             batch = preprocess_to_batch(img_or_path)
@@ -138,7 +140,7 @@ class KerasExtractor:
             logger.error("Error extracting features (keras): %s", e)
             return None
 
-    def extract_batch(self, images: Sequence) -> list[np.ndarray | None]:
+    def extract_batch(self, images: Sequence[ImageInput]) -> list[np.ndarray | None]:
         """
         Extract features for many images with a single predict call.
 

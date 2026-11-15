@@ -46,14 +46,14 @@ def render(size: int) -> Image.Image:
     """Render the icon tile at size x size pixels and return it as an RGBA image."""
     renderer = QSvgRenderer(QByteArray(_SVG.encode()))
     pm = QPixmap(size, size)
-    pm.fill(Qt.transparent)
+    pm.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pm)
-    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     renderer.render(painter)
     painter.end()
 
     buf = QBuffer()
-    buf.open(QBuffer.ReadWrite)
+    buf.open(QBuffer.OpenModeFlag.ReadWrite)
     pm.save(buf, "PNG")
     return Image.open(io.BytesIO(bytes(buf.data()))).convert("RGBA")
 

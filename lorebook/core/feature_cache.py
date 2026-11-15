@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterator
 import cv2
 import numpy as np
 
+from lorebook.core.features.extractor import FeatureExtractor
 from lorebook.core.game_types import CARD_IMAGES_DIR
 from lorebook.core.games import list_image_files
 from lorebook.core.matching import MatchIndex
@@ -167,7 +168,7 @@ def _drop_replaced(feature_db: dict[str, np.ndarray], disk: dict[str, Stamp | No
 
 
 def _extract_chunk(
-    chunk: list[str], image_dir: str, extractor, pool: concurrent.futures.Executor
+    chunk: list[str], image_dir: str, extractor: FeatureExtractor, pool: concurrent.futures.Executor
 ) -> dict[str, np.ndarray]:
     """Read one batch of images in parallel and extract their vectors in one call.
 
@@ -194,7 +195,7 @@ def _extract_chunk(
 def _extract_in_batches(
     new_files: list[str],
     image_dir: str,
-    extractor,
+    extractor: FeatureExtractor,
     max_workers: int | None,
     cancel_event: threading.Event | None,
 ) -> Iterator[tuple[list[str], dict[str, np.ndarray]]]:
@@ -236,7 +237,7 @@ def build_feature_database(
     image_dir: str,
     progress_callback: Callable[[int, str | None], None] | None = None,
     max_workers: int | None = None,
-    extractor=None,
+    extractor: FeatureExtractor | None = None,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, np.ndarray]:
     """

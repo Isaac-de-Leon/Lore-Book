@@ -45,7 +45,7 @@ class CollectionView(QWidget):
 
     cleared = Signal(str)  # game whose collection CSV was emptied
 
-    def __init__(self, initial_game: str | None = None, parent=None):
+    def __init__(self, initial_game: str | None = None, parent: QWidget | None = None) -> None:
         """Build the toolbar and table, then load initial_game's collection."""
         super().__init__(parent)
 

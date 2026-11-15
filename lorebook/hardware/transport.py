@@ -39,7 +39,7 @@ class MockTransport(Transport):
     and ``history`` for the ordered list of bins after a run.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Start with empty tallies."""
         self.routed: Counter = Counter()
         self.history: list[str] = []

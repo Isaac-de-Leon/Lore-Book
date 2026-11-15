@@ -81,7 +81,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Run the sorter from command-line arguments and return the process exit code."""
     args = build_arg_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

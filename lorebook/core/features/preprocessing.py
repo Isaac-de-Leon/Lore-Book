@@ -9,6 +9,7 @@ import logging
 import cv2
 import numpy as np
 
+from lorebook.core.features.extractor import ImageInput
 from lorebook.core.image_utils import ensure_valid_image
 from lorebook.core.matching import l2_normalize
 
@@ -26,7 +27,7 @@ def mobilenet_preprocess(batch: np.ndarray) -> np.ndarray:
     return batch.astype(np.float32) / 127.5 - 1.0
 
 
-def preprocess_to_batch(img_or_path: np.ndarray | str) -> np.ndarray | None:
+def preprocess_to_batch(img_or_path: ImageInput) -> np.ndarray | None:
     """
     Load/validate an image and return a (1, 224, 224, 3) preprocessed float32 batch.
 

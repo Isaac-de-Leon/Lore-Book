@@ -66,6 +66,12 @@ files = ["lorebook"]
 # imports as untyped rather than failing. PySide6 is installed for the type
 # check (the gui job), so lorebook/ui is checked against its real types.
 ignore_missing_imports = true
+# Every function is annotated, so mypy checks every function body. An
+# unannotated function would be skipped silently, which is how a banned short
+# Qt enum name once went unnoticed.
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

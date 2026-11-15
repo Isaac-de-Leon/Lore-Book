@@ -17,6 +17,7 @@ image_fetcher): their scans simply show no price line.
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from lorebook.core.card_prices import (
     RATES_FILE,
@@ -33,7 +34,7 @@ LORCANA_URL = "https://api.lorcast.com/v0"
 RATES_URL = "https://api.frankfurter.dev/v1/latest?base=USD"
 
 
-def _as_price(value) -> float | None:
+def _as_price(value: Any) -> float | None:
     """Return value as a float, or None if it is not a number."""
     try:
         return float(value)
@@ -41,7 +42,7 @@ def _as_price(value) -> float | None:
         return None
 
 
-def lorcana_prices(cards) -> dict:
+def lorcana_prices(cards: Any) -> dict[str, dict[str, float | None]]:
     """
     Map Lorcast card objects → {"<set>-<number>": {"usd", "usd_foil"}}.
     Cards without a set/number or without any price are skipped, so the file

@@ -25,6 +25,7 @@ Lore-Book/
 │   │   ├── image_utils.py     # ensure_valid_image, foil_score, focus_rect/crop_to_card, MotionGate
 │   │   ├── matching.py        # L2-normalize, cosine similarity, find_best_matches, MatchIndex
 │   │   ├── features/          # get_extractor("onnx"|"keras"|"tflite"), extract_features, heatmap (public API in __init__)
+│   │   │   ├── extractor.py       # FeatureExtractor: the interface every backend implements
 │   │   │   ├── registry.py        # BACKENDS, default_backend, get_extractor, extract_features
 │   │   │   ├── preprocessing.py   # Shared 224×224 preprocessing + vector finalizing
 │   │   │   ├── onnx_backend.py    # OnnxExtractor (desktop default)
@@ -134,7 +135,7 @@ Lore-Book/
 | `lorebook/core/price_fetcher.py` | `download_card_prices()` (Lorcast → TCGplayer USD prices; `GAMES` registry), `download_currency_rates()` (Frankfurter/ECB). Auto-run by the GUI when files are >24 h old; CLI: `scripts/fetch_card_prices.py` |
 | `lorebook/core/image_fetcher.py` | `download_new_images(game, FetchOptions(...))` — fetch missing card art into `Card_Images/<Game>/` (Lorcana: LorcanaJSON; Riftbound: Riot content API when `RIOT_API_KEY` is set, else Riftcodex plus the official card gallery for whole sets Riftcodex lacks). Auto-run by the GUI's Rebuild Database; CLI: `scripts/fetch_card_images.py`. `selectable_games()` lists folders plus registered games with no folder yet; `ensure_game_folder()` creates one on Rebuild (never at startup, which builds every folder) |
 | `lorebook/core/matching.py` | `l2_normalize`, `cosine_score`, `find_best_matches`, `MatchIndex` (vectorized) |
-| `lorebook/core/features/` | `get_extractor(backend=None)` (onnx/keras/tflite; `None` → `default_backend()`: `LOREBOOK_BACKEND`, else onnx when onnxruntime is installed, else keras), `extract_features`, `visualize_activation_overlay`. The package's `__init__` is the public API; each backend has its own module. The tflite model is looked for at `LOREBOOK_TFLITE_MODEL`, else `data_path()` (the working directory from source), else the checkout root. Keras inference runs under `keras_backend.model_lock`; single images call the model directly (`infer`, never `predict()`), `extract_batch` keeps `predict()`, and `ensure_ready()` loads the model plus one warm-up inference |
+| `lorebook/core/features/` | `get_extractor(backend=None)` (onnx/keras/tflite; `None` → `default_backend()`: `LOREBOOK_BACKEND`, else onnx when onnxruntime is installed, else keras), `extract_features`, `visualize_activation_overlay`. The package's `__init__` is the public API; each backend has its own module and implements the `FeatureExtractor` protocol (`ensure_ready`, `extract`, `extract_batch`), which is the type callers take, so tests can pass any object with those methods. The tflite model is looked for at `LOREBOOK_TFLITE_MODEL`, else `data_path()` (the working directory from source), else the checkout root. Keras inference runs under `keras_backend.model_lock`; single images call the model directly (`infer`, never `predict()`), `extract_batch` keeps `predict()`, and `ensure_ready()` loads the model plus one warm-up inference |
 | `lorebook/core/onnx_model.py` | `ensure_model()` — builds `mobilenetv2_features.onnx` (at `data_path()`, or `LOREBOOK_ONNX_MODEL`) on first use from the Keras MobileNetV2 `.h5` weights (Keras cache if present, else downloaded; sha256-checked), BatchNorm folded into convs. Needs `onnx` + `h5py`; outputs `features` (N,1280) and `activations` (N,7,7,1280) |
 | `lorebook/core/feature_cache.py` | `GameDatabase` (the active game's vectors + `MatchIndex`, `load`/`ensure`/`invalidate`), `load_cache(image_dir)`, `build_feature_database(image_dir, ...)` — the game's image folder is always passed explicitly (no module-global "current" path) |
 | `lorebook/core/build.py` | `refresh_and_build()` — per game: download new art, refresh stale prices, build the cache; status/progress callbacks + cancel Event; returns `BuildReport` (Qt-free; the GUI runs it on `BuildWorker`) |
@@ -367,6 +368,9 @@ the foil-only cutoff (`LORCANA_MAX_NORMAL_CARD`) and filename codes, then rebuil
   that each do one thing, or group related options in a dataclass (`FetchOptions`, `SortConfig`)
   — don't raise the limit. Docstrings start with a one-line summary of what the function does;
   add a second paragraph only for the non-obvious *why*.
+- **Typed everywhere.** mypy rejects any function without annotations (`disallow_untyped_defs`),
+  because it silently skips the body of an unannotated function. Use `Any` for parsed JSON and
+  third-party model objects rather than leaving a parameter bare.
 - **Commit messages** use conventional prefixes: `feat:`, `fix:`, `perf:`, `test:`, `docs:`,
   `data:` (collection CSV updates, user only).
 

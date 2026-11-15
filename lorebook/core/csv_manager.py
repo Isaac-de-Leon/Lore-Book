@@ -3,6 +3,8 @@
 import csv
 import logging
 import os
+from collections.abc import Iterable
+from typing import IO, Any
 
 from lorebook.core.fileio import atomic_write
 from lorebook.core.game_types import (
@@ -94,7 +96,7 @@ def write_rows(csv_path: str, rows: list[list[str]]) -> None:
     target, so a crash mid-write can't destroy the existing collection file.
     """
 
-    def write(f) -> None:
+    def write(f: IO[str]) -> None:
         """Write the header and every row to the open file."""
         writer = csv.writer(f)
         writer.writerow(["Set Number", "Card Number", "Variant", "Count"])
@@ -111,10 +113,11 @@ def _csv_for_game_type(game_type: GameType) -> str:
     return csv_for_game("Riftbound" if game_type == GameType.RIFTBOUND else "Lorcana")
 
 
+CardUpdate = tuple[str, bool, int]  # (matched_filename, is_foil, count)
 RowUpdate = tuple[str, str, str, int]  # (set_code, card_code, variant, count delta)
 
 
-def _as_count(count, matched_filename: str) -> int:
+def _as_count(count: Any, matched_filename: str) -> int:
     """Return count as an int, recording 1 (with a warning) when it is not a number."""
     try:
         return int(count)
@@ -123,7 +126,9 @@ def _as_count(count, matched_filename: str) -> int:
         return 1
 
 
-def _group_updates(cards, game: str | None, allow_negative: bool) -> dict[str, list[RowUpdate]]:
+def _group_updates(
+    cards: Iterable[CardUpdate], game: str | None, allow_negative: bool
+) -> dict[str, list[RowUpdate]]:
     """Turn (filename, is_foil, count) cards into row updates grouped by target CSV file.
 
     Zero counts are dropped, and so are negative ones unless allow_negative.
@@ -166,7 +171,7 @@ def _apply_update(rows: list[list[str]], update: RowUpdate) -> bool:
 
 
 def update_cardlist_batch(
-    cards,
+    cards: Iterable[CardUpdate],
     game: str | None = None,
     allow_negative: bool = False,
 ) -> None:

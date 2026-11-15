@@ -20,12 +20,15 @@ import os
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
+from lorebook.core.features.extractor import FeatureExtractor, ImageInput
 from lorebook.core.features.heatmap import visualize_activation_overlay
 from lorebook.core.features.keras_backend import models_loaded
 from lorebook.core.features.registry import BACKENDS, default_backend, extract_features, get_extractor
 
 __all__ = [
     "BACKENDS",
+    "FeatureExtractor",
+    "ImageInput",
     "default_backend",
     "extract_features",
     "get_extractor",

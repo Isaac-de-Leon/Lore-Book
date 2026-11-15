@@ -7,9 +7,11 @@ tensorflow.lite as the desktop fallback.
 import logging
 import os
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
+from lorebook.core.features.extractor import ImageInput
 from lorebook.core.features.preprocessing import finalize_vector, preprocess_to_batch
 from lorebook.core.paths import data_path
 
@@ -43,7 +45,7 @@ def default_tflite_model_path() -> str:
     return path
 
 
-def _check_tflite_input_dtype(dtype, model_path: str) -> None:
+def _check_tflite_input_dtype(dtype: Any, model_path: str) -> None:
     """
     Reject non-float32 tflite models.
 
@@ -78,7 +80,7 @@ class TFLiteExtractor:
         """Load the interpreter now, raising on failure, so callers can fail fast."""
         self._ensure_interpreter()
 
-    def _ensure_interpreter(self):
+    def _ensure_interpreter(self) -> Any:
         """Load the interpreter on first use and return it."""
         if self._interpreter is not None:
             return self._interpreter
@@ -106,7 +108,7 @@ class TFLiteExtractor:
         self._out_index = out_detail["index"]
         return interp
 
-    def extract(self, img_or_path: np.ndarray | str) -> np.ndarray | None:
+    def extract(self, img_or_path: ImageInput) -> np.ndarray | None:
         """Return the image's normalized 1280-dim vector, or None if it can't be extracted."""
         try:
             interp = self._ensure_interpreter()
@@ -121,7 +123,7 @@ class TFLiteExtractor:
             logger.error("Error extracting features (tflite): %s", e)
             return None
 
-    def extract_batch(self, images: Sequence) -> list[np.ndarray | None]:
+    def extract_batch(self, images: Sequence[ImageInput]) -> list[np.ndarray | None]:
         """API parity with the keras extractor; the tflite interpreter is
         fixed at batch size 1, so this is a plain loop (no speedup)."""
         return [self.extract(img) for img in images]

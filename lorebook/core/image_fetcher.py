@@ -29,6 +29,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit
 
 from lorebook.core.fileio import atomic_write_bytes
@@ -92,7 +93,7 @@ def is_promo_printing(card: dict) -> bool:
     return bool(denom) and not denom.isdigit()
 
 
-def lorcana_targets(data) -> Iterator[tuple[str, str, str]]:
+def lorcana_targets(data: Any) -> Iterator[tuple[str, str, str]]:
     """
     Yield (set_code, number, image_url) for every Lorcana card with a full image.
 
@@ -222,7 +223,7 @@ def fetch_riftbound_open_sources(url: str = RIFTBOUND_FALLBACK_URL) -> list:
     return cards + extra
 
 
-def _fetch_riftbound(url: str):
+def _fetch_riftbound(url: str) -> Any:
     """
     Fetch the Riftbound card list. On the default URL, the official Riot
     content endpoint is used when RIOT_API_KEY is set; without a key — or if
@@ -245,7 +246,7 @@ def _fetch_riftbound(url: str):
     return _fetch_riftbound_pages(url)
 
 
-def _first_field(card: dict, *names):
+def _first_field(card: dict, *names: str) -> str | int | None:
     """First non-empty scalar among the named fields (nested objects don't
     stringify into usable codes/URLs, so they count as missing)."""
     for name in names:
@@ -292,7 +293,7 @@ def _riftbound_printing(card: dict, set_code: str) -> tuple[str, str]:
     return parts[1].replace("*", "s"), "-".join(parts[2:])
 
 
-def _riftbound_cards(data) -> Iterator[dict]:
+def _riftbound_cards(data: Any) -> Iterator[dict]:
     """Flatten either Riftbound payload shape into a stream of card dicts."""
     if isinstance(data, dict):
         if isinstance(data.get("sets"), list):  # Riot content: sets → cards
@@ -304,7 +305,7 @@ def _riftbound_cards(data) -> Iterator[dict]:
     yield from (c for c in data or [] if isinstance(c, dict))
 
 
-def riftbound_printings(data) -> Iterator[tuple[str, str, str, dict]]:
+def riftbound_printings(data: Any) -> Iterator[tuple[str, str, str, dict]]:
     """
     Yield (set_code, number, image_url, card) for every Riftbound card with art.
     Image filenames and card names both come from here, so they can't disagree.
@@ -353,7 +354,7 @@ def riftbound_printings(data) -> Iterator[tuple[str, str, str, dict]]:
         yield set_code, number, url, card
 
 
-def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
+def riftbound_targets(data: Any) -> Iterator[tuple[str, str, str]]:
     """(set_code, number, image_url) for every Riftbound card with art."""
     for set_code, number, url, _card in riftbound_printings(data):
         yield set_code, number, url

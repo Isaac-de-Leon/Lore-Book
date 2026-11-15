@@ -19,6 +19,7 @@ import logging
 import os
 import time
 from datetime import datetime
+from typing import Any
 
 from lorebook.core.card_names import normalize_key
 from lorebook.core.paths import data_path
@@ -60,7 +61,7 @@ def _read_json(file: str) -> dict | None:
         return None
 
 
-def _as_float(value) -> float | None:
+def _as_float(value: Any) -> float | None:
     """Return value as a float, or None if it is not a number."""
     try:
         return float(value)
