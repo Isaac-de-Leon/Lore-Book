@@ -21,6 +21,8 @@ jobs:
       - run: pip install ${{ env.LIGHT_DEPS }}
       - name: Lint
         run: ruff check .
+      - name: Formatting
+        run: ruff format --check .
 
   test:
     # Windows is where the app is actually used; Linux covers the Pi sorter.

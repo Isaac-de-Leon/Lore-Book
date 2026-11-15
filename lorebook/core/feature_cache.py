@@ -289,19 +289,6 @@ def build_feature_database(
     return feature_db
 
 
-def clear_from_cache(filename: str, image_dir: str) -> None:
-    """Remove a single entry from the SQLite cache (useful after deleting an image)."""
-    path = _cache_path(image_dir)
-    if not os.path.exists(path):
-        return
-    try:
-        with sqlite3.connect(path) as conn:
-            conn.execute("DELETE FROM features WHERE filename = ?", (filename,))
-        logger.info("Cleared %s from %s", filename, path)
-    except sqlite3.Error as e:
-        logger.error("Error clearing cache entry %s: %s", filename, e)
-
-
 class GameDatabase:
     """
     The active game's reference vectors and match index, loaded together.

@@ -40,7 +40,7 @@ class FakeModel:
         self.lock_free_during_call: list[bool] = []
 
     def _probe_lock(self) -> None:
-        # True if another thread could take _model_lock right now.
+        # True if another thread could take model_lock right now.
         result: list[bool] = []
 
         def try_acquire() -> None:
@@ -148,7 +148,7 @@ def test_activation_overlay_non_blocking_skips_while_model_busy(fake_models):
     img = _card(240, 180)
     held, release = threading.Event(), threading.Event()
 
-    def hold_lock() -> None:  # another thread: _model_lock is reentrant
+    def hold_lock() -> None:  # another thread: model_lock is reentrant
         with keras_backend.model_lock:
             held.set()
             release.wait(5)

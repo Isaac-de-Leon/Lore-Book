@@ -41,7 +41,7 @@ class BuildWorker(QObject):
             report = refresh_and_build(
                 games, cancel_event=cancel_event, status=self.status.emit, progress=self.progress.emit
             )
-        except Exception:  # noqa: BLE001 — boundary: the GUI must always get done()
+        except Exception:  # boundary: the GUI must always get done()
             logger.exception("Database build job failed")
             report = BuildReport(failed=list(games), cancelled=cancel_event.is_set())
         self.done.emit(report)
@@ -207,7 +207,7 @@ class ScanWorker(QObject):
                 matches = self._db.index.find(features, threshold=threshold) if features is not None else None
                 result = ScanResult(game, matches)
         # Boundary: the GUI stays in "Scanning…" until done() arrives.
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.exception("Scan failed")
             result = ScanResult(game, None, str(e))
         self.done.emit(token, result)

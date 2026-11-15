@@ -1,0 +1,5 @@
+# Commits that only reformat code. Skip them in blame:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: apply ruff format to the whole repo
+9e215b622632eb4f03ae63811280e0a0f506cf3a

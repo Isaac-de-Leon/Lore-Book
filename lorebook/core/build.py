@@ -126,7 +126,7 @@ class _BuildJob:
                 cancel_event=self.cancel_event,
                 extractor=self.extractor,
             )
-        except Exception:  # noqa: BLE001 — fail this game, build the rest
+        except Exception:  # fail this game, build the rest
             logger.exception("Database build for %s failed", game)
             self._fail(game)
             return

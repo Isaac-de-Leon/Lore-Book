@@ -248,10 +248,10 @@ LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v
 ### Before committing
 
 ```bash
-ruff check . && python -m pytest tests/ -v
+ruff format . && ruff check . && python -m pytest tests/ -v
 ```
 
-CI runs both, plus `mypy` and the headless Qt smoke test. Ruff (`pyproject.toml`: pyflakes,
+CI runs all three (formatting as `ruff format --check`), plus `mypy` and the headless Qt smoke test. Ruff (`pyproject.toml`: pyflakes,
 naming, complexity/size limits and required docstrings) is the main static check over `lorebook/ui/`, where the smoke test only covers startup
 and shutdown. A `.claude/settings.json` hook lints each `.py`
 file after it is edited, and in cloud sessions the SessionStart hook installs CI's test deps.

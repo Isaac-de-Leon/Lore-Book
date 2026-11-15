@@ -80,7 +80,7 @@ class GuiStallWatchdog:
         self._stall = stall_seconds
         path = os.path.join(data_path("logs"), "hang_dump.log")
         # Kept open for the process lifetime (the C timer writes to its fd).
-        self._file = open(path, "a", encoding="utf-8")  # noqa: SIM115
+        self._file = open(path, "a", encoding="utf-8")
         self._timer = QTimer(parent)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._rearm)

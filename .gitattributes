@@ -1,0 +1,11 @@
+# Text files are stored and checked out with LF line endings on every platform,
+# so a file saved by any editor or tool never shows up as a phantom change.
+* text=auto eol=lf
+
+*.ico binary
+*.png binary
+*.webp binary
+*.jpg binary
+*.db binary
+*.onnx binary
+*.tflite binary
