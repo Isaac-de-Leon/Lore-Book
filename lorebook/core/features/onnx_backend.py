@@ -33,6 +33,7 @@ class OnnxExtractor:
     def model_path(self) -> str:
         """Return the .onnx file to load: the explicit path, else the default location."""
         from lorebook.core.onnx_model import default_model_path
+
         return self._explicit_model_path or default_model_path()
 
     def loaded(self) -> bool:

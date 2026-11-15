@@ -17,11 +17,11 @@ def crop_to_fill(img_bgr: np.ndarray, target_w: int, target_h: int) -> np.ndarra
     if (w / float(h)) > (target_w / float(target_h)):
         new_w = int(h * target_w / target_h)
         x0 = max((w - new_w) // 2, 0)
-        cropped = img_bgr[:, x0:x0 + new_w]
+        cropped = img_bgr[:, x0 : x0 + new_w]
     else:
         new_h = int(w * target_h / target_w)
         y0 = max((h - new_h) // 2, 0)
-        cropped = img_bgr[y0:y0 + new_h, :]
+        cropped = img_bgr[y0 : y0 + new_h, :]
     return np.ascontiguousarray(cropped)
 
 

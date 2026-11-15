@@ -11,8 +11,12 @@ import unittest.mock
 
 _tf_mock = unittest.mock.MagicMock()
 for _mod in [
-    "tensorflow", "tf",
-    "keras", "keras.applications", "keras.applications.mobilenet_v2", "keras.models",
+    "tensorflow",
+    "tf",
+    "keras",
+    "keras.applications",
+    "keras.applications.mobilenet_v2",
+    "keras.models",
 ]:
     sys.modules.setdefault(_mod, _tf_mock)
 

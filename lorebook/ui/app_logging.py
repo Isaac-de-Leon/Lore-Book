@@ -23,9 +23,7 @@ def setup_logging(log_file: str = "card_scanner.log") -> None:
     root = logging.getLogger()
     root.setLevel(logging.INFO)
 
-    fh = logging.handlers.RotatingFileHandler(
-        log_path, maxBytes=1024 * 1024, backupCount=5, encoding="utf-8"
-    )
+    fh = logging.handlers.RotatingFileHandler(log_path, maxBytes=1024 * 1024, backupCount=5, encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
     fh.setLevel(logging.DEBUG)
 

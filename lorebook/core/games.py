@@ -17,10 +17,9 @@ def game_folders(base: str = CARD_IMAGES_DIR) -> list[str]:
     except OSError:
         return []
     return sorted(
-        n for n in names
-        if os.path.isdir(os.path.join(base, n))
-        and not n.startswith((".", "__"))
-        and n != "logs"
+        n
+        for n in names
+        if os.path.isdir(os.path.join(base, n)) and not n.startswith((".", "__")) and n != "logs"
     )
 
 

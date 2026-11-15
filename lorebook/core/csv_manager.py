@@ -93,6 +93,7 @@ def write_rows(csv_path: str, rows: list[list[str]]) -> None:
     Writes to a temp file in the same directory and atomically replaces the
     target, so a crash mid-write can't destroy the existing collection file.
     """
+
     def write(f) -> None:
         """Write the header and every row to the open file."""
         writer = csv.writer(f)
@@ -210,6 +211,4 @@ def update_cardlist(
     inference and write to csv_for_game(game). allow_negative permits a
     decrement (see update_cardlist_batch).
     """
-    update_cardlist_batch(
-        [(matched_filename, is_foil, count)], game=game, allow_negative=allow_negative
-    )
+    update_cardlist_batch([(matched_filename, is_foil, count)], game=game, allow_negative=allow_negative)

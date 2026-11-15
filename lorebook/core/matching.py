@@ -37,6 +37,7 @@ def cosine_score(a: np.ndarray, b: np.ndarray) -> float:
     Cosine similarity for L2-normalized vectors.
     Raises ValueError if either vector is not L2-normalized.
     """
+
     def _is_normalized(v: np.ndarray, tol: float = 1e-3) -> bool:
         """Return True when v has unit length, within tol."""
         return bool(abs(np.linalg.norm(v) - 1.0) < tol)
@@ -96,9 +97,7 @@ class MatchIndex:
             if dim is None:
                 dim = v.size
             elif v.size != dim:
-                logger.warning(
-                    "MatchIndex: skipping %s (dim %s != %s)", fname, v.size, dim
-                )
+                logger.warning("MatchIndex: skipping %s (dim %s != %s)", fname, v.size, dim)
                 continue
             # Normalize defensively: cache vectors are normalized at
             # extraction time, but a corrupt/legacy row must not distort
@@ -122,9 +121,7 @@ class MatchIndex:
             return []
         q = l2_normalize(np.asarray(input_features, dtype=np.float32).ravel())
         if q.size != self._matrix.shape[1]:
-            logger.error(
-                "MatchIndex: query dim %s != index dim %s", q.size, self._matrix.shape[1]
-            )
+            logger.error("MatchIndex: query dim %s != index dim %s", q.size, self._matrix.shape[1])
             return []
         scores = self._matrix @ q
         hits = np.flatnonzero(scores >= threshold)

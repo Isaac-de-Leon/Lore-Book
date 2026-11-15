@@ -8,6 +8,7 @@ desktop after generating the .tflite model.
     python scripts/convert_to_tflite.py
     python scripts/check_parity.py path/to/card1.jpg path/to/card2.webp
 """
+
 import argparse
 import os
 import sys

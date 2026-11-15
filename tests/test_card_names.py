@@ -14,9 +14,9 @@ def test_names(tmp_path, monkeypatch):
     _write_names(tmp_path, "Lorcana", {"9-41": "Elsa", "010-018": "Scrooge"})
     _write_names(tmp_path, "Riftbound", {"OGN-23c": "Jinx"})
 
-    assert name_for("009", "041", "Lorcana") == "Elsa"     # padded lookup, unpadded source
-    assert name_for("10", "18", "Lorcana") == "Scrooge"    # unpadded lookup, padded source
-    assert name_for("ogn", "23C", "Riftbound") == "Jinx"   # case-insensitive
+    assert name_for("009", "041", "Lorcana") == "Elsa"  # padded lookup, unpadded source
+    assert name_for("10", "18", "Lorcana") == "Scrooge"  # unpadded lookup, padded source
+    assert name_for("ogn", "23C", "Riftbound") == "Jinx"  # case-insensitive
     assert name_for("009", "999", "Lorcana") is None
     assert name_for("009", "041", "NoSuchGame") is None
     assert name_for("", "041", "Lorcana") is None

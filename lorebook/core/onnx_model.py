@@ -34,17 +34,27 @@ WEIGHTS_SHA256 = "f8aff69536bd77a692c594f559c798c19bf7f3f36668fc9fa00b21c6aab479
 
 INPUT_SIZE = 224
 FEATURE_DIM = 1280
-_BN_EPSILON = 1e-3   # keras.applications.MobileNetV2's BatchNormalization epsilon
+_BN_EPSILON = 1e-3  # keras.applications.MobileNetV2's BatchNormalization epsilon
 _OPSET = 13
 
 # Inverted-residual blocks of MobileNetV2 (alpha 1.0): (expansion, stride, output channels).
 _BLOCKS = [
     (1, 1, 16),
-    (6, 2, 24), (6, 1, 24),
-    (6, 2, 32), (6, 1, 32), (6, 1, 32),
-    (6, 2, 64), (6, 1, 64), (6, 1, 64), (6, 1, 64),
-    (6, 1, 96), (6, 1, 96), (6, 1, 96),
-    (6, 2, 160), (6, 1, 160), (6, 1, 160),
+    (6, 2, 24),
+    (6, 1, 24),
+    (6, 2, 32),
+    (6, 1, 32),
+    (6, 1, 32),
+    (6, 2, 64),
+    (6, 1, 64),
+    (6, 1, 64),
+    (6, 1, 64),
+    (6, 1, 96),
+    (6, 1, 96),
+    (6, 1, 96),
+    (6, 2, 160),
+    (6, 1, 160),
+    (6, 1, 160),
     (6, 1, 320),
 ]
 
@@ -87,6 +97,7 @@ def _read_conv_bn_pairs(h5) -> list[tuple[str, np.ndarray, tuple[np.ndarray, ...
     Parsed by weight type rather than layer name, so it doesn't depend on
     which Keras version named the layers. Every conv is followed by its BN.
     """
+
     def _s(v) -> str:
         """Return an HDF5 name as str (h5py may hand it back as bytes)."""
         return v.decode() if isinstance(v, bytes) else str(v)
@@ -95,8 +106,10 @@ def _read_conv_bn_pairs(h5) -> list[tuple[str, np.ndarray, tuple[np.ndarray, ...
     bns: list[tuple[np.ndarray, ...]] = []
     for layer in (_s(n) for n in h5.attrs["layer_names"]):
         group = h5[layer]
-        weights = {_s(w).rsplit("/", 1)[-1].split(":")[0]: np.asarray(group[_s(w)], np.float32)
-                   for w in group.attrs["weight_names"]}
+        weights = {
+            _s(w).rsplit("/", 1)[-1].split(":")[0]: np.asarray(group[_s(w)], np.float32)
+            for w in group.attrs["weight_names"]
+        }
         if not weights:
             continue
         if "depthwise_kernel" in weights:
@@ -131,17 +144,19 @@ def build_model_bytes(weights: bytes) -> bytes:  # noqa: PLR0915 — one linear 
         counter[0] += 1
         return f"{prefix}_{counter[0]}"
 
-    inits += [numpy_helper.from_array(np.array(0.0, np.float32), "relu6_min"),
-              numpy_helper.from_array(np.array(6.0, np.float32), "relu6_max")]
+    inits += [
+        numpy_helper.from_array(np.array(0.0, np.float32), "relu6_min"),
+        numpy_helper.from_array(np.array(6.0, np.float32), "relu6_max"),
+    ]
 
     def conv_bn(x: str, stride: int, relu6: bool) -> str:
         """Add the next conv with its BatchNorm folded in (plus ReLU6 if asked); return its output name."""
         kind, kernel, (gamma, beta, mean, var) = next(layers)
         scale = gamma / np.sqrt(var + _BN_EPSILON)
-        if kind == "dw":   # (kh, kw, C, 1) -> (C, 1, kh, kw)
+        if kind == "dw":  # (kh, kw, C, 1) -> (C, 1, kh, kw)
             w = kernel.transpose(2, 3, 0, 1)
             group = w.shape[0]
-        else:              # (kh, kw, in, out) -> (out, in, kh, kw)
+        else:  # (kh, kw, in, out) -> (out, in, kh, kw)
             w = kernel.transpose(3, 2, 0, 1)
             group = 1
         w = (w * scale[:, None, None, None]).astype(np.float32)
@@ -152,8 +167,17 @@ def build_model_bytes(weights: bytes) -> bytes:  # noqa: PLR0915 — one linear 
         pads = [0, 0, 0, 0] if k == 1 else ([1, 1, 1, 1] if stride == 1 else [0, 0, 1, 1])
         wn, bn_, out = fresh("W"), fresh("B"), fresh("conv")
         inits.extend([numpy_helper.from_array(w, wn), numpy_helper.from_array(b, bn_)])
-        nodes.append(helper.make_node("Conv", [x, wn, bn_], [out], kernel_shape=[k, k],
-                                      strides=[stride, stride], pads=pads, group=group))
+        nodes.append(
+            helper.make_node(
+                "Conv",
+                [x, wn, bn_],
+                [out],
+                kernel_shape=[k, k],
+                strides=[stride, stride],
+                pads=pads,
+                group=group,
+            )
+        )
         if not relu6:
             return out
         act = fresh("relu6")
@@ -165,16 +189,16 @@ def build_model_bytes(weights: bytes) -> bytes:  # noqa: PLR0915 — one linear 
     channels = 32
     for block_id, (expansion, stride, filters) in enumerate(_BLOCKS):
         inp = x
-        if block_id:   # block 0 has no expansion conv
+        if block_id:  # block 0 has no expansion conv
             x = conv_bn(x, stride=1, relu6=True)
-        x = conv_bn(x, stride=stride, relu6=True)       # depthwise
-        x = conv_bn(x, stride=1, relu6=False)           # linear projection
+        x = conv_bn(x, stride=stride, relu6=True)  # depthwise
+        x = conv_bn(x, stride=1, relu6=False)  # linear projection
         if stride == 1 and channels == filters:
             added = fresh("add")
             nodes.append(helper.make_node("Add", [inp, x], [added]))
             x = added
         channels = filters
-    x = conv_bn(x, stride=1, relu6=True)                # Conv_1 -> 1280, out_relu
+    x = conv_bn(x, stride=1, relu6=True)  # Conv_1 -> 1280, out_relu
 
     nodes += [
         helper.make_node("Transpose", [x], ["activations"], perm=[0, 2, 3, 1]),
@@ -182,15 +206,19 @@ def build_model_bytes(weights: bytes) -> bytes:  # noqa: PLR0915 — one linear 
         helper.make_node("Flatten", ["pooled"], ["features"], axis=1),
     ]
     graph = helper.make_graph(
-        nodes, "mobilenetv2_features",
+        nodes,
+        "mobilenetv2_features",
         [helper.make_tensor_value_info("input", TensorProto.FLOAT, ["N", INPUT_SIZE, INPUT_SIZE, 3])],
-        [helper.make_tensor_value_info("features", TensorProto.FLOAT, ["N", FEATURE_DIM]),
-         helper.make_tensor_value_info("activations", TensorProto.FLOAT, ["N", 7, 7, FEATURE_DIM])],
+        [
+            helper.make_tensor_value_info("features", TensorProto.FLOAT, ["N", FEATURE_DIM]),
+            helper.make_tensor_value_info("activations", TensorProto.FLOAT, ["N", 7, 7, FEATURE_DIM]),
+        ],
         initializer=inits,
     )
-    model = helper.make_model(graph, producer_name="lorebook",
-                              opset_imports=[helper.make_opsetid("", _OPSET)])
-    model.ir_version = 8   # loadable by any onnxruntime from 1.10 on
+    model = helper.make_model(
+        graph, producer_name="lorebook", opset_imports=[helper.make_opsetid("", _OPSET)]
+    )
+    model.ir_version = 8  # loadable by any onnxruntime from 1.10 on
     onnx.checker.check_model(model)
     return model.SerializeToString()
 

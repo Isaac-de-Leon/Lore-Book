@@ -28,8 +28,12 @@ def test_refresh_and_build(tmp_path, monkeypatch):
 
     statuses, progress = [], []
     report = build.refresh_and_build(
-        ["Lorcana", "Empty", "Broken", "Missing"], cancel_event=threading.Event(),
-        status=statuses.append, progress=progress.append, base=str(tmp_path), extractor=Extractor(),
+        ["Lorcana", "Empty", "Broken", "Missing"],
+        cancel_event=threading.Event(),
+        status=statuses.append,
+        progress=progress.append,
+        base=str(tmp_path),
+        extractor=Extractor(),
     )
     # Empty folder: skipped, not a failure. Unreadable images / no folder: failed.
     assert report.failed == ["Broken", "Missing"] and not report.cancelled and not report.ok
@@ -42,8 +46,9 @@ def test_refresh_and_build(tmp_path, monkeypatch):
 
     monkeypatch.setattr(build, "download_new_images", offline)
     monkeypatch.setattr(build, "download_currency_rates", offline)
-    assert build.refresh_and_build(["Lorcana"], cancel_event=threading.Event(), base=str(tmp_path),
-                                   extractor=Extractor()).ok
+    assert build.refresh_and_build(
+        ["Lorcana"], cancel_event=threading.Event(), base=str(tmp_path), extractor=Extractor()
+    ).ok
 
     # Cancelled before starting: nothing built, reported as cancelled.
     cancel = threading.Event()

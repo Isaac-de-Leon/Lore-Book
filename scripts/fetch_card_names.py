@@ -32,8 +32,7 @@ def main(argv=None) -> int:
 
     key = args.game.strip().lower()
     if key not in GAMES:
-        print(f"Unsupported game {args.game!r} (supported: {', '.join(sorted(GAMES))}).",
-              file=sys.stderr)
+        print(f"Unsupported game {args.game!r} (supported: {', '.join(sorted(GAMES))}).", file=sys.stderr)
         return 1
 
     out = args.out or names_file_for(args.game.strip().capitalize())
@@ -45,8 +44,10 @@ def main(argv=None) -> int:
         return 1
 
     if not count:
-        print("No cards parsed — the source format may have changed. "
-              "Try --url with an alternative source.", file=sys.stderr)
+        print(
+            "No cards parsed — the source format may have changed. Try --url with an alternative source.",
+            file=sys.stderr,
+        )
         return 1
     print(f"Wrote {count} card names to {out}")
     return 0

@@ -26,10 +26,12 @@ def normalize_key(set_code: str, card_code: str) -> str:
     Zero-pad- and case-insensitive lookup key: '9'/'41' and '009'/'041' both
     map to '9-41', so LorcanaJSON's unpadded codes match our padded filenames.
     """
+
     def norm(part: str) -> str:
         """Strip leading zeros, keeping a lone '0' and leaving an empty part empty."""
         stripped = part.lstrip("0")
         return stripped if stripped else ("0" if part else "")
+
     return f"{norm(set_code)}-{norm(card_code)}".lower()
 
 

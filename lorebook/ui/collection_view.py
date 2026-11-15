@@ -156,13 +156,15 @@ class CollectionView(QWidget):
             count_item.setData(Qt.ItemDataRole.DisplayRole, count_val)  # int → numeric sort
 
             name = name_for(set_code, card_code, game) or ""
-            for c, item in enumerate([
-                QTableWidgetItem(set_code),
-                QTableWidgetItem(card_code),
-                QTableWidgetItem(variant),
-                count_item,
-                QTableWidgetItem(name),
-            ]):
+            for c, item in enumerate(
+                [
+                    QTableWidgetItem(set_code),
+                    QTableWidgetItem(card_code),
+                    QTableWidgetItem(variant),
+                    count_item,
+                    QTableWidgetItem(name),
+                ]
+            ):
                 self.table.setItem(r, c, item)
         self.table.setSortingEnabled(True)
 
@@ -180,9 +182,7 @@ class CollectionView(QWidget):
         # Suggest the Documents folder: pre-filling the collection file's own
         # path made the default answer "copy the file onto itself".
         suggested = os.path.join(_export_folder(), os.path.basename(source))
-        dest, _ = QFileDialog.getSaveFileName(
-            self, "Export collection CSV", suggested, "CSV files (*.csv)"
-        )
+        dest, _ = QFileDialog.getSaveFileName(self, "Export collection CSV", suggested, "CSV files (*.csv)")
         if not dest:
             return  # user cancelled
         if os.path.exists(dest) and os.path.samefile(source, dest):

@@ -35,8 +35,10 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
     assert window.settings.selected_games["lorcana"] and window.settings.selected_sets["lorcana"] == []
 
     def tree_roots(dialog):
-        return {dialog.set_tree.topLevelItem(i).text(0): dialog.set_tree.topLevelItem(i)
-                for i in range(dialog.set_tree.topLevelItemCount())}
+        return {
+            dialog.set_tree.topLevelItem(i).text(0): dialog.set_tree.topLevelItem(i)
+            for i in range(dialog.set_tree.topLevelItemCount())
+        }
 
     # A game we can download is selectable with no folder yet; Rebuild creates
     # the folder, so its art can download. Opening Settings alone must not.
@@ -134,7 +136,7 @@ def test_scanner_add_undo_and_status_message(tmp_path, monkeypatch):
     assert add.isEnabled()
     scanner.prev_match()
     assert not add.isEnabled()
-    scanner.forget_last_add()          # the collection was cleared: nothing is "already added"
+    scanner.forget_last_add()  # the collection was cleared: nothing is "already added"
     assert add.isEnabled()
 
     # After a failed scan the matches on screen are an earlier card: no Add, even when browsing.
@@ -191,7 +193,9 @@ def test_collection_view_clear_export_and_new_games(tmp_path, monkeypatch):
     monkeypatch.setattr(cv.QFileDialog, "getSaveFileName", accept_suggestion)
     view._export_csv()
     exported = tmp_path / "Documents" / "LorcanaList.csv"
-    assert suggested == [str(exported)] and exported.read_bytes() == (tmp_path / "LorcanaList.csv").read_bytes()
+    assert (
+        suggested == [str(exported)] and exported.read_bytes() == (tmp_path / "LorcanaList.csv").read_bytes()
+    )
     assert view.summary_label.text() == f"Exported to {exported}"
     # ...and picking the collection file itself is refused with a clear message.
     monkeypatch.setattr(cv.QFileDialog, "getSaveFileName", lambda *a: (str(tmp_path / "LorcanaList.csv"), ""))
@@ -201,7 +205,11 @@ def test_collection_view_clear_export_and_new_games(tmp_path, monkeypatch):
     # A game folder created while the app runs shows up on the next refresh; the selection stays.
     (tmp_path / "Card_Images" / "Pokemon").mkdir()
     view.refresh()
-    assert [view.game_combo.itemText(i) for i in range(view.game_combo.count())] == ["Lorcana", "Pokemon", "Riftbound"]
+    assert [view.game_combo.itemText(i) for i in range(view.game_combo.count())] == [
+        "Lorcana",
+        "Pokemon",
+        "Riftbound",
+    ]
     assert view.current_game() == "Lorcana" and view.table.rowCount() == 1
 
 

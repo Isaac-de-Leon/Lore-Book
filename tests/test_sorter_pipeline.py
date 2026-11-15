@@ -28,7 +28,7 @@ def _unit(idx: int) -> np.ndarray:
 FEATURE_DB = {
     "001-001.webp": _unit(0),
     "008-002.webp": _unit(1),
-    "013-218.webp": _unit(2),   # Lorcana Enchanted: foil-only rarity
+    "013-218.webp": _unit(2),  # Lorcana Enchanted: foil-only rarity
 }
 
 
@@ -149,8 +149,9 @@ def test_foil_and_broad_rules(monkeypatch):
     # A foil-only card routes as foil even when detection says it isn't.
     monkeypatch.setattr("lorebook.sorter.pipeline.is_probably_foil", lambda *a, **k: False)
     rules = SortRules(rules=[Rule(bin="foils", foil=True)], reject_bin="normal")
-    outcomes = _make_pipeline(ArrayCameraSource(_frames(2)), SequenceExtractor([_unit(2), _unit(0)]),
-                              MockTransport(), rules=rules).run()
+    outcomes = _make_pipeline(
+        ArrayCameraSource(_frames(2)), SequenceExtractor([_unit(2), _unit(0)]), MockTransport(), rules=rules
+    ).run()
     assert [(o.bin, o.is_foil) for o in outcomes] == [("foils", True), ("normal", False)]
 
 
@@ -178,8 +179,12 @@ def test_csv_writes(tmp_path, monkeypatch):
     # The CSV is flushed every csv_flush_interval cards, not only at the end.
     camera = ArrayCameraSource(_frames(2))
     pipeline = _make_pipeline(
-        camera, SequenceExtractor([_unit(0), _unit(1)]), MockTransport(),
-        game="Riftbound", dry_run=False, csv_flush_interval=1,
+        camera,
+        SequenceExtractor([_unit(0), _unit(1)]),
+        MockTransport(),
+        game="Riftbound",
+        dry_run=False,
+        csv_flush_interval=1,
     )
     pipeline.process_one(camera.read())
     assert os.path.exists("RiftboundList.csv")
@@ -219,15 +224,16 @@ def test_live_camera_gate_records_each_card_once(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     rng = np.random.default_rng(3)
-    mat = np.full((360, 640, 3), 40, np.uint8)               # empty, uniform mat
+    mat = np.full((360, 640, 3), 40, np.uint8)  # empty, uniform mat
     card1 = rng.integers(0, 255, (360, 640, 3), dtype=np.uint8)
     card2 = rng.integers(0, 255, (360, 640, 3), dtype=np.uint8)
     feed = [mat] * 5 + [card1] * 30 + [mat] * 5 + [card2] * 30 + [mat] * 5
 
     def run(gate):
         extractor = SequenceExtractor([_unit(0), _unit(1)] * len(feed))
-        return _make_pipeline(ArrayCameraSource(feed), extractor, MockTransport(),
-                              dry_run=False, gate=gate).run()
+        return _make_pipeline(
+            ArrayCameraSource(feed), extractor, MockTransport(), dry_run=False, gate=gate
+        ).run()
 
     outcomes = run(MotionGate(min_std=12.0))
     assert [o.filename for o in outcomes] == ["001-001.webp", "008-002.webp"]
@@ -252,12 +258,17 @@ def test_locked_csv_does_not_stop_the_run(tmp_path, monkeypatch, caplog):
 
     monkeypatch.setattr(pipeline_module, "update_cardlist_batch", locked_twice)
     transport = MockTransport()
-    outcomes = _make_pipeline(ArrayCameraSource(_frames(5)), SequenceExtractor([_unit(0)] * 5), transport,
-                              dry_run=False, csv_flush_interval=2).run()
+    outcomes = _make_pipeline(
+        ArrayCameraSource(_frames(5)),
+        SequenceExtractor([_unit(0)] * 5),
+        transport,
+        dry_run=False,
+        csv_flush_interval=2,
+    ).run()
     assert len(outcomes) == 5 and transport.cards_advanced == 5
     assert "kept to retry" in caplog.text
     with open("LorcanaList.csv", newline="", encoding="utf-8") as f:
-        assert ["001", "001", "normal", "5"] in list(csv.reader(f))   # nothing lost, nothing doubled
+        assert ["001", "001", "normal", "5"] in list(csv.reader(f))  # nothing lost, nothing doubled
 
     # Still locked at the end: every card was routed, the error is raised, and
     # the log names what never reached the CSV.
@@ -268,7 +279,12 @@ def test_locked_csv_does_not_stop_the_run(tmp_path, monkeypatch, caplog):
     caplog.clear()
     transport = MockTransport()
     with pytest.raises(PermissionError):
-        _make_pipeline(ArrayCameraSource(_frames(3)), SequenceExtractor([_unit(0)] * 3), transport,
-                       dry_run=False, csv_flush_interval=2).run()
+        _make_pipeline(
+            ArrayCameraSource(_frames(3)),
+            SequenceExtractor([_unit(0)] * 3),
+            transport,
+            dry_run=False,
+            csv_flush_interval=2,
+        ).run()
     assert transport.cards_advanced == 3 and transport.homed
     assert "NOT RECORDED in the CSV: 3× 001-001.webp" in caplog.text

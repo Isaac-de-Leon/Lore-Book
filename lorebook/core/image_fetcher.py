@@ -47,6 +47,7 @@ RIFTBOUND_GALLERY_URL = "https://riftbound.leagueoflegends.com/en-us/card-galler
 @dataclass
 class FetchStats:
     """Result of a download_new_images() run."""
+
     downloaded: int = 0
     skipped: int = 0
     failed: int = 0
@@ -177,15 +178,18 @@ def _gallery_cards(html: str) -> list[dict]:
     try:
         blades = json.loads(match.group(1))["props"]["pageProps"]["page"]["blades"]
         items = next(b["cards"]["items"] for b in blades if isinstance(b.get("cards"), dict))
-        return [{
-            "id": item["id"],
-            "name": ", ".join(p for p in (item.get("name"), item.get("subtitle")) if p),
-            # The gallery writes signatures as "unl-229-star-219", Riftcodex as "unl-229*-219".
-            "riftbound_id": item["id"].replace("-star-", "*-"),
-            "collector_number": item["collectorNumber"],
-            "set": {"set_id": item["set"]["value"]["id"]},
-            "media": {"image_url": item["cardImage"]["url"]},
-        } for item in items]
+        return [
+            {
+                "id": item["id"],
+                "name": ", ".join(p for p in (item.get("name"), item.get("subtitle")) if p),
+                # The gallery writes signatures as "unl-229-star-219", Riftcodex as "unl-229*-219".
+                "riftbound_id": item["id"].replace("-star-", "*-"),
+                "collector_number": item["collectorNumber"],
+                "set": {"set_id": item["set"]["value"]["id"]},
+                "media": {"image_url": item["cardImage"]["url"]},
+            }
+            for item in items
+        ]
     except (KeyError, TypeError, StopIteration, AttributeError) as e:
         raise ValueError(f"unexpected gallery page format: {e!r}") from e
 
@@ -212,7 +216,9 @@ def fetch_riftbound_open_sources(url: str = RIFTBOUND_FALLBACK_URL) -> list:
     extra = [c for c in gallery if _riftbound_set_code(c) not in known]
     if extra:
         new_sets = sorted({_riftbound_set_code(c) for c in extra})
-        logger.info("Riftcodex doesn't have %s yet; using the official card gallery for it", ", ".join(new_sets))
+        logger.info(
+            "Riftcodex doesn't have %s yet; using the official card gallery for it", ", ".join(new_sets)
+        )
     return cards + extra
 
 
@@ -319,12 +325,15 @@ def riftbound_printings(data) -> Iterator[tuple[str, str, str, dict]]:
     for card in _riftbound_cards(data):
         set_code = _riftbound_set_code(card)
         code, denominator = _riftbound_printing(card, set_code)
-        number = code or str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
+        number = (
+            code or str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
+        )
         art = card.get("art")
         media = card.get("media")
         url = (
-            _first_field(art if isinstance(art, dict) else {},
-                         "fullUrl", "full_url", "thumbnailUrl", "thumbnail_url")
+            _first_field(
+                art if isinstance(art, dict) else {}, "fullUrl", "full_url", "thumbnailUrl", "thumbnail_url"
+            )
             or _first_field(media if isinstance(media, dict) else {}, "image_url", "imageUrl")
             or _first_field(card, "image_url", "imageUrl", "image")
         )
@@ -554,8 +563,9 @@ def download_new_images(
         report("Download cancelled.")
         return FetchStats()
     if not targets:
-        message = ("No cards matched." if options.sets else
-                   "No cards found — the source format may have changed.")
+        message = (
+            "No cards matched." if options.sets else "No cards found — the source format may have changed."
+        )
         # Logged as well as reported: the GUI only flashes progress text, so
         # a silently empty parse otherwise leaves no trace in the log file.
         logger.warning("%s image fetch from %s: %s", game, options.url or GAMES[key][0], message)
@@ -571,6 +581,5 @@ def download_new_images(
     report(f"{len(targets)} card(s) to consider -> {out_dir}  (format: {options.fmt})")
     stats = _ImageDownload(out_dir, options, report).run(targets, cancelled)
     verb = "would download" if options.dry_run else "downloaded"
-    report(f"Done. {verb} {stats.downloaded}, skipped {stats.skipped} existing, "
-           f"{stats.failed} failed.")
+    report(f"Done. {verb} {stats.downloaded}, skipped {stats.skipped} existing, {stats.failed} failed.")
     return stats

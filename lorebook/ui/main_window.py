@@ -46,6 +46,7 @@ from lorebook.ui.workers import BuildWorker, CameraWorker, ScanResult, ScanWorke
 
 logger = logging.getLogger(__name__)
 
+
 class MainWindow(QWidget):
     """
     The app shell: sidebar + header + pages (ScannerView, CollectionView),
@@ -72,13 +73,13 @@ class MainWindow(QWidget):
     """
 
     # Queued requests to the workers (connected in _start_workers).
-    camera_start_requested = Signal(int)                       # camera index
+    camera_start_requested = Signal(int)  # camera index
     camera_stop_requested = Signal()
     scan_job_requested = Signal(int, object, float, str)  # token, image, threshold, game
     warm_up_requested = Signal()
-    heatmap_requested = Signal(object)                    # preview frame (debug mode)
-    scan_db_invalidated = Signal()                        # caches rebuilt → ScanWorker reloads
-    build_requested = Signal(object, object)                   # game folders, cancel Event
+    heatmap_requested = Signal(object)  # preview frame (debug mode)
+    scan_db_invalidated = Signal()  # caches rebuilt → ScanWorker reloads
+    build_requested = Signal(object, object)  # game folders, cancel Event
 
     def __init__(self) -> None:
         """Load settings, build the UI, start the workers and queue the startup database build."""
@@ -362,7 +363,7 @@ class MainWindow(QWidget):
     def _cancel_db_build(self) -> None:
         """Ask the running database build to stop at its next safe point."""
         logger.info("Database build cancel requested")
-        self._rebuild_queued = False    # Cancel means stop, not "stop, then start over"
+        self._rebuild_queued = False  # Cancel means stop, not "stop, then start over"
         self._build_cancel_event.set()  # thread-safe; read by the build job
 
     def _on_build_status(self, text: str) -> None:
@@ -390,7 +391,7 @@ class MainWindow(QWidget):
                 f"Database build failed for {', '.join(report.failed)} — see logs/card_scanner.log."
             )
         self.scan_db_invalidated.emit()  # vectors may be stale after a rebuild
-        clear_price_cache()        # price/rate files may have been rewritten
+        clear_price_cache()  # price/rate files may have been rewritten
         if report.prices_refreshed:
             self.scanner.refresh_current_match()
         queued, self._rebuild_queued = self._rebuild_queued, False

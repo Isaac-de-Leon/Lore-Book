@@ -163,7 +163,8 @@ class OpenCVCameraSource(CameraSource):
             time.sleep(0.05)
         logger.error(
             "Camera %d gave %d consecutive failed reads; treating feed as dead.",
-            self.camera_index, failures,
+            self.camera_index,
+            failures,
         )
         return None
 
@@ -210,9 +211,7 @@ class MockCameraSource(CameraSource):
         if isinstance(images, str):
             if os.path.isdir(images):
                 return sorted(
-                    os.path.join(images, f)
-                    for f in os.listdir(images)
-                    if f.lower().endswith(SUPPORTED_EXTS)
+                    os.path.join(images, f) for f in os.listdir(images) if f.lower().endswith(SUPPORTED_EXTS)
                 )
             return [images]
         return list(images)

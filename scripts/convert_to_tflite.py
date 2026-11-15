@@ -7,6 +7,7 @@ Run once on a desktop (where full TensorFlow is installed); copy the resulting
     python scripts/convert_to_tflite.py
     python scripts/convert_to_tflite.py --output mobilenetv2_features.tflite
 """
+
 import argparse
 import os
 import sys
@@ -23,9 +24,7 @@ except ImportError:  # running from a checkout without `pip install -e .`
 def main() -> None:
     """Export the keras feature model to a .tflite file."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--output", default=default_tflite_model_path(), help="Output .tflite path."
-    )
+    parser.add_argument("--output", default=default_tflite_model_path(), help="Output .tflite path.")
     args = parser.parse_args()
 
     import tensorflow as tf

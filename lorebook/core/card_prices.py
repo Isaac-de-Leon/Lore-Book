@@ -119,8 +119,7 @@ def rate_for(currency: str, path: str | None = None) -> float | None:
     return _cache[file].get(currency)
 
 
-def format_price(entry: dict | None, currency: str = "USD",
-                 rate: float | None = None) -> str:
+def format_price(entry: dict | None, currency: str = "USD", rate: float | None = None) -> str:
     """
     Render a price entry as e.g. "$1.24 · foil $3.80" (missing halves omitted,
     "" when there's nothing to show). Stored prices are USD; a non-USD
@@ -144,8 +143,7 @@ def format_price(entry: dict | None, currency: str = "USD",
     return " · ".join(parts)
 
 
-def prices_stale(game: str | None = None, path: str | None = None,
-                 max_age_hours: float = 24.0) -> bool:
+def prices_stale(game: str | None = None, path: str | None = None, max_age_hours: float = 24.0) -> bool:
     """
     True when the prices file (or, with path=RATES_FILE, the rates file) is
     missing or its fetched_at is older than max_age_hours or unparseable.

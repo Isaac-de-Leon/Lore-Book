@@ -79,8 +79,12 @@ class _BuildJob:
         """Download card art that is not in the game's image folder yet."""
         try:
             self.status(f"Checking for new {game} card images…")
-            stats = download_new_images(game, FetchOptions(out_dir=image_dir),
-                                        progress_callback=self.status, cancel_event=self.cancel_event)
+            stats = download_new_images(
+                game,
+                FetchOptions(out_dir=image_dir),
+                progress_callback=self.status,
+                cancel_event=self.cancel_event,
+            )
             if stats and stats.downloaded:
                 logger.info("Downloaded %s new %s images (%s failed)", stats.downloaded, game, stats.failed)
                 self.status(f"Downloaded {stats.downloaded} new {game} card images")
@@ -116,8 +120,12 @@ class _BuildJob:
 
         logger.info("Building DB for %s at %s", game, image_dir)
         try:
-            vectors = build_feature_database(image_dir, progress_callback=self._on_build_progress,
-                                             cancel_event=self.cancel_event, extractor=self.extractor)
+            vectors = build_feature_database(
+                image_dir,
+                progress_callback=self._on_build_progress,
+                cancel_event=self.cancel_event,
+                extractor=self.extractor,
+            )
         except Exception:  # noqa: BLE001 — fail this game, build the rest
             logger.exception("Database build for %s failed", game)
             self._fail(game)
@@ -172,6 +180,10 @@ def refresh_and_build(
     report = job.report
     report.cancelled = cancel_event.is_set()
     report.elapsed = time.time() - start
-    logger.info("DB builds finished in %.1fs (%s failed%s)", report.elapsed, len(report.failed),
-                ", cancelled" if report.cancelled else "")
+    logger.info(
+        "DB builds finished in %.1fs (%s failed%s)",
+        report.elapsed,
+        len(report.failed),
+        ", cancelled" if report.cancelled else "",
+    )
     return report

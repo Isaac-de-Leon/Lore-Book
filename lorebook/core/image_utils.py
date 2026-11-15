@@ -43,7 +43,7 @@ def crop_to_card(img_bgr: np.ndarray | None, height_frac: float = 0.6) -> np.nda
     fx, fy = max(fx, 0), max(fy, 0)
     fw, fh = min(fw, w - fx), min(fh, h - fy)
     if fw > 10 and fh > 10:
-        return img_bgr[fy:fy + fh, fx:fx + fw].copy()
+        return img_bgr[fy : fy + fh, fx : fx + fw].copy()
     return img_bgr
 
 
@@ -60,21 +60,27 @@ def motion_sample(frame_bgr: np.ndarray | None, size: int = 64) -> np.ndarray | 
     return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if small.ndim == 3 else small
 
 
-def draw_focus_overlay(frame_bgr: np.ndarray, color: tuple[int, int, int] = (0, 255, 0),
-                       thickness: int = 2, corner: int = 40) -> np.ndarray:
+def draw_focus_overlay(
+    frame_bgr: np.ndarray, color: tuple[int, int, int] = (0, 255, 0), thickness: int = 2, corner: int = 40
+) -> np.ndarray:
     """A copy of the frame with the card focus box (focus_rect) and corner marks drawn."""
     overlay = frame_bgr.copy()
     h, w = overlay.shape[:2]
     fx, fy, fw, fh = focus_rect(h, w)
     cv2.rectangle(overlay, (fx, fy), (fx + fw, fy + fh), color, thickness)
     for (sx, sy), (ex, ey) in [
-        ((fx, fy), (fx + corner, fy)), ((fx, fy), (fx, fy + corner)),
-        ((fx + fw, fy), (fx + fw - corner, fy)), ((fx + fw, fy), (fx + fw, fy + corner)),
-        ((fx, fy + fh), (fx + corner, fy + fh)), ((fx, fy + fh), (fx, fy + fh - corner)),
-        ((fx + fw, fy + fh), (fx + fw - corner, fy + fh)), ((fx + fw, fy + fh), (fx + fw, fy + fh - corner)),
+        ((fx, fy), (fx + corner, fy)),
+        ((fx, fy), (fx, fy + corner)),
+        ((fx + fw, fy), (fx + fw - corner, fy)),
+        ((fx + fw, fy), (fx + fw, fy + corner)),
+        ((fx, fy + fh), (fx + corner, fy + fh)),
+        ((fx, fy + fh), (fx, fy + fh - corner)),
+        ((fx + fw, fy + fh), (fx + fw - corner, fy + fh)),
+        ((fx + fw, fy + fh), (fx + fw, fy + fh - corner)),
     ]:
         cv2.line(overlay, (sx, sy), (ex, ey), color, thickness)
     return overlay
+
 
 class MotionGate:
     """
@@ -93,8 +99,7 @@ class MotionGate:
     for card-presence detection later.
     """
 
-    def __init__(self, steady_frames: int = 10, diff_threshold: float = 4.0,
-                 min_std: float = 0.0):
+    def __init__(self, steady_frames: int = 10, diff_threshold: float = 4.0, min_std: float = 0.0):
         """Set how long a card must sit still and how much change counts as motion."""
         self.steady_frames = max(1, steady_frames)
         self.diff_threshold = diff_threshold

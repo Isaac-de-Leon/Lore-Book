@@ -41,7 +41,7 @@ class SettingsWindow(QDialog):
     touches its parent's state directly.
     """
 
-    applied = Signal(object)        # AppSettings
+    applied = Signal(object)  # AppSettings
     rebuild_requested = Signal()
 
     def __init__(self, settings: AppSettings, parent=None):
@@ -101,7 +101,9 @@ class SettingsWindow(QDialog):
         self.camera_combo.setCurrentIndex(min(settings.camera_index, 4))
         layout.addRow("Camera:", self.camera_combo)
 
-        help_label = QLabel("Note: If camera doesn't work, try a different index\nand restart the application.")
+        help_label = QLabel(
+            "Note: If camera doesn't work, try a different index\nand restart the application."
+        )
         help_label.setObjectName("statusLabel")  # themed muted text
         layout.addRow(help_label)
 
@@ -127,9 +129,7 @@ class SettingsWindow(QDialog):
         self.confidence_input = QLineEdit(f"{100 * settings.confidence_threshold:g}")
         layout.addRow("Confidence Threshold (%):", self.confidence_input)
 
-        self.foil_threshold_input = QLineEdit(
-            str(round(100 * settings.foil_threshold, 1))
-        )
+        self.foil_threshold_input = QLineEdit(str(round(100 * settings.foil_threshold, 1)))
         layout.addRow("Foil Threshold (%):", self.foil_threshold_input)
 
         # Display currency for scanned-card market prices (source data is USD)
@@ -176,12 +176,16 @@ class SettingsWindow(QDialog):
             logger.warning("Error getting sets for %s: %s", game_name, e)
             return
         if not game_sets and key in GAMES:
-            game_root.setToolTip(0, "No cards yet. Tick this game and press Rebuild Database to download them.")
+            game_root.setToolTip(
+                0, "No cards yet. Tick this game and press Rebuild Database to download them."
+            )
         ticked = set(sets_to_display(settings.selected_sets.get(key, []), game_sets, is_selected))
         for set_code in game_sets:
             set_item = QTreeWidgetItem(game_root, [f"Set {set_code}"])
             set_item.setFlags(set_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            set_item.setCheckState(0, Qt.CheckState.Checked if set_code in ticked else Qt.CheckState.Unchecked)
+            set_item.setCheckState(
+                0, Qt.CheckState.Checked if set_code in ticked else Qt.CheckState.Unchecked
+            )
             set_item.setData(0, Qt.ItemDataRole.UserRole, set_code)
 
     def _fit_to_screen(self, parent) -> None:
@@ -227,9 +231,7 @@ class SettingsWindow(QDialog):
         close=False applies without dismissing the dialog (Rebuild Database).
         """
         new = self.result_settings()
-        logger.info(
-            "Applying settings — games: %s, sets: %s", new.selected_games, new.selected_sets
-        )
+        logger.info("Applying settings — games: %s, sets: %s", new.selected_games, new.selected_sets)
         self.applied.emit(new)
         if close:
             self.close()

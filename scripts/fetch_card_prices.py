@@ -36,13 +36,11 @@ def main(argv=None) -> int:
     p.add_argument("--game", default="Lorcana", help="Game folder name (default: Lorcana).")
     p.add_argument("--url", help="Override the price API base URL.")
     p.add_argument("--out", help="Output file (default: card_prices_<Game>.json).")
-    p.add_argument("--skip-rates", action="store_true",
-                   help="Don't refresh currency_rates.json afterwards.")
+    p.add_argument("--skip-rates", action="store_true", help="Don't refresh currency_rates.json afterwards.")
     args = p.parse_args(argv)
 
     if args.game.strip().lower() not in GAMES:
-        print(f"No price source for {args.game!r} (supported: {', '.join(sorted(GAMES))}).",
-              file=sys.stderr)
+        print(f"No price source for {args.game!r} (supported: {', '.join(sorted(GAMES))}).", file=sys.stderr)
         return 1
 
     try:
@@ -61,8 +59,7 @@ def main(argv=None) -> int:
         try:
             download_currency_rates()
         except (OSError, ValueError) as e:
-            print(f"Currency-rate refresh failed (USD display still works): {e}",
-                  file=sys.stderr)
+            print(f"Currency-rate refresh failed (USD display still works): {e}", file=sys.stderr)
 
     return 0
 

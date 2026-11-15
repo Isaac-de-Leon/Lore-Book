@@ -86,7 +86,11 @@ def test_warm_up_then_scan_on_worker_thread():
     try:
         proc = subprocess.run(
             [sys.executable, "-X", "faulthandler", "-c", _SCENARIO],
-            cwd=_REPO_ROOT, env=env, capture_output=True, text=True, timeout=300,
+            cwd=_REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
     except subprocess.TimeoutExpired as e:
         pytest.fail(f"scan scenario hung (>300 s)\n{e.stdout}\n{e.stderr}")

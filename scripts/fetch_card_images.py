@@ -31,15 +31,28 @@ def main(argv=None) -> int:
     p.add_argument("--game", default="Lorcana", help="Game folder name (default: Lorcana).")
     p.add_argument("--url", help="Override the source bulk-data URL.")
     p.add_argument("--out", help="Output folder (default: Card_Images/<Game>).")
-    p.add_argument("--set", action="append", dest="sets", metavar="CODE",
-                   help="Only download these set codes (repeatable; '9' and '009' both match).")
-    p.add_argument("--format", choices=("webp", "jpg"), default="webp",
-                   help="webp = re-encode via OpenCV (default); jpg = keep the source file.")
+    p.add_argument(
+        "--set",
+        action="append",
+        dest="sets",
+        metavar="CODE",
+        help="Only download these set codes (repeatable; '9' and '009' both match).",
+    )
+    p.add_argument(
+        "--format",
+        choices=("webp", "jpg"),
+        default="webp",
+        help="webp = re-encode via OpenCV (default); jpg = keep the source file.",
+    )
     p.add_argument("--quality", type=int, default=95, help="WebP quality 1-100 (default: 95).")
     p.add_argument("--limit", type=int, help="Stop after N downloads (for testing).")
     p.add_argument("--force", action="store_true", help="Re-download images that already exist.")
-    p.add_argument("--delay", type=float, default=0.05,
-                   help="Seconds to pause between downloads (be polite; default: 0.05).")
+    p.add_argument(
+        "--delay",
+        type=float,
+        default=0.05,
+        help="Seconds to pause between downloads (be polite; default: 0.05).",
+    )
     p.add_argument("--dry-run", action="store_true", help="List what would download; fetch nothing.")
     args = p.parse_args(argv)
     # Surface the fetcher's source-selection lines (Riot key missing / Riot
@@ -47,8 +60,7 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     if args.game.strip().lower() not in GAMES:
-        print(f"Unsupported game {args.game!r} (supported: {', '.join(sorted(GAMES))}).",
-              file=sys.stderr)
+        print(f"Unsupported game {args.game!r} (supported: {', '.join(sorted(GAMES))}).", file=sys.stderr)
         return 1
 
     try:

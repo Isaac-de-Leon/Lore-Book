@@ -31,8 +31,8 @@ class BuildWorker(QObject):
     """
 
     status = Signal(str)
-    progress = Signal(int)       # 0–100, or -1 for indeterminate
-    done = Signal(object)        # BuildReport
+    progress = Signal(int)  # 0–100, or -1 for indeterminate
+    done = Signal(object)  # BuildReport
 
     @Slot(object, object)
     def run(self, games: list[str], cancel_event: threading.Event) -> None:
@@ -59,11 +59,11 @@ class CameraWorker(QObject):
     """
 
     state_changed = Signal(str)
-    frame_ready = Signal(object)   # np.ndarray (BGR); never mutated after emit
+    frame_ready = Signal(object)  # np.ndarray (BGR); never mutated after emit
     failed = Signal(str)
 
-    MAX_READ_FAILS = 20            # consecutive bad reads before giving up
-    READ_INTERVAL_MS = 5           # read() itself blocks until the next frame
+    MAX_READ_FAILS = 20  # consecutive bad reads before giving up
+    READ_INTERVAL_MS = 5  # read() itself blocks until the next frame
 
     def __init__(self) -> None:
         """Start with no camera open."""
@@ -157,9 +157,9 @@ class ScanResult:
     """What one scan produced: the matches, or why there are none."""
 
     game: str
-    matches: list[tuple[str, float]] | None   # None: no database, or extraction failed
+    matches: list[tuple[str, float]] | None  # None: no database, or extraction failed
     error: str | None = None
-    no_database: bool = False                 # the game's feature cache is empty/missing
+    no_database: bool = False  # the game's feature cache is empty/missing
 
 
 class ScanWorker(QObject):
@@ -175,8 +175,8 @@ class ScanWorker(QObject):
     DB-build batches.
     """
 
-    done = Signal(int, object)        # (token, ScanResult)
-    heatmap_ready = Signal(object)    # np.ndarray (BGR)
+    done = Signal(int, object)  # (token, ScanResult)
+    heatmap_ready = Signal(object)  # np.ndarray (BGR)
 
     def __init__(self) -> None:
         """Create the worker with no game's vectors loaded yet."""

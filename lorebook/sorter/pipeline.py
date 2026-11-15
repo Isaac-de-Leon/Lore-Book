@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 class SortOutcome:
     """The result of processing a single card."""
 
-    filename: str | None      # matched reference image name, or None if no match
+    filename: str | None  # matched reference image name, or None if no match
     set_code: str
     card_code: str
     confidence: float
@@ -151,8 +151,15 @@ class SortPipeline:
         features = self.extractor.extract(frame)
         matches = self._index.find(features, threshold=config.threshold) if features is not None else []
         if not matches:
-            return SortOutcome(filename=None, set_code="", card_code="", confidence=0.0,
-                               is_foil=is_foil, bin=config.rules.reject_bin, matched=False)
+            return SortOutcome(
+                filename=None,
+                set_code="",
+                card_code="",
+                confidence=0.0,
+                is_foil=is_foil,
+                bin=config.rules.reject_bin,
+                matched=False,
+            )
 
         filename, confidence = matches[0]
         set_code, card_code = split_filename(filename)
@@ -167,8 +174,15 @@ class SortPipeline:
             confidence=confidence,
             rules=config.rules,
         )
-        return SortOutcome(filename=filename, set_code=set_code, card_code=card_code,
-                           confidence=confidence, is_foil=is_foil, bin=bin_id, matched=True)
+        return SortOutcome(
+            filename=filename,
+            set_code=set_code,
+            card_code=card_code,
+            confidence=confidence,
+            is_foil=is_foil,
+            bin=bin_id,
+            matched=True,
+        )
 
     def _route(self, bin_id: str) -> None:
         """Send the card to its bin and get ready for the next one."""
@@ -190,8 +204,7 @@ class SortPipeline:
         except OSError as e:
             # The card is already in its bin, so stopping here would only lose
             # more. Keep the cards queued; the next card retries the write.
-            logger.warning("CSV write failed (%s); %d card(s) kept to retry.",
-                           e, sum(self._pending.values()))
+            logger.warning("CSV write failed (%s); %d card(s) kept to retry.", e, sum(self._pending.values()))
 
     def _final_flush(self) -> None:
         """Write the remaining cards; if that fails, log each one before raising."""
@@ -199,7 +212,9 @@ class SortPipeline:
             self.flush_csv()
         except OSError:
             for (filename, is_foil), count in self._pending.items():
-                logger.error("NOT RECORDED in the CSV: %d× %s%s", count, filename, " (foil)" if is_foil else "")
+                logger.error(
+                    "NOT RECORDED in the CSV: %d× %s%s", count, filename, " (foil)" if is_foil else ""
+                )
             raise
 
     def _log(self, outcome: SortOutcome) -> None:

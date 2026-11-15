@@ -52,8 +52,7 @@ def lorcana_prices(cards) -> dict:
         if not isinstance(card, dict):
             continue
         set_obj = card.get("set")
-        set_code = str(set_obj.get("code", "") if isinstance(set_obj, dict)
-                       else set_obj or "").strip()
+        set_code = str(set_obj.get("code", "") if isinstance(set_obj, dict) else set_obj or "").strip()
         number = str(card.get("collector_number") or card.get("number") or "").strip()
         if not (set_code and number):
             continue
@@ -113,10 +112,12 @@ def _write_json_atomic(path: str, payload: dict) -> None:
     clear_price_cache()
 
 
-def download_card_prices(game: str, out_path: str | None = None,
-                         url: str | None = None,
-                         progress_callback: Callable[[str], None] | None = None
-                         ) -> int | None:
+def download_card_prices(
+    game: str,
+    out_path: str | None = None,
+    url: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+) -> int | None:
     """
     Fetch current market prices for a game and write card_prices_<Game>.json.
     Returns the number of priced cards, or None for games without a
@@ -137,8 +138,7 @@ def download_card_prices(game: str, out_path: str | None = None,
     return len(prices)
 
 
-def download_currency_rates(out_path: str | None = None,
-                            url: str | None = None) -> int:
+def download_currency_rates(out_path: str | None = None, url: str | None = None) -> int:
     """
     Fetch daily USD exchange rates for the supported display currencies and
     write currency_rates.json. Returns the number of rates written; raises on

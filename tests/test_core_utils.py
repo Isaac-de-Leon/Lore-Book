@@ -62,8 +62,10 @@ def test_game_type_and_file_naming(tmp_path):
         assert get_game_type(str(folder / "001-001.webp")) == expected
     assert get_game_type("") == GameType.UNKNOWN
     # Only the game folder counts — not a "Riftbound" folder the repo lives in.
-    assert get_game_type(os.path.join("Riftbound", "repo", "Card_Images", "Lorcana", "001-001.webp")) \
+    assert (
+        get_game_type(os.path.join("Riftbound", "repo", "Card_Images", "Lorcana", "001-001.webp"))
         == GameType.LORCANA
+    )
 
     assert game_type_from_name("  LORCANA  ") == GameType.LORCANA
     assert game_type_from_name("riftbound") == GameType.RIFTBOUND
@@ -190,16 +192,16 @@ def test_motion_gate():
     empty = np.zeros((8, 8), np.float32)
 
     gate = MotionGate(steady_frames=3, diff_threshold=5.0)
-    gate.update(empty), gate.update(empty)            # steady but unarmed
-    assert gate.update(card) is False                 # motion (card placed) arms
+    gate.update(empty), gate.update(empty)  # steady but unarmed
+    assert gate.update(card) is False  # motion (card placed) arms
     assert [gate.update(card) for _ in range(3)] == [False, False, True]
     assert not any(gate.update(card) for _ in range(10))  # sitting card never re-fires
-    gate.update(empty)                                # removed: motion re-arms
-    gate.update(card)                                 # next card
+    gate.update(empty)  # removed: motion re-arms
+    gate.update(card)  # next card
     assert [gate.update(card) for _ in range(3)][-1] is True
 
     gate = MotionGate(steady_frames=2, diff_threshold=5.0, min_std=10.0)
-    gate.update(card), gate.update(empty)             # removal arms...
+    gate.update(card), gate.update(empty)  # removal arms...
     assert not any(gate.update(empty) for _ in range(6))  # ...but empty mat never fires
 
     gate = MotionGate(steady_frames=2, diff_threshold=5.0)
@@ -231,6 +233,7 @@ def test_get_extractor():
     mobilenet = sys.modules["keras.applications"].MobileNetV2  # conftest stub
     saved = (keras_backend._base_model, keras_backend._feat_model, keras_backend._act_model)
     calls = []
+
     def slow_build(*args, **kwargs):
         calls.append(1)
         time.sleep(0.05)
@@ -252,11 +255,14 @@ def test_get_extractor():
     # Importing features must not install process-wide warning filters or
     # override a TF log level the user already set.
     import subprocess
-    probe = ("import os, warnings; os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'; "
-             "import lorebook.core.features; "
-             "assert not any(a == 'ignore' and c is UserWarning and m is None and mod is None "
-             "for a, m, c, mod, _ in warnings.filters), 'blanket UserWarning filter'; "
-             "assert os.environ['TF_CPP_MIN_LOG_LEVEL'] == '0', 'log level overridden'")
+
+    probe = (
+        "import os, warnings; os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'; "
+        "import lorebook.core.features; "
+        "assert not any(a == 'ignore' and c is UserWarning and m is None and mod is None "
+        "for a, m, c, mod, _ in warnings.filters), 'blanket UserWarning filter'; "
+        "assert os.environ['TF_CPP_MIN_LOG_LEVEL'] == '0', 'log level overridden'"
+    )
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     result = subprocess.run([sys.executable, "-c", probe], cwd=root, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -285,8 +291,8 @@ def test_update_cardlist_routing_and_foil_only(tmp_path, monkeypatch):
     update_cardlist(os.path.join("Card_Images", "Lorcana", "013-219.webp"), is_foil=False)
     update_cardlist("013-218.webp", is_foil=False, count=-1, game="Lorcana", allow_negative=True)
     rows = _rows("LorcanaList.csv")
-    assert ["013", "218", "foil", "1"] in rows   # undo hit the coerced foil row
-    assert ["013", "219", "foil", "1"] in rows   # coercion applies to inferred game too
+    assert ["013", "218", "foil", "1"] in rows  # undo hit the coerced foil row
+    assert ["013", "219", "foil", "1"] in rows  # coercion applies to inferred game too
     assert not any(r[2] == "normal" for r in rows[1:])
 
 
@@ -299,10 +305,10 @@ def test_negative_counts_and_clear(tmp_path, monkeypatch):
     add("001-042.webp", 3)
     add("001-042.webp", -2, allow_negative=True)
     add("002-001.webp", 1)
-    add("002-001.webp", -5, allow_negative=True)   # clamps at zero
+    add("002-001.webp", -5, allow_negative=True)  # clamps at zero
     add("003-001.webp", 2)
-    add("003-001.webp", -1)                        # ignored without allow_negative
-    add("009-999.webp", -1, allow_negative=True)   # absent card: no phantom row
+    add("003-001.webp", -1)  # ignored without allow_negative
+    add("009-999.webp", -1, allow_negative=True)  # absent card: no phantom row
     rows = _rows("LorcanaList.csv")
     assert ["001", "042", "normal", "1"] in rows
     assert ["002", "001", "normal", "0"] in rows
@@ -316,7 +322,7 @@ def test_negative_counts_and_clear(tmp_path, monkeypatch):
     clear_collection("Lorcana")
     assert _rows("LorcanaList.csv") == [HEADER]
     os.remove("LorcanaList.csv")
-    clear_collection("Lorcana")                    # missing file → header only
+    clear_collection("Lorcana")  # missing file → header only
     assert _rows("LorcanaList.csv") == [HEADER]
 
 
@@ -326,13 +332,15 @@ def test_csv_reading_normalizes_legacy_rows(tmp_path, monkeypatch):
     assert read_collection_rows("Riftbound") == []
 
     with open("LorcanaList.csv", "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerows([
-            HEADER,
-            ["009", "041", "normal", "3"],
-            ["001", "007", "foil"],                  # legacy 3-col → count 0
-            ["009", "042", "normal", "2", "Tag"],    # legacy 5th column ignored
-            ["009", "043", "normal", ""],            # empty count → 0
-        ])
+        csv.writer(f).writerows(
+            [
+                HEADER,
+                ["009", "041", "normal", "3"],
+                ["001", "007", "foil"],  # legacy 3-col → count 0
+                ["009", "042", "normal", "2", "Tag"],  # legacy 5th column ignored
+                ["009", "043", "normal", ""],  # empty count → 0
+            ]
+        )
     expected = [
         ["009", "041", "normal", "3"],
         ["001", "007", "foil", "0"],

@@ -8,10 +8,7 @@ from lorebook.core.matching import MatchIndex, find_best_matches, l2_normalize
 
 def _random_db(n=50, dim=64, seed=7):
     rng = np.random.default_rng(seed)
-    return {
-        f"{i:03d}-{i:03d}.webp": l2_normalize(rng.normal(size=dim).astype(np.float32))
-        for i in range(n)
-    }
+    return {f"{i:03d}-{i:03d}.webp": l2_normalize(rng.normal(size=dim).astype(np.float32)) for i in range(n)}
 
 
 def test_match_index():

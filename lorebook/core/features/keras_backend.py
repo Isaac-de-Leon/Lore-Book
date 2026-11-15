@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 # heatmap overlay is actually used) so importing this module — and the "tflite"
 # backend — works on a Raspberry Pi that has only tflite-runtime installed.
 _base_model = None
-_feat_model = None   # 1280-dim pooled features
-_act_model = None    # last conv activations (for heatmaps)
+_feat_model = None  # 1280-dim pooled features
+_act_model = None  # last conv activations (for heatmaps)
 
 # Serializes everything that touches the Keras models: the one-time load and
 # every inference. The GUI scans while the DB-build worker extracts batches;

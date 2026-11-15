@@ -7,7 +7,6 @@ an icon with any color; pass checked_color to give a checkable button
 (e.g. sidebar nav) a different tint in its checked state.
 """
 
-
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
@@ -49,14 +48,8 @@ _ICONS: dict[str, str] = {
     "chevron-left": '<polyline points="15 18 9 12 15 6"/>',
     "chevron-right": '<polyline points="9 18 15 12 9 6"/>',
     "plus": '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
-    "undo": (
-        '<polyline points="1 4 1 10 7 10"/>'
-        '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'
-    ),
-    "refresh": (
-        '<polyline points="23 4 23 10 17 10"/>'
-        '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'
-    ),
+    "undo": ('<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'),
+    "refresh": ('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'),
     "export": (
         '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
         '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>'

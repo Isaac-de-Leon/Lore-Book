@@ -86,8 +86,7 @@ def test_batched_build(tmp_path, monkeypatch):
     with sqlite3.connect(cache_file) as conn:
         conn.execute("DROP TABLE features")
         conn.execute("CREATE TABLE features (filename TEXT PRIMARY KEY, vector BLOB NOT NULL)")
-        conn.executemany("INSERT INTO features VALUES (?, ?)",
-                         [(n, vec.tobytes()) for n in db])
+        conn.executemany("INSERT INTO features VALUES (?, ?)", [(n, vec.tobytes()) for n in db])
     extractor = RecordingExtractor()
     assert set(build_feature_database(image_dir=str(images), extractor=extractor)) == set(db)
     assert extractor.batch_sizes == []
@@ -137,7 +136,7 @@ def test_stale_cache_pruning(tmp_path, monkeypatch):
     _seed_cache(_cache_path(str(images)), ["001-001.webp", "999-999.webp"])
 
     db = build_feature_database(image_dir=str(images))
-    assert set(db) == {"001-001.webp"}              # deleted image pruned, survivor kept
+    assert set(db) == {"001-001.webp"}  # deleted image pruned, survivor kept
     assert set(load_cache(str(images))) == {"001-001.webp"}
 
     # A typo'd/unmounted image_dir must be a no-op, not "all images deleted".

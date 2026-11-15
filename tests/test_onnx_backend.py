@@ -27,10 +27,17 @@ def _synthetic_weights() -> bytes:
             layers.append((f"dw{n}", {"depthwise_kernel": rng.normal(0, 0.1, (k, k, cin, 1))}))
         else:
             layers.append((f"conv{n}", {"kernel": rng.normal(0, 0.1, (k, k, cin, cout))}))
-        layers.append((f"bn{n}", {
-            "gamma": rng.uniform(0.5, 1.5, cout), "beta": rng.normal(0, 0.1, cout),
-            "moving_mean": rng.normal(0, 0.1, cout), "moving_variance": rng.uniform(0.5, 1.5, cout),
-        }))
+        layers.append(
+            (
+                f"bn{n}",
+                {
+                    "gamma": rng.uniform(0.5, 1.5, cout),
+                    "beta": rng.normal(0, 0.1, cout),
+                    "moving_mean": rng.normal(0, 0.1, cout),
+                    "moving_variance": rng.uniform(0.5, 1.5, cout),
+                },
+            )
+        )
 
     conv("conv", 3, 3, 32)
     ch = 32

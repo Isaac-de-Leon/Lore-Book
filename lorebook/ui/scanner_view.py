@@ -46,7 +46,7 @@ class ScannerView(QWidget):
     AMBIGUOUS_GAP = 0.02
 
     scan_requested = Signal()
-    collection_changed = Signal()   # a CSV was written (Add / Undo)
+    collection_changed = Signal()  # a CSV was written (Add / Undo)
 
     def __init__(self, settings: AppSettings, parent: QWidget | None = None):
         """Create the page with no results shown; settings supplies the user's preferences."""
@@ -56,12 +56,12 @@ class ScannerView(QWidget):
 
         self.last_matches: list[tuple[str, float]] = []
         self.current_match_idx = 0
-        self.matches_game: str | None = None   # the game the shown matches belong to
+        self.matches_game: str | None = None  # the game the shown matches belong to
         self._last_add: tuple[str, bool, int, str] | None = None  # (fname, foil, count, game)
-        self._added: set[str] = set()    # matches from the current scan already in the CSV
-        self._scan_failed = False        # the shown matches are from an earlier scan
-        self._foil_locked = False        # Foil checkbox forced on for foil-only rarities
-        self._foil_before_lock = False   # user's checkbox state to restore on unlock
+        self._added: set[str] = set()  # matches from the current scan already in the CSV
+        self._scan_failed = False  # the shown matches are from an earlier scan
+        self._foil_locked = False  # Foil checkbox forced on for foil-only rarities
+        self._foil_before_lock = False  # user's checkbox state to restore on unlock
 
         self._build_widgets()
 
@@ -195,8 +195,14 @@ class ScannerView(QWidget):
         self.next_btn.setToolTip("Next match (D)")
         self.foil_check.setToolTip("Toggle Foil (F)")
         # Keyboard shortcuts belong to the window; only the count field takes focus.
-        for button in (self.capture_btn, self.add_csv_btn, self.undo_btn, self.prev_btn,
-                  self.next_btn, self.foil_check):
+        for button in (
+            self.capture_btn,
+            self.add_csv_btn,
+            self.undo_btn,
+            self.prev_btn,
+            self.next_btn,
+            self.foil_check,
+        ):
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.count_edit.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
@@ -419,8 +425,11 @@ class ScannerView(QWidget):
             update_cardlist(fname, is_foil, count, game=game)
         except OSError as e:  # unreadable or locked (e.g. open in Excel) — file untouched
             logger.error("Could not add %s to %s: %s", fname, target, e)
-            self.flash_csv_status(f"Not added — {target} could not be updated (open in another program?)",
-                            is_error=True, timeout_ms=8000)
+            self.flash_csv_status(
+                f"Not added — {target} could not be updated (open in another program?)",
+                is_error=True,
+                timeout_ms=8000,
+            )
             return
         self._last_add = (fname, is_foil, count, game)
         self.undo_btn.setEnabled(True)
@@ -438,8 +447,9 @@ class ScannerView(QWidget):
             update_cardlist(fname, is_foil, -count, game=game, allow_negative=True)
         except OSError as e:  # keep _last_add so the user can retry
             logger.error("Could not undo %s: %s", fname, e)
-            self.flash_csv_status("Undo failed — the collection file could not be updated.",
-                            is_error=True, timeout_ms=8000)
+            self.flash_csv_status(
+                "Undo failed — the collection file could not be updated.", is_error=True, timeout_ms=8000
+            )
             return
         self._last_add = None
         self.undo_btn.setEnabled(False)
@@ -462,7 +472,9 @@ class ScannerView(QWidget):
         key, mods = event.key(), event.modifiers()
         if key == Qt.Key.Key_C:
             self.scan_requested.emit()
-        elif key == Qt.Key.Key_S and (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)):
+        elif key == Qt.Key.Key_S and (
+            mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
+        ):
             if self.add_csv_btn.isEnabled():
                 self.add_to_csv()
         elif key == Qt.Key.Key_Z and (mods & Qt.KeyboardModifier.ControlModifier):

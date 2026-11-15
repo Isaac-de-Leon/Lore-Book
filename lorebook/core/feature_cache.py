@@ -109,9 +109,7 @@ def _remove_cache_entries(cache_file: str, filenames: list[str]) -> None:
         return
     try:
         with sqlite3.connect(cache_file) as conn:
-            conn.executemany(
-                "DELETE FROM features WHERE filename = ?", [(n,) for n in filenames]
-            )
+            conn.executemany("DELETE FROM features WHERE filename = ?", [(n,) for n in filenames])
     except sqlite3.Error as e:
         logger.error("Error pruning stale cache entries from %s: %s", cache_file, e)
 
@@ -155,18 +153,17 @@ def _drop_replaced(feature_db: dict[str, np.ndarray], disk: dict[str, Stamp | No
     cache_file = _cache_path(image_dir)
     stored = _load_stamps(cache_file)
     changed = sorted(
-        f for f in disk
-        if f in feature_db and stored.get(f) is not None and stored[f] != disk[f]
+        f for f in disk if f in feature_db and stored.get(f) is not None and stored[f] != disk[f]
     )
     if changed:
         for name in changed:
             feature_db.pop(name, None)
         _remove_cache_entries(cache_file, changed)
         logger.info("Re-extracting %s changed images in %s", len(changed), image_dir)
-    _save_stamps(cache_file, {
-        f: stamp for f in feature_db
-        if stored.get(f) is None and (stamp := disk.get(f)) is not None
-    })
+    _save_stamps(
+        cache_file,
+        {f: stamp for f in feature_db if stored.get(f) is None and (stamp := disk.get(f)) is not None},
+    )
 
 
 def _extract_chunk(
@@ -211,7 +208,7 @@ def _extract_in_batches(
             if cancel_event is not None and cancel_event.is_set():
                 logger.info("Build cancelled after %s/%s files in %s", start, len(new_files), image_dir)
                 return
-            chunk = new_files[start:start + _BATCH_SIZE]
+            chunk = new_files[start : start + _BATCH_SIZE]
             yield chunk, _extract_chunk(chunk, image_dir, extractor, pool)
 
 
@@ -227,8 +224,7 @@ def _save_cache(cache_file: str, feature_db: dict[str, np.ndarray], disk: dict[s
                 mtime_ns, size = disk.get(filename) or (None, None)
                 rows.append((filename, np.asarray(vector, dtype=np.float32).tobytes(), mtime_ns, size))
             conn.executemany(
-                "INSERT OR REPLACE INTO features (filename, vector, mtime_ns, size) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO features (filename, vector, mtime_ns, size) VALUES (?, ?, ?, ?)",
                 rows,
             )
         logger.info("Saved %s entries to %s", len(feature_db), cache_file)
@@ -277,6 +273,7 @@ def build_feature_database(
 
     if extractor is None:
         from lorebook.core.features import get_extractor  # lazy model-runtime import
+
         extractor = get_extractor()
 
     extracted = done = 0
