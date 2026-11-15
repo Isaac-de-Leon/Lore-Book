@@ -384,102 +384,136 @@ def test_riftbound_pagination(monkeypatch):
         assert len(calls) == 1
 
 
-def test_download_new_images(tmp_path, monkeypatch):
+@pytest.fixture
+def lorcana_download(tmp_path, monkeypatch):
+    """Stub the Lorcana card list and image bytes; return a runner for download_new_images.
+
+    run(folder, **options) downloads into tmp_path/folder (created empty unless
+    it exists) and returns (folder path, stats). The stub objects hang off the
+    runner so a test can change them: run.cards, run.jpg.
+    """
     jpg = _tiny_jpg()
-    data = {"cards": [_card("9", 41), _card("9", 42), _card("10", 1)]}
-    monkeypatch.setitem(image_fetcher.GAMES, "lorcana", ("stub://cards", lambda url: data, lorcana_targets))
+    cards = [_card("9", 41), _card("9", 42), _card("10", 1)]
+    monkeypatch.setitem(
+        image_fetcher.GAMES, "lorcana", ("stub://cards", lambda url: {"cards": cards}, lorcana_targets)
+    )
     monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: jpg)
 
-    def run(sub, progress_callback=None, cancel_event=None, **options):
-        out = tmp_path / sub
-        out.mkdir()
+    def run(folder, progress_callback=None, cancel_event=None, **options):
+        out = tmp_path / folder
+        out.mkdir(exist_ok=True)
         options.setdefault("sets", ["009"])  # set filter is padding-insensitive
-        return out, download_new_images(
+        stats = download_new_images(
             "Lorcana",
             FetchOptions(out_dir=str(out), delay=0, **options),
             progress_callback=progress_callback,
             cancel_event=cancel_event,
         )
+        return out, stats
 
-    assert download_new_images("NotAGame", FetchOptions(out_dir=str(tmp_path))) is None
+    run.cards = cards
+    run.jpg = jpg
+    return run
 
-    out, stats = run("webp")
+
+def _names(folder):
+    return sorted(p.name for p in folder.iterdir())
+
+
+def test_download_writes_missing_images_as_webp(lorcana_download, tmp_path):
+    out, stats = lorcana_download("webp")
     assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
-    assert sorted(p.name for p in out.iterdir()) == ["009-041.webp", "009-042.webp"]
+    assert _names(out) == ["009-041.webp", "009-042.webp"]
     assert (out / "009-041.webp").read_bytes()[:4] == b"RIFF"
 
-    out, stats = run("jpg", fmt="jpg", limit=1)
-    assert stats.downloaded == 1
-    assert [p.read_bytes() for p in out.iterdir()] == [jpg]  # source bytes kept
+    assert download_new_images("NotAGame", FetchOptions(out_dir=str(tmp_path))) is None  # no source: skipped
 
-    out = tmp_path / "existing"
-    out.mkdir()
-    (out / "009-041.webp").write_bytes(b"already here")
-    stats = download_new_images("Lorcana", FetchOptions(out_dir=str(out), sets=["9"], delay=0))
+
+def test_download_jpg_keeps_source_bytes_and_honours_limit(lorcana_download):
+    out, stats = lorcana_download("jpg", fmt="jpg", limit=1)
+    assert stats.downloaded == 1
+    assert [p.read_bytes() for p in out.iterdir()] == [lorcana_download.jpg]
+
+
+def test_download_skips_existing_files_unless_forced(lorcana_download, tmp_path):
+    (tmp_path / "existing").mkdir()
+    (tmp_path / "existing" / "009-041.webp").write_bytes(b"already here")
+    out, stats = lorcana_download("existing", sets=["9"])
     assert stats == FetchStats(downloaded=1, skipped=1, failed=0)
     assert (out / "009-041.webp").read_bytes() == b"already here"
-    stats = download_new_images("Lorcana", FetchOptions(out_dir=str(out), sets=["9"], force=True, delay=0))
+
+    out, stats = lorcana_download("existing", sets=["9"], force=True)
     assert stats.downloaded == 2
     assert (out / "009-041.webp").read_bytes() != b"already here"
 
+
+def test_download_never_writes_outside_the_output_folder(lorcana_download, tmp_path):
     # Codes from the downloaded card list become filenames: anything that
     # could escape the output folder is skipped, never written.
-    data["cards"] += [_card("../../escaped", 1), _card("9", "/etc/x"), _card("..", 2)]
-    out, stats = run("unsafe", sets=None)
+    lorcana_download.cards.extend([_card("../../escaped", 1), _card("9", "/etc/x"), _card("..", 2)])
+    out, stats = lorcana_download("unsafe", sets=None)
     assert stats.failed == 3
     assert not (tmp_path.parent / "escaped-001.webp").exists()  # where ../../ would land
     assert "x" not in {p.stem.split("-")[-1] for p in out.iterdir()}
-    del data["cards"][-3:]
 
+
+def test_download_dry_run_reports_without_writing(lorcana_download):
     messages = []
-    out, stats = run("dry", dry_run=True, progress_callback=messages.append)
+    out, stats = lorcana_download("dry", dry_run=True, progress_callback=messages.append)
     assert stats.downloaded == 2 and list(out.iterdir()) == []
     assert any("would fetch 009-041.webp" in m for m in messages)
 
-    # Cancel set mid-flight takes effect before the next image; pre-set does nothing.
+
+def test_download_cancel_stops_before_the_next_image(lorcana_download, monkeypatch):
     cancel = threading.Event()
 
     def download_then_cancel(url):
         cancel.set()
-        return jpg
+        return lorcana_download.jpg
 
     monkeypatch.setattr(image_fetcher, "fetch_bytes", download_then_cancel)
     messages = []
-    out, stats = run("cancel", cancel_event=cancel, progress_callback=messages.append)
-    assert stats.downloaded == 1 and [p.name for p in out.iterdir()] == ["009-041.webp"]
+    out, stats = lorcana_download("cancel", cancel_event=cancel, progress_callback=messages.append)
+    assert stats.downloaded == 1 and _names(out) == ["009-041.webp"]
     assert any("cancelled" in m.lower() for m in messages)
-    out, stats = run("precancel", cancel_event=cancel)
+
+    # Already cancelled before starting: nothing is fetched.
+    out, stats = lorcana_download("precancel", cancel_event=cancel)
     assert stats.downloaded == 0 and list(out.iterdir()) == []
 
+
+def test_download_repairs_empty_files_and_removes_partial_ones(lorcana_download, tmp_path):
     # A 0-byte image is a failed write and is fetched again; .part leftovers
     # from a killed run are cleaned up.
-    monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: jpg)
-    out = tmp_path / "repair"
-    out.mkdir()
-    (out / "009-041.webp").write_bytes(b"")
-    (out / "009-042.webp.part").write_bytes(b"half")
-    stats = download_new_images("Lorcana", FetchOptions(out_dir=str(out), sets=["9"], delay=0))
+    (tmp_path / "repair").mkdir()
+    (tmp_path / "repair" / "009-041.webp").write_bytes(b"")
+    (tmp_path / "repair" / "009-042.webp.part").write_bytes(b"half")
+    out, stats = lorcana_download("repair", sets=["9"])
     assert stats.downloaded == 2
-    assert sorted(p.name for p in out.iterdir()) == ["009-041.webp", "009-042.webp"]
+    assert _names(out) == ["009-041.webp", "009-042.webp"]
     assert (out / "009-041.webp").stat().st_size > 0
 
-    # A write that fails midway leaves neither a truncated image nor a .part.
-    monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: "not bytes")  # write() raises
-    out, stats = run("midwrite", fmt="jpg")
-    assert stats.failed == 2 and list(out.iterdir()) == []
 
-    # A per-image failure is counted; a card-list failure raises.
+def test_download_failed_write_leaves_no_file_behind(lorcana_download, monkeypatch):
+    monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: "not bytes")  # write() raises
+    out, stats = lorcana_download("midwrite", fmt="jpg")
+    assert stats.failed == 2 and list(out.iterdir()) == []  # no truncated image, no .part
+
+
+def test_download_counts_image_failures_but_raises_on_card_list_failure(lorcana_download, monkeypatch):
     def boom(url):
         raise OSError("offline")
 
     monkeypatch.setattr(image_fetcher, "fetch_bytes", boom)
-    out, stats = run("fail")
+    out, stats = lorcana_download("fail")
     assert stats == FetchStats(downloaded=0, skipped=0, failed=2)
+
     monkeypatch.setitem(image_fetcher.GAMES, "lorcana", ("stub://cards", boom, lorcana_targets))
     with pytest.raises(OSError):
-        run("listfail")
+        lorcana_download("listfail")
 
-    # Riftbound shapes download with padded names too.
+
+def test_download_riftbound_uses_padded_names(tmp_path, monkeypatch):
     rift = [
         {"set": "OGN", "collectorNumber": 1, "art": {"fullUrl": "http://img/1.jpg"}},
         {"set": "OGN", "collector_number": "23c", "media": {"image_url": "http://img/23c.jpg"}},
@@ -487,13 +521,15 @@ def test_download_new_images(tmp_path, monkeypatch):
     monkeypatch.setitem(
         image_fetcher.GAMES, "riftbound", ("stub://cards", lambda url: rift, riftbound_targets)
     )
+    jpg = _tiny_jpg()
     monkeypatch.setattr(image_fetcher, "fetch_bytes", lambda url: jpg)
     out = tmp_path / "rift"
     stats = download_new_images("Riftbound", FetchOptions(out_dir=str(out), delay=0))
     assert stats == FetchStats(downloaded=2, skipped=0, failed=0)
-    assert sorted(p.name for p in out.iterdir()) == ["OGN-001.webp", "OGN-23c.webp"]
+    assert _names(out) == ["OGN-001.webp", "OGN-23c.webp"]
 
-    # A 404 fails at once (no back-off); a 503 is retried.
+
+def test_fetch_bytes_retries_server_errors_but_not_client_errors(monkeypatch):
     import urllib.error
 
     sleeps, calls = [], []

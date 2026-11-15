@@ -23,7 +23,7 @@ lorebook-ui = "lorebook.ui.app:main"
 lorebook-sort = "lorebook.sorter.__main__:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=9", "ruff>=0.15", "mypy>=2"]  # exact CI pins: requirements-dev.txt
+dev = ["pytest>=9", "pytest-cov>=7", "ruff>=0.15", "mypy>=2"]  # exact CI pins: requirements-dev.txt
 # Desktop GUI + onnx feature backend (default; onnx/h5py build the model
 # from the Keras weights) + keras backend (fallback; builds the .tflite model).
 gui = [
@@ -75,6 +75,21 @@ check_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Coverage is measured only when asked for: `python -m pytest --cov`. It needs
+# the full desktop install (PySide6, onnxruntime): without them the UI and
+# ONNX tests skip and those modules count as untested. CI's gui job runs it.
+[tool.coverage.run]
+source = ["lorebook"]
+
+[tool.coverage.report]
+# Measured 91% when this was set; the gap is mostly lorebook/ui/app.py (only
+# runs when the real app starts) and camera/dialog paths in the two big views.
+# Raise it as tests are added; don't lower it to get a change through.
+fail_under = 88
+show_missing = true
+skip_covered = true
+exclude_also = ["if TYPE_CHECKING:"]
 
 [tool.ruff]
 target-version = "py311"

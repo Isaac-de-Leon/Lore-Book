@@ -15,56 +15,72 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 
-def test_settings_and_main_window(tmp_path, monkeypatch):
+@pytest.fixture
+def app():
+    return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture
+def window(app, tmp_path, monkeypatch):
+    """A MainWindow over two game folders (Lorcana, MTG), with no startup build; closed afterwards.
+
+    `window.builds` counts how often a database build was requested.
+    """
     import lorebook.ui.main_window as mw
 
-    app = QApplication.instance() or QApplication([])
     monkeypatch.chdir(tmp_path)
     for game, files in (("Lorcana", ("001-001.webp", "002-001.webp")), ("MTG", ("DOM-001.webp",))):
         (tmp_path / "Card_Images" / game).mkdir(parents=True)
         for name in files:
             (tmp_path / "Card_Images" / game / name).touch()
-    # No network: skip the startup build. (TensorFlow is stubbed by conftest.)
-    monkeypatch.setattr(mw.MainWindow, "start_db_build_in_background", lambda self: None)
+    # No network: builds are counted, not run. (TensorFlow is stubbed by conftest.)
+    builds = []
+    monkeypatch.setattr(mw.MainWindow, "start_db_build_in_background", lambda self: builds.append(1))
 
     window = mw.MainWindow()
-    assert window.get_active_game() == "Lorcana"
+    app.processEvents()  # let the deferred startup build request arrive
+    builds.clear()
+    window.builds = builds
+    yield window
+    window.close()
+    app.processEvents()
 
-    # Apply without changes keeps an "all sets" game selected.
+
+def _tree_roots(dialog):
+    """The Settings dialog's game items, by game name."""
+    tree = dialog.set_tree
+    return {tree.topLevelItem(i).text(0): tree.topLevelItem(i) for i in range(tree.topLevelItemCount())}
+
+
+def test_applying_settings_unchanged_keeps_the_game_and_all_sets(window):
+    assert window.get_active_game() == "Lorcana"
     window._make_settings_dialog().apply_settings()
     assert window.settings.selected_games["lorcana"] and window.settings.selected_sets["lorcana"] == []
 
-    def tree_roots(dialog):
-        return {
-            dialog.set_tree.topLevelItem(i).text(0): dialog.set_tree.topLevelItem(i)
-            for i in range(dialog.set_tree.topLevelItemCount())
-        }
 
+def test_downloadable_game_gets_its_folder_on_rebuild_not_before(window, tmp_path):
     # A game we can download is selectable with no folder yet; Rebuild creates
     # the folder, so its art can download. Opening Settings alone must not.
-    builds = []
-    monkeypatch.setattr(mw.MainWindow, "start_db_build_in_background", lambda self: builds.append(1))
     dialog = window._make_settings_dialog()
-    roots = tree_roots(dialog)
+    roots = _tree_roots(dialog)
     assert roots["Riftbound"].childCount() == 0
     assert not (tmp_path / "Card_Images" / "Riftbound").exists()
+
     roots["Riftbound"].setCheckState(0, Qt.CheckState.Checked)
     dialog._rebuild_database()
-    assert window.get_active_game() == "Riftbound" and builds == [1]
+    assert window.get_active_game() == "Riftbound" and window.builds == [1]
     assert (tmp_path / "Card_Images" / "Riftbound").is_dir()
 
-    # A new game folder is selectable, keeps its case, and replaces the old one.
+
+def test_selecting_a_new_game_folder_keeps_its_case_and_deselects_the_rest(window):
     dialog = window._make_settings_dialog()
-    roots = tree_roots(dialog)
-    roots["MTG"].setCheckState(0, Qt.CheckState.Checked)
+    _tree_roots(dialog)["MTG"].setCheckState(0, Qt.CheckState.Checked)
     dialog.apply_settings()
-    assert window.get_active_game() == "MTG"
+    assert window.get_active_game() == "MTG"  # not "Mtg"
     assert not window.settings.selected_games["lorcana"] and not window.settings.selected_games["riftbound"]
 
-    # A scan runs on the scan worker thread and lands in the result panel,
-    # tied to the game it was scanned for.
-    import time
 
+def test_scan_runs_on_the_worker_thread_and_fills_the_result_panel(window, app, monkeypatch):
     import numpy as np
 
     from lorebook.core import feature_cache
@@ -72,9 +88,9 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
 
     vec = np.zeros(1280, np.float32)
     vec[0] = 1
-    feature_cache._init_db(feature_cache._cache_path("MTG"))
-    with feature_cache.sqlite3.connect(feature_cache._cache_path("MTG")) as conn:
-        conn.execute("INSERT INTO features (filename, vector) VALUES (?, ?)", ("DOM-001.webp", vec.tobytes()))
+    feature_cache._init_db(feature_cache._cache_path("Lorcana"))
+    with feature_cache.sqlite3.connect(feature_cache._cache_path("Lorcana")) as conn:
+        conn.execute("INSERT INTO features (filename, vector) VALUES (?, ?)", ("001-001.webp", vec.tobytes()))
 
     class FakeExtractor:
         def extract(self, img):
@@ -86,17 +102,19 @@ def test_settings_and_main_window(tmp_path, monkeypatch):
     monkeypatch.setitem(registry._extractors, "keras", FakeExtractor())
     window.last_frame = np.zeros((720, 1280, 3), np.uint8)
     window.request_scan()
-    deadline = time.time() + 5
-    while window._scan_busy and time.time() < deadline:
-        app.processEvents()
-        time.sleep(0.01)
-    assert window.scanner.last_matches[0][0] == "DOM-001.webp"
-    assert window.scanner.matches_game == "MTG" and window.scanner.add_csv_btn.isEnabled()
+    assert _wait_until(app, lambda: not window._scan_busy)
+    # The result is tied to the game it was scanned for.
+    assert window.scanner.last_matches[0][0] == "001-001.webp"
+    assert window.scanner.matches_game == "Lorcana" and window.scanner.add_csv_btn.isEnabled()
 
+
+def test_closing_the_window_stops_the_camera_and_every_thread(window):
+    import lorebook.ui.main_window as mw
+
+    assert all(w.is_running() for w in window._workers())
     window.close()
-    assert window._camera_state == "idle"
-    assert not any(w.is_running() for w in window._workers())  # every QThread stopped
-    app.processEvents()
+    assert window._camera_state == mw.CameraState.IDLE
+    assert not any(w.is_running() for w in window._workers())
 
 
 def _wait_until(app, condition, timeout=5.0):

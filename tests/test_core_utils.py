@@ -33,11 +33,14 @@ from lorebook.core.games import game_folders, resolve_game_folder, split_filenam
 from lorebook.core.image_utils import (
     CARD_ASPECT,
     MotionGate,
+    card_motion_gate,
     crop_to_card,
+    draw_focus_overlay,
     ensure_valid_image,
     focus_rect,
     foil_score,
     is_probably_foil,
+    motion_sample,
 )
 from lorebook.core.matching import cosine_score, find_best_matches, l2_normalize
 from lorebook.core.settings import sets_to_display, sets_to_store
@@ -410,3 +413,20 @@ def test_inferred_game_csv_goes_to_the_data_folder(tmp_path, monkeypatch):
     update_cardlist(os.path.join("Card_Images", "Lorcana", "001-042.webp"), is_foil=False)
     assert sorted(os.listdir(data)) == ["LorcanaList.csv", "RiftboundList.csv"]
     assert os.listdir(cwd) == []
+
+
+def test_focus_overlay_and_motion_sample():
+    frame = np.zeros((720, 1280, 3), np.uint8)
+    overlay = draw_focus_overlay(frame)
+    fx, fy, fw, fh = focus_rect(720, 1280)
+    assert overlay.shape == frame.shape and frame.max() == 0  # drawn on a copy
+    assert tuple(overlay[fy, fx + fw // 2]) == (0, 255, 0)  # the box's top edge, in green
+    assert overlay[fy + fh // 2, fx + fw // 2].max() == 0  # the card area itself is untouched
+
+    sample = motion_sample(frame)
+    assert sample.shape == (64, 64) and sample.dtype == np.uint8  # small and grayscale
+    assert motion_sample(np.zeros((720, 1280), np.uint8)).shape == (64, 64)
+    assert motion_sample(None) is None and motion_sample(np.array([])) is None
+
+    # The shared gate ignores an empty, near-uniform mat (see MotionGate.min_std).
+    assert card_motion_gate().min_std == 12.0

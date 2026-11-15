@@ -67,7 +67,7 @@ Lore-Book/
 │       └── icons.py           # Inline SVG icons → theme-tinted QIcons (get_icon)
 │
 ├── .github/workflows/
-│   ├── tests.yml          # CI: lint, pytest on Linux+Windows, mypy + headless Qt smoke test with PySide6 (no TF needed)
+│   ├── tests.yml          # CI: lint + format check, core tests on Linux+Windows, then the full suite with PySide6/ONNX: mypy, GUI tests, coverage
 │   └── release.yml        # On v* tag: PyInstaller + Inno Setup → installer on GitHub Release
 ├── lorebook.spec          # PyInstaller build definition (Windows onedir bundle)
 ├── installer.iss          # Inno Setup script (per-user install, no UAC)
@@ -98,7 +98,7 @@ Lore-Book/
 ├── ui_settings.json       # Persisted UI preferences (gitignored — per-user state)
 ├── riot.txt               # Riot Games API domain-verification token (leave in place)
 ├── requirements.txt       # Pinned desktop runtime lock (direct deps first, then transitive)
-├── requirements-dev.txt   # Pinned pytest / ruff / mypy (also what CI installs)
+├── requirements-dev.txt   # Pinned pytest / pytest-cov / ruff / mypy (also what CI installs)
 └── tests/                 # No camera / GPU / TF needed (stubbed in conftest.py)
     ├── conftest.py
     ├── test_paths.py
@@ -110,14 +110,18 @@ Lore-Book/
     ├── test_feature_cache.py
     ├── test_features.py       # keras extractor call paths with fake models
     ├── test_onnx_backend.py   # ONNX model build (synthetic weights) + onnx extractor
+    ├── test_tflite_backend.py # tflite extractor against a fake Interpreter
     ├── test_card_names.py
     ├── test_name_fetcher.py
     ├── test_card_prices.py
     ├── test_image_fetcher.py
-    ├── test_camera.py
+    ├── test_camera.py         # open_capture, live and replay camera sources (fake VideoCapture)
     ├── test_sorter_rules.py
     ├── test_sorter_pipeline.py
-    ├── test_gui_smoke.py      # headless Qt (skipped without PySide6; CI's gui job runs it)
+    ├── test_sorter_cli.py     # python -m lorebook.sorter wiring
+    ├── test_gui_smoke.py      # headless Qt: main window, Settings, Scanner, Collection (skipped without PySide6)
+    ├── test_workers.py        # camera / scan / build workers with fakes (headless Qt)
+    ├── test_ui_widgets.py     # progress dialog, image rendering, icons, styles, logging (headless Qt)
     └── test_tf_integration.py # real TF on the scan worker thread (opt-in: LOREBOOK_TF_TESTS=1)
 ```
 
@@ -241,6 +245,14 @@ Or run a single test:
 python -m pytest tests/test_core_utils.py::test_split_filename -v
 ```
 
+Coverage (needs the desktop install, since the Qt and ONNX tests skip without it):
+```bash
+python -m pytest --cov
+```
+It lists the lines no test reaches and fails below the `fail_under` set in `pyproject.toml`.
+One test per behaviour: name the test after what it proves, and share setup through a fixture
+rather than growing one long test.
+
 `tests/test_tf_integration.py` is the exception: it runs real TensorFlow + PySide6 (and downloads the MobileNetV2 weights on first run) in a child process, so it is skipped unless opted in. Run it after touching `lorebook/core/features/`, `threads.py` or `ScanWorker`:
 ```bash
 LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v
@@ -252,7 +264,7 @@ LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v
 ruff format . && ruff check . && python -m pytest tests/ -v
 ```
 
-CI runs all three (formatting as `ruff format --check`), plus `mypy` and the headless Qt smoke test. Ruff (`pyproject.toml`: pyflakes,
+CI runs all three (formatting as `ruff format --check`), plus `mypy` and, on Linux and Windows, the full suite with the Qt tests and coverage. Ruff (`pyproject.toml`: pyflakes,
 naming, complexity/size limits and required docstrings) is the main static check over `lorebook/ui/`, where the smoke test only covers startup
 and shutdown. A `.claude/settings.json` hook lints each `.py`
 file after it is edited, and in cloud sessions the SessionStart hook installs CI's test deps.
