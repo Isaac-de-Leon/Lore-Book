@@ -25,17 +25,19 @@ def test_rules(tmp_path):
     assert SortRules().reject_bin == "reject"
     assert _decide(SortRules(rules=[], reject_bin="trash")) == "trash"
 
-    rules = SortRules(rules=[
-        Rule(bin="first", set_code="001"),
-        Rule(bin="shadowed", set_code="001"),       # also matches: first match wins
-        Rule(bin="bin-8", set_code="008"),
-        Rule(bin="hit", set_code="009", foil=True),  # all conditions must match
-        Rule(bin="lor", game="lorcana", min_confidence=0.8),
-    ])
+    rules = SortRules(
+        rules=[
+            Rule(bin="first", set_code="001"),
+            Rule(bin="shadowed", set_code="001"),  # also matches: first match wins
+            Rule(bin="bin-8", set_code="008"),
+            Rule(bin="hit", set_code="009", foil=True),  # all conditions must match
+            Rule(bin="lor", game="lorcana", min_confidence=0.8),
+        ]
+    )
     assert _decide(rules, set_code="001") == "first"
     assert _decide(rules, set_code="008") == "bin-8"
     assert _decide(rules, set_code="009", is_foil=True) == "hit"
-    assert _decide(rules, set_code="009", is_foil=False) == "lor"   # game is case-insensitive
+    assert _decide(rules, set_code="009", is_foil=False) == "lor"  # game is case-insensitive
     assert _decide(rules, set_code="005", confidence=0.79) == "reject"
     assert _decide(rules, set_code="005", game="Riftbound") == "reject"
 
@@ -45,13 +47,18 @@ def test_rules(tmp_path):
 
     # --- load_rules
     p = tmp_path / "rules.json"
-    p.write_text(json.dumps({
-        "reject_bin": "trash",
-        "rules": [
-            {"foil": True, "bin": "foils"},
-            {"set_code": "001", "min_confidence": 0.7, "bin": "bin-1"},
-        ],
-    }), encoding="utf-8")
+    p.write_text(
+        json.dumps(
+            {
+                "reject_bin": "trash",
+                "rules": [
+                    {"foil": True, "bin": "foils"},
+                    {"set_code": "001", "min_confidence": 0.7, "bin": "bin-1"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     rules = load_rules(str(p))
     assert rules.reject_bin == "trash"
     assert [(r.bin, r.foil, r.set_code, r.min_confidence) for r in rules.rules] == [

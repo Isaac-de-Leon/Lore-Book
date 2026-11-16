@@ -8,6 +8,7 @@ desktop after generating the .tflite model.
     python scripts/convert_to_tflite.py
     python scripts/check_parity.py path/to/card1.jpg path/to/card2.webp
 """
+
 import argparse
 import os
 import sys
@@ -24,6 +25,7 @@ MIN_COSINE = 0.99
 
 
 def main() -> int:
+    """Compare the keras and tflite vectors for each image; return 0 when they all agree."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("images", nargs="+", help="Card images to compare across backends.")
     parser.add_argument("--min-cosine", type=float, default=MIN_COSINE)

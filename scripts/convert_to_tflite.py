@@ -7,29 +7,31 @@ Run once on a desktop (where full TensorFlow is installed); copy the resulting
     python scripts/convert_to_tflite.py
     python scripts/convert_to_tflite.py --output mobilenetv2_features.tflite
 """
+
 import argparse
 import os
 import sys
 
 try:
-    from lorebook.core.features import _default_tflite_model_path, _get_models
+    from lorebook.core.features.keras_backend import get_models
+    from lorebook.core.features.tflite_backend import default_tflite_model_path
 except ImportError:  # running from a checkout without `pip install -e .`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from lorebook.core.features import _default_tflite_model_path, _get_models
+    from lorebook.core.features.keras_backend import get_models
+    from lorebook.core.features.tflite_backend import default_tflite_model_path
 
 
 def main() -> None:
+    """Export the keras feature model to a .tflite file."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--output", default=_default_tflite_model_path(), help="Output .tflite path."
-    )
+    parser.add_argument("--output", default=default_tflite_model_path(), help="Output .tflite path.")
     args = parser.parse_args()
 
     import tensorflow as tf
 
     # Convert the exact model instance the keras extractor uses, so the
     # exported .tflite can never diverge from it.
-    feat_model, _ = _get_models()
+    feat_model, _ = get_models()
     converter = tf.lite.TFLiteConverter.from_keras_model(feat_model)
     tflite_model = converter.convert()
 

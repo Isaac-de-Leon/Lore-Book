@@ -1,4 +1,4 @@
-# styles.py — Theme system: token palettes (dark/light) + Qt stylesheet generator.
+"""Theme system: token palettes (dark/light) + Qt stylesheet generator."""
 
 from string import Template
 
@@ -10,9 +10,9 @@ from lorebook.core.settings import DEFAULT_THEME, THEME_NAMES
 THEMES = {
     "dark": {
         "bg": "#0D1117",
-        "surface": "#151B23",          # sidebar, result card, headers
-        "surface_alt": "#1C232C",      # buttons, inputs resting state
-        "deep": "#010409",             # camera viewfinder well
+        "surface": "#151B23",  # sidebar, result card, headers
+        "surface_alt": "#1C232C",  # buttons, inputs resting state
+        "deep": "#010409",  # camera viewfinder well
         "border": "#2A313C",
         "border_soft": "#21262D",
         "text": "#E6EDF3",
@@ -23,9 +23,12 @@ THEMES = {
         "accent": "#F97316",
         "accent_hover": "#FB923C",
         "accent_soft": "rgba(249, 115, 22, 0.16)",
-        "grad_a": "#D97706", "grad_b": "#F97316",
-        "grad_a_hover": "#F59E0B", "grad_b_hover": "#FB923C",
-        "grad_a_press": "#B45309", "grad_b_press": "#EA580C",
+        "grad_a": "#D97706",
+        "grad_b": "#F97316",
+        "grad_a_hover": "#F59E0B",
+        "grad_b_hover": "#FB923C",
+        "grad_a_press": "#B45309",
+        "grad_b_press": "#EA580C",
         "on_accent": "#FFFFFF",
         "success": "#3FB950",
         "success_bg": "#0D2818",
@@ -45,7 +48,7 @@ THEMES = {
         "bg": "#F6F8FA",
         "surface": "#FFFFFF",
         "surface_alt": "#EFF2F5",
-        "deep": "#10151B",             # viewfinder stays dark — camera frames read better
+        "deep": "#10151B",  # viewfinder stays dark — camera frames read better
         "border": "#D0D7DE",
         "border_soft": "#DDE2E8",
         "text": "#1F2328",
@@ -56,9 +59,12 @@ THEMES = {
         "accent": "#EA580C",
         "accent_hover": "#F97316",
         "accent_soft": "rgba(234, 88, 12, 0.12)",
-        "grad_a": "#EA580C", "grad_b": "#F97316",
-        "grad_a_hover": "#F97316", "grad_b_hover": "#FB923C",
-        "grad_a_press": "#C2410C", "grad_b_press": "#EA580C",
+        "grad_a": "#EA580C",
+        "grad_b": "#F97316",
+        "grad_a_hover": "#F97316",
+        "grad_b_hover": "#FB923C",
+        "grad_a_press": "#C2410C",
+        "grad_b_press": "#EA580C",
         "on_accent": "#FFFFFF",
         "success": "#1A7F37",
         "success_bg": "#DAFBE1",

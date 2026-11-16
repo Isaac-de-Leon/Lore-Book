@@ -17,7 +17,7 @@ ort_datas, ort_bins, ort_hidden = collect_all("onnxruntime")
 onnx_datas, onnx_bins, onnx_hidden = collect_all("onnx")
 
 a = Analysis(
-    ["UI.py"],
+    ["run_ui.py"],
     pathex=[],
     binaries=tf_bins + keras_bins + ort_bins + onnx_bins,
     datas=[("lorebook/ui/assets", "lorebook/ui/assets")] + tf_datas + keras_datas + ort_datas + onnx_datas,

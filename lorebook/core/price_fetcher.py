@@ -1,21 +1,23 @@
-# price_fetcher.py — download card market prices into card_prices_<Game>.json.
-#
-# Core, no Qt. Used by scripts/fetch_card_prices.py (CLI) and by the GUI's
-# background DB-build worker, which refreshes any prices file older than a day
-# (lorebook.core.card_prices.prices_stale) so scans show current values. A
-# fetch failure must never block the build or replace a good file — writes are
-# atomic and only happen after every set fetched cleanly.
-#
-# Sources (pass url= if a format changes):
-#   Lorcana — Lorcast API, TCGplayer-sourced USD prices   https://lorcast.com/docs/api
-#   Rates   — Frankfurter, ECB daily USD exchange rates   https://frankfurter.dev
-#
-# Games without an entry in GAMES are skipped silently (same contract as
-# image_fetcher): their scans simply show no price line.
+"""Download card market prices into card_prices_<Game>.json.
+
+Core, no Qt. Used by scripts/fetch_card_prices.py (CLI) and by the GUI's
+background DB-build worker, which refreshes any prices file older than a day
+(lorebook.core.card_prices.prices_stale) so scans show current values. A
+fetch failure must never block the build or replace a good file — writes are
+atomic and only happen after every set fetched cleanly.
+
+Sources (pass url= if a format changes):
+  Lorcana — Lorcast API, TCGplayer-sourced USD prices   https://lorcast.com/docs/api
+  Rates   — Frankfurter, ECB daily USD exchange rates   https://frankfurter.dev
+
+Games without an entry in GAMES are skipped silently (same contract as
+image_fetcher): their scans simply show no price line.
+"""
 
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from lorebook.core.card_prices import (
     RATES_FILE,
@@ -24,7 +26,7 @@ from lorebook.core.card_prices import (
     prices_file_for,
 )
 from lorebook.core.fileio import atomic_write_json
-from lorebook.core.net import fetch_json as _fetch_json
+from lorebook.core.net import fetch_json
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +34,15 @@ LORCANA_URL = "https://api.lorcast.com/v0"
 RATES_URL = "https://api.frankfurter.dev/v1/latest?base=USD"
 
 
-def _as_price(value) -> float | None:
+def _as_price(value: Any) -> float | None:
+    """Return value as a float, or None if it is not a number."""
     try:
         return float(value)
     except (TypeError, ValueError):
         return None
 
 
-def lorcana_prices(cards) -> dict:
+def lorcana_prices(cards: Any) -> dict[str, dict[str, float | None]]:
     """
     Map Lorcast card objects → {"<set>-<number>": {"usd", "usd_foil"}}.
     Cards without a set/number or without any price are skipped, so the file
@@ -50,8 +53,7 @@ def lorcana_prices(cards) -> dict:
         if not isinstance(card, dict):
             continue
         set_obj = card.get("set")
-        set_code = str(set_obj.get("code", "") if isinstance(set_obj, dict)
-                       else set_obj or "").strip()
+        set_code = str(set_obj.get("code", "") if isinstance(set_obj, dict) else set_obj or "").strip()
         number = str(card.get("collector_number") or card.get("number") or "").strip()
         if not (set_code and number):
             continue
@@ -72,7 +74,7 @@ def _fetch_lorcana(base_url: str, progress_callback: Callable[[str], None] | Non
     under a fresh timestamp.
     """
     base = base_url.rstrip("/")
-    sets_payload = _fetch_json(f"{base}/sets")
+    sets_payload = fetch_json(f"{base}/sets")
     sets = sets_payload.get("results") if isinstance(sets_payload, dict) else sets_payload
 
     cards: list = []
@@ -82,7 +84,7 @@ def _fetch_lorcana(base_url: str, progress_callback: Callable[[str], None] | Non
             continue
         if progress_callback:
             progress_callback(f"Fetching prices for set {code}…")
-        page = _fetch_json(f"{base}/sets/{code}/cards")
+        page = fetch_json(f"{base}/sets/{code}/cards")
         if isinstance(page, dict):
             page = page.get("results") or page.get("cards") or []
         cards.extend(page or [])
@@ -97,10 +99,12 @@ GAMES = {
 
 
 def _now_iso() -> str:
+    """Return the current UTC time as an ISO 8601 string, to the second."""
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _write_json_atomic(path: str, payload: dict) -> None:
+    """Write a prices or rates file atomically, then drop the cached copy of it."""
     # The GUI's main thread may read these files while the build worker
     # writes them — write-then-replace so readers never see a torn file.
     # A unique temp name per write: concurrent writers (GUI refresh + CLI)
@@ -109,10 +113,12 @@ def _write_json_atomic(path: str, payload: dict) -> None:
     clear_price_cache()
 
 
-def download_card_prices(game: str, out_path: str | None = None,
-                         url: str | None = None,
-                         progress_callback: Callable[[str], None] | None = None
-                         ) -> int | None:
+def download_card_prices(
+    game: str,
+    out_path: str | None = None,
+    url: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+) -> int | None:
     """
     Fetch current market prices for a game and write card_prices_<Game>.json.
     Returns the number of priced cards, or None for games without a
@@ -133,15 +139,14 @@ def download_card_prices(game: str, out_path: str | None = None,
     return len(prices)
 
 
-def download_currency_rates(out_path: str | None = None,
-                            url: str | None = None) -> int:
+def download_currency_rates(out_path: str | None = None, url: str | None = None) -> int:
     """
     Fetch daily USD exchange rates for the supported display currencies and
     write currency_rates.json. Returns the number of rates written; raises on
     fetch failure (callers catch and keep the previous file — USD display
     never needs this file at all).
     """
-    data = _fetch_json(url or RATES_URL)
+    data = fetch_json(url or RATES_URL)
     raw = data.get("rates") if isinstance(data, dict) else None
     raw = raw if isinstance(raw, dict) else {}
 

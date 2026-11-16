@@ -1,79 +1,23 @@
-# game_types.py — Game type enum, detection, and shared constants.
+"""Game type enum, detection, and shared constants."""
 
 import os
-from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
 
 from lorebook.core.paths import data_path
 
 SUPPORTED_EXTS = (".webp", ".jpg", ".jpeg", ".png")
-BASE_DATABASE_PATH = data_path("Card_Images")
+CARD_IMAGES_DIR = data_path("Card_Images")
 LORCANA_CSV = "LorcanaList.csv"
 RIFTBOUND_CSV = "RiftboundList.csv"
 
 
 class GameType(Enum):
+    """The games with built-in rules (foil-only cards, legacy CSV names); anything else is UNKNOWN."""
+
     LORCANA = "lorcana"
     RIFTBOUND = "riftbound"
     UNKNOWN = "unknown"
-
-
-def game_folders(base: str = BASE_DATABASE_PATH) -> list[str]:
-    """Game folder names under Card_Images/, sorted (hidden/cache folders skipped)."""
-    try:
-        names = os.listdir(base)
-    except OSError:
-        return []
-    return sorted(
-        n for n in names
-        if os.path.isdir(os.path.join(base, n))
-        and not n.startswith((".", "__"))
-        and n != "logs"
-    )
-
-
-def resolve_game_folder(key: str, base: str = BASE_DATABASE_PATH) -> str | None:
-    """
-    Map a settings key (lowercased folder name, e.g. "mtg") back to the real
-    folder name ("MTG"), or None when no such folder exists. Never rebuild
-    the name with .capitalize() — that breaks folders like "MTG" on
-    case-sensitive filesystems and points at the wrong <Game>List.csv.
-    """
-    key = (key or "").strip().lower()
-    for name in game_folders(base):
-        if name.lower() == key:
-            return name
-    return None
-
-
-def sets_to_store(checked: Iterable[str], available: Iterable[str]) -> list[str]:
-    """
-    Set filter to persist for a selected game. Every set ticked is stored as
-    [] ("all sets"), so sets released later are included automatically;
-    otherwise the ticked sets in folder order.
-    """
-    available = list(available)
-    checked = set(checked)
-    if not available or all(s in checked for s in available):
-        return []
-    return [s for s in available if s in checked]
-
-
-def sets_to_display(stored: Iterable[str], available: Iterable[str], game_selected: bool) -> list[str]:
-    """
-    Inverse of sets_to_store for the Settings tree: which sets to show ticked.
-    A selected game with [] ("all sets") shows every set ticked — the tree
-    derives the game's own box from its sets, so an all-unticked tree would
-    read as "game off" and deselect it on Apply.
-    """
-    if not game_selected:
-        return []
-    stored = set(stored)
-    available = list(available)
-    # A stale filter (none of its sets on disk any more) falls back to "all"
-    # rather than showing the game as off.
-    return [s for s in available if s in stored] or available
 
 
 def game_type_from_name(name: str | None) -> "GameType":
@@ -131,9 +75,9 @@ def get_game_type(filepath: str) -> "GameType":
         return GameType.UNKNOWN
     parts = list(Path(filepath).parts)
     lowered = [p.lower() for p in parts]
-    # Compare the folder *name*: BASE_DATABASE_PATH is a full per-user path
+    # Compare the folder *name*: CARD_IMAGES_DIR is a full per-user path
     # in installed builds (paths.data_path), never a single path part.
-    base = os.path.basename(BASE_DATABASE_PATH).lower()
+    base = os.path.basename(CARD_IMAGES_DIR).lower()
     if base in lowered and lowered.index(base) + 1 < len(parts) - 1:
         folder = parts[lowered.index(base) + 1]
     elif len(parts) >= 2:

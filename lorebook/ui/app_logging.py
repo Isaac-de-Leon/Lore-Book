@@ -1,12 +1,17 @@
-# app_logging.py — application-wide logging and crash diagnostics.
+"""Application-wide logging and crash diagnostics."""
 
 import faulthandler
 import logging
 import logging.handlers
 import os
 import sys
+from types import TracebackType
+from typing import TYPE_CHECKING
 
 from lorebook.core.paths import data_path
+
+if TYPE_CHECKING:
+    from PySide6.QtCore import QObject
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +28,7 @@ def setup_logging(log_file: str = "card_scanner.log") -> None:
     root = logging.getLogger()
     root.setLevel(logging.INFO)
 
-    fh = logging.handlers.RotatingFileHandler(
-        log_path, maxBytes=1024 * 1024, backupCount=5, encoding="utf-8"
-    )
+    fh = logging.handlers.RotatingFileHandler(log_path, maxBytes=1024 * 1024, backupCount=5, encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
     fh.setLevel(logging.DEBUG)
 
@@ -54,7 +57,8 @@ def setup_logging(log_file: str = "card_scanner.log") -> None:
 
     # Uncaught Python exceptions land in the main log too (PySide6 prints
     # them to stderr, which is invisible when launched outside a terminal).
-    def _log_excepthook(exc_type, exc, tb):
+    def _log_excepthook(exc_type: type[BaseException], exc: BaseException, tb: TracebackType | None) -> None:
+        """Log an uncaught exception, then hand it to Python's default hook."""
         logger.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
         sys.__excepthook__(exc_type, exc, tb)
 
@@ -74,13 +78,14 @@ class GuiStallWatchdog:
     timer; if the GUI thread blocks, re-arming stops and the dump fires once.
     """
 
-    def __init__(self, parent, stall_seconds: float = 8.0) -> None:
+    def __init__(self, parent: "QObject", stall_seconds: float = 8.0) -> None:
+        """Open the dump file and start re-arming the stall timer every second."""
         from PySide6.QtCore import QTimer
 
         self._stall = stall_seconds
         path = os.path.join(data_path("logs"), "hang_dump.log")
         # Kept open for the process lifetime (the C timer writes to its fd).
-        self._file = open(path, "a", encoding="utf-8")  # noqa: SIM115
+        self._file = open(path, "a", encoding="utf-8")
         self._timer = QTimer(parent)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._rearm)
@@ -88,9 +93,11 @@ class GuiStallWatchdog:
         self._rearm()
 
     def _rearm(self) -> None:
+        """Push the stack-dump deadline stall_seconds into the future."""
         faulthandler.cancel_dump_traceback_later()
         faulthandler.dump_traceback_later(self._stall, repeat=False, file=self._file)
 
     def stop(self) -> None:
+        """Stop the watchdog so a deliberate wait is not reported as a hang."""
         self._timer.stop()
         faulthandler.cancel_dump_traceback_later()

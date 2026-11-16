@@ -1,4 +1,4 @@
-# tests/test_card_database.py — feature-cache build/prune behavior (no TF, no camera).
+# tests/test_feature_cache.py — feature-cache build/prune behavior (no TF, no camera).
 
 import sqlite3
 import threading
@@ -6,8 +6,8 @@ import threading
 import cv2
 import numpy as np
 
-import lorebook.core.card_database as card_database
-from lorebook.core.card_database import (
+import lorebook.core.feature_cache as feature_cache
+from lorebook.core.feature_cache import (
     GameDatabase,
     _cache_path,
     _init_db,
@@ -47,7 +47,7 @@ def _make_images(folder, n):
 
 def test_batched_build(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(card_database, "_BATCH_SIZE", 2)
+    monkeypatch.setattr(feature_cache, "_BATCH_SIZE", 2)
     images = tmp_path / "Lorcana"
     _make_images(images, 5)
     (images / "001-999.png").write_text("not an image")  # unreadable: skipped, not fatal
@@ -58,7 +58,7 @@ def test_batched_build(tmp_path, monkeypatch):
     progress = []
     db = build_feature_database(
         progress_callback=lambda pct, fname: progress.append(pct),
-        db_path=str(images),
+        image_dir=str(images),
         extractor=extractor,
     )
 
@@ -74,10 +74,10 @@ def test_batched_build(tmp_path, monkeypatch):
     # An image replaced under the same name is re-extracted; untouched ones aren't.
     cv2.imwrite(str(images / "001-002.png"), np.full((6, 6, 3), 200, np.uint8))
     extractor = RecordingExtractor()
-    build_feature_database(db_path=str(images), extractor=extractor)
+    build_feature_database(image_dir=str(images), extractor=extractor)
     assert extractor.batch_sizes == [1]
     extractor = RecordingExtractor()
-    build_feature_database(db_path=str(images), extractor=extractor)
+    build_feature_database(image_dir=str(images), extractor=extractor)
     assert extractor.batch_sizes == []
 
     # A cache from before size/mtime were recorded is migrated in place and
@@ -86,13 +86,12 @@ def test_batched_build(tmp_path, monkeypatch):
     with sqlite3.connect(cache_file) as conn:
         conn.execute("DROP TABLE features")
         conn.execute("CREATE TABLE features (filename TEXT PRIMARY KEY, vector BLOB NOT NULL)")
-        conn.executemany("INSERT INTO features VALUES (?, ?)",
-                         [(n, vec.tobytes()) for n in db])
+        conn.executemany("INSERT INTO features VALUES (?, ?)", [(n, vec.tobytes()) for n in db])
     extractor = RecordingExtractor()
-    assert set(build_feature_database(db_path=str(images), extractor=extractor)) == set(db)
+    assert set(build_feature_database(image_dir=str(images), extractor=extractor)) == set(db)
     assert extractor.batch_sizes == []
     cv2.imwrite(str(images / "001-003.png"), np.full((6, 6, 3), 90, np.uint8))
-    build_feature_database(db_path=str(images), extractor=extractor)
+    build_feature_database(image_dir=str(images), extractor=extractor)
     assert extractor.batch_sizes == [1]
 
     # GameDatabase keeps the vectors and their match index together.
@@ -105,7 +104,7 @@ def test_batched_build(tmp_path, monkeypatch):
 
 def test_cancel(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(card_database, "_BATCH_SIZE", 2)
+    monkeypatch.setattr(feature_cache, "_BATCH_SIZE", 2)
     images = tmp_path / "Lorcana"
     _make_images(images, 6)
 
@@ -114,7 +113,7 @@ def test_cancel(tmp_path, monkeypatch):
     extractor = RecordingExtractor()
     db = build_feature_database(
         progress_callback=lambda pct, fname: cancel.set(),
-        db_path=str(images),
+        image_dir=str(images),
         extractor=extractor,
         cancel_event=cancel,
     )
@@ -124,7 +123,7 @@ def test_cancel(tmp_path, monkeypatch):
 
     # Pre-set cancel processes nothing and keeps what's cached.
     extractor = RecordingExtractor()
-    db2 = build_feature_database(db_path=str(images), extractor=extractor, cancel_event=cancel)
+    db2 = build_feature_database(image_dir=str(images), extractor=extractor, cancel_event=cancel)
     assert extractor.batch_sizes == []
     assert set(db2) == set(db)
 
@@ -136,12 +135,12 @@ def test_stale_cache_pruning(tmp_path, monkeypatch):
     (images / "001-001.webp").write_bytes(b"not-a-real-image")
     _seed_cache(_cache_path(str(images)), ["001-001.webp", "999-999.webp"])
 
-    db = build_feature_database(db_path=str(images))
-    assert set(db) == {"001-001.webp"}              # deleted image pruned, survivor kept
+    db = build_feature_database(image_dir=str(images))
+    assert set(db) == {"001-001.webp"}  # deleted image pruned, survivor kept
     assert set(load_cache(str(images))) == {"001-001.webp"}
 
-    # A typo'd/unmounted db_path must be a no-op, not "all images deleted".
+    # A typo'd/unmounted image_dir must be a no-op, not "all images deleted".
     missing = tmp_path / "Riftbound"
     _seed_cache(_cache_path(str(missing)), ["001-001.webp", "001-002.webp"])
-    assert set(build_feature_database(db_path=str(missing))) == {"001-001.webp", "001-002.webp"}
+    assert set(build_feature_database(image_dir=str(missing))) == {"001-001.webp", "001-002.webp"}
     assert set(load_cache(str(missing))) == {"001-001.webp", "001-002.webp"}

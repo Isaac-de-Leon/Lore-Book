@@ -1,70 +1,100 @@
-# __main__.py — `python -m lorebook.sorter` headless sorter runner.
-#
-# Wires a camera source (live or a folder of images), a MockTransport, the
-# pluggable feature extractor, the per-game feature cache, and a rules config
-# into a SortPipeline, then runs the loop. Motion is always mocked here — this
-# is the dry-run / bring-up entry point that proves the software loop before
-# any sorting mechanism exists.
+"""`python -m lorebook.sorter` headless sorter runner.
+
+Wires a camera source (live or a folder of images), a MockTransport, the
+pluggable feature extractor, the per-game feature cache, and a rules config
+into a SortPipeline, then runs the loop. Motion is always mocked here — this
+is the dry-run / bring-up entry point that proves the software loop before
+any sorting mechanism exists.
+"""
 
 import argparse
 import logging
 import os
 import sys
 
-from lorebook.core.card_database import load_cache
+from lorebook.core.feature_cache import load_cache
 from lorebook.core.features import BACKENDS, default_backend, get_extractor
-from lorebook.core.game_types import BASE_DATABASE_PATH
+from lorebook.core.game_types import CARD_IMAGES_DIR
 from lorebook.core.image_utils import card_motion_gate
 from lorebook.hardware.camera import CameraSource, MockCameraSource, OpenCVCameraSource
 from lorebook.hardware.transport import MockTransport
-from lorebook.sorter.pipeline import SortPipeline
+from lorebook.sorter.pipeline import SortConfig, SortPipeline
 from lorebook.sorter.rules import SortRules, load_rules
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    """Return the argument parser for the headless sorter."""
     p = argparse.ArgumentParser(
         prog="python -m lorebook.sorter",
         description="Headless card sorter: capture → match → decide bin → (mock) route.",
     )
     p.add_argument("--game", default="Lorcana", help="Game folder inside Card_Images/.")
-    p.add_argument("--backend", default=None, choices=list(BACKENDS),
-                   help="Feature extractor backend (default: onnx if onnxruntime is installed, else keras).")
+    p.add_argument(
+        "--backend",
+        default=None,
+        choices=list(BACKENDS),
+        help="Feature extractor backend (default: onnx if onnxruntime is installed, else keras).",
+    )
     p.add_argument("--rules", help="Path to a JSON sort-rules config. Omit to send everything to reject_bin.")
-    p.add_argument("--source", default="camera",
-                   help="'camera' for a live feed, or a path to an image file/folder for a dry replay.")
+    p.add_argument(
+        "--source",
+        default="camera",
+        help="'camera' for a live feed, or a path to an image file/folder for a dry replay.",
+    )
     p.add_argument("--camera-index", type=int, default=0, help="OpenCV camera index (with --source camera).")
     p.add_argument("--threshold", type=float, default=0.70, help="Minimum cosine match score.")
     p.add_argument("--foil-threshold", type=float, default=None, help="Override foil-detection threshold.")
     p.add_argument("--max-cards", type=int, default=None, help="Stop after N cards.")
     crop = p.add_mutually_exclusive_group()
-    crop.add_argument("--crop", dest="crop", action="store_true", default=None,
-                      help="Crop frames to the centered card box before matching "
-                           "(default with --source camera).")
-    crop.add_argument("--no-crop", dest="crop", action="store_false",
-                      help="Match the full frame (default when replaying image files).")
-    p.add_argument("--trigger", choices=["motion", "every-frame"], default=None,
-                   help="When to process a frame: 'motion' waits for a newly placed card to "
-                        "settle (default with --source camera, so a card under the camera is "
-                        "recorded once); 'every-frame' treats each frame as a card (default "
-                        "when replaying image files).")
+    crop.add_argument(
+        "--crop",
+        dest="crop",
+        action="store_true",
+        default=None,
+        help="Crop frames to the centered card box before matching (default with --source camera).",
+    )
+    crop.add_argument(
+        "--no-crop",
+        dest="crop",
+        action="store_false",
+        help="Match the full frame (default when replaying image files).",
+    )
+    p.add_argument(
+        "--trigger",
+        choices=["motion", "every-frame"],
+        default=None,
+        help="When to process a frame: 'motion' waits for a newly placed card to "
+        "settle (default with --source camera, so a card under the camera is "
+        "recorded once); 'every-frame' treats each frame as a card (default "
+        "when replaying image files).",
+    )
     dry = p.add_mutually_exclusive_group()
-    dry.add_argument("--dry-run", dest="dry_run", action="store_true", default=True,
-                     help="Do not write the CSV (default).")
-    dry.add_argument("--no-dry-run", dest="dry_run", action="store_false",
-                     help="Write matched cards to the CSV via update_cardlist.")
+    dry.add_argument(
+        "--dry-run", dest="dry_run", action="store_true", default=True, help="Do not write the CSV (default)."
+    )
+    dry.add_argument(
+        "--no-dry-run",
+        dest="dry_run",
+        action="store_false",
+        help="Write matched cards to the CSV via update_cardlist.",
+    )
     return p
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
+    """Run the sorter from command-line arguments and return the process exit code."""
     args = build_arg_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     log = logging.getLogger("lorebook.sorter")
 
     # Reference feature cache for the chosen game.
-    feature_db = load_cache(os.path.join(BASE_DATABASE_PATH, args.game))
+    feature_db = load_cache(os.path.join(CARD_IMAGES_DIR, args.game))
     if not feature_db:
-        log.error("No feature database for %s. Build it first: "
-                  "python PhotoMatching.py --game %s --build", args.game, args.game)
+        log.error(
+            "No feature database for %s. Build it first: python -m lorebook --game %s --build",
+            args.game,
+            args.game,
+        )
         return 1
 
     # Rules: load from file, or default to an all-reject config.
@@ -117,12 +147,14 @@ def main(argv=None) -> int:
         transport=transport,
         extractor=extractor,
         feature_db=feature_db,
-        rules=rules,
-        game=args.game,
-        threshold=args.threshold,
-        foil_threshold=args.foil_threshold,
-        dry_run=args.dry_run,
-        crop_to_focus=crop_to_focus,
+        config=SortConfig(
+            rules=rules,
+            game=args.game,
+            threshold=args.threshold,
+            foil_threshold=args.foil_threshold,
+            dry_run=args.dry_run,
+            crop_to_focus=crop_to_focus,
+        ),
         gate=gate,
     )
 

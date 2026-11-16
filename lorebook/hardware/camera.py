@@ -1,12 +1,13 @@
-# camera.py — camera abstraction for the headless sorter.
-#
-# `open_capture()` holds the platform-specific OpenCV backend-probe + warm-up
-# logic, factored verbatim out of lorebook/ui/main_window.py's start_camera so
-# the GUI and the headless sorter share one camera-open code path. The
-# CameraSource hierarchy then wraps that for the sorter: OpenCVCameraSource is
-# the real path (a USB cam on the Pi via V4L2 works today), and
-# MockCameraSource replays images from disk for dry runs and tests — no camera,
-# no Qt.
+"""Camera abstraction for the headless sorter.
+
+`open_capture()` holds the platform-specific OpenCV backend-probe + warm-up
+logic, factored verbatim out of lorebook/ui/main_window.py's start_camera so
+the GUI and the headless sorter share one camera-open code path. The
+CameraSource hierarchy then wraps that for the sorter: OpenCVCameraSource is
+the real path (a USB cam on the Pi via V4L2 works today), and
+MockCameraSource replays images from disk for dry runs and tests — no camera,
+no Qt.
+"""
 
 import contextlib
 import logging
@@ -144,11 +145,13 @@ class OpenCVCameraSource(CameraSource):
     """
 
     def __init__(self, camera_index: int = 0, max_read_failures: int = 20):
+        """Open the camera at camera_index; raises RuntimeError if no backend can."""
         self.camera_index = camera_index
         self.max_read_failures = max_read_failures
         self._cap: cv2.VideoCapture | None = open_capture(camera_index)
 
     def read(self) -> np.ndarray | None:
+        """Return the next frame, or None once max_read_failures reads in a row have failed."""
         if self._cap is None:
             return None
         failures = 0
@@ -160,7 +163,8 @@ class OpenCVCameraSource(CameraSource):
             time.sleep(0.05)
         logger.error(
             "Camera %d gave %d consecutive failed reads; treating feed as dead.",
-            self.camera_index, failures,
+            self.camera_index,
+            failures,
         )
         return None
 
@@ -168,6 +172,7 @@ class OpenCVCameraSource(CameraSource):
     _FLUSH_FRAMES = 4
 
     def flush(self) -> None:
+        """Grab and discard the frames the driver buffered while the card was moving."""
         if self._cap is None:
             return
         for _ in range(self._FLUSH_FRAMES):
@@ -177,6 +182,7 @@ class OpenCVCameraSource(CameraSource):
                 break
 
     def release(self) -> None:
+        """Release the camera; safe to call more than once."""
         if self._cap is not None:
             try:
                 with contextlib.suppress(cv2.error):
@@ -194,23 +200,24 @@ class MockCameraSource(CameraSource):
     """
 
     def __init__(self, images: Sequence, loop: bool = False):
+        """Queue the images to replay: a list of paths, a single file, or a folder."""
         self._paths: list[str] = self._resolve(images)
         self._loop = loop
         self._idx = 0
 
     @staticmethod
     def _resolve(images: Sequence) -> list[str]:
+        """Return the image paths for a list, a single file, or every supported image in a folder."""
         if isinstance(images, str):
             if os.path.isdir(images):
                 return sorted(
-                    os.path.join(images, f)
-                    for f in os.listdir(images)
-                    if f.lower().endswith(SUPPORTED_EXTS)
+                    os.path.join(images, f) for f in os.listdir(images) if f.lower().endswith(SUPPORTED_EXTS)
                 )
             return [images]
         return list(images)
 
     def read(self) -> np.ndarray | None:
+        """Return the next readable image, or None when the list is exhausted (unless looping)."""
         # Iterative skip of unreadable files, bounded to one full pass so a
         # looping feed of all-bad paths ends cleanly instead of spinning.
         skipped = 0
@@ -229,4 +236,5 @@ class MockCameraSource(CameraSource):
         return None
 
     def release(self) -> None:
+        """Drop the remaining images so further reads return None."""
         self._paths = []

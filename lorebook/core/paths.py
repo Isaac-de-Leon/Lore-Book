@@ -1,15 +1,16 @@
-# paths.py — writable-data root resolution.
-#
-# From source (not frozen, no override) every path stays exactly as it always
-# was: a bare CWD-relative name. Frozen (installed) builds write to
-# %LOCALAPPDATA%\LoreBook on Windows / $XDG_DATA_HOME/lorebook elsewhere, so
-# the app works when installed to a read-only program directory.
-#
-# LOREBOOK_DATA_DIR overrides both. Set it before launch — module constants
-# like BASE_DATABASE_PATH resolve at import time.
-#
-# This module must not import anything else from lorebook: it sits at the
-# bottom of the package import graph.
+r"""Writable-data root resolution.
+
+From source (not frozen, no override) every path stays exactly as it always
+was: a bare CWD-relative name. Frozen (installed) builds write to
+%LOCALAPPDATA%\LoreBook on Windows / $XDG_DATA_HOME/lorebook elsewhere, so
+the app works when installed to a read-only program directory.
+
+LOREBOOK_DATA_DIR overrides both. Set it before launch — module constants
+like CARD_IMAGES_DIR resolve at import time.
+
+This module must not import anything else from lorebook: it sits at the
+bottom of the package import graph.
+"""
 
 import os
 import sys

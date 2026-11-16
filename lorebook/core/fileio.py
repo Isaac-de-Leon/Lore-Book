@@ -1,9 +1,10 @@
-# fileio.py — atomic file writes shared by every writer in the app.
-#
-# Write to a uniquely named temp file in the target's directory, then
-# os.replace() it over the target. Readers (and a crash mid-write) only ever
-# see the old file or the complete new one; concurrent writers never share a
-# temp file; a failure removes the temp file and re-raises.
+"""Atomic file writes shared by every writer in the app.
+
+Write to a uniquely named temp file in the target's directory, then
+os.replace() it over the target. Readers (and a crash mid-write) only ever
+see the old file or the complete new one; concurrent writers never share a
+temp file; a failure removes the temp file and re-raises.
+"""
 
 import contextlib
 import json
@@ -28,7 +29,7 @@ def _target_mode(path: str) -> int:
         return 0o666 & ~umask
 
 
-def atomic_write(
+def atomic_write(  # noqa: PLR0913 — mirrors open()'s keyword options, all optional
     path: str,
     write: Callable[[IO[Any]], object],
     *,
@@ -65,8 +66,10 @@ def atomic_write(
 
 
 def atomic_write_bytes(path: str, data: bytes, *, suffix: str = ".tmp") -> None:
+    """Atomically replace path with data (see atomic_write)."""
     atomic_write(path, lambda f: f.write(data), binary=True, suffix=suffix)
 
 
 def atomic_write_json(path: str, payload: Any, **dump_kwargs: Any) -> None:
+    """Atomically replace path with payload as JSON; dump_kwargs are passed to json.dump."""
     atomic_write(path, lambda f: json.dump(payload, f, **dump_kwargs))

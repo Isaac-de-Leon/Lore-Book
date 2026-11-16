@@ -1,24 +1,25 @@
-# image_fetcher.py — download reference card images into Card_Images/<Game>/.
-#
-# Core, no Qt. Used by scripts/fetch_card_images.py (CLI) and by the GUI's
-# Rebuild Database flow, which calls download_new_images() before each build so
-# newly released sets populate automatically. Images are named
-# "<setCode>-<number>.<ext>" (zero-padded to match the collection's 009-041
-# style) so split_filename()/get_available_sets() pick up the set codes and
-# card_names lookups line up. Existing files are skipped, so re-running only
-# downloads what's new.
-#
-# Sources (pass url= if a format changes):
-#   Lorcana   — LorcanaJSON bulk data (community)   https://lorcanajson.org
-#   Riftbound — Riot content API (official, needs RIOT_API_KEY env var)
-#               https://developer.riotgames.com/docs/riftbound
-#               falls back to the open Riftcodex API   https://riftcodex.com
-#               and, for sets Riftcodex doesn't have yet, the official gallery
-#               https://riftbound.leagueoflegends.com/en-us/card-gallery/
-#
-# Note: card art is copyrighted by Ravensburger/Riot. Downloads are local, for
-# personal-collection use only (Card_Images/ is gitignored); nothing is
-# redistributed.
+"""Download reference card images into Card_Images/<Game>/.
+
+Core, no Qt. Used by scripts/fetch_card_images.py (CLI) and by the GUI's
+Rebuild Database flow, which calls download_new_images() before each build so
+newly released sets populate automatically. Images are named
+"<setCode>-<number>.<ext>" (zero-padded to match the collection's 009-041
+style) so split_filename()/available_sets() pick up the set codes and
+card_names lookups line up. Existing files are skipped, so re-running only
+downloads what's new.
+
+Sources (pass url= if a format changes):
+  Lorcana   — LorcanaJSON bulk data (community)   https://lorcanajson.org
+  Riftbound — Riot content API (official, needs RIOT_API_KEY env var)
+              https://developer.riotgames.com/docs/riftbound
+              falls back to the open Riftcodex API   https://riftcodex.com
+              and, for sets Riftcodex doesn't have yet, the official gallery
+              https://riftbound.leagueoflegends.com/en-us/card-gallery/
+
+Note: card art is copyrighted by Ravensburger/Riot. Downloads are local, for
+personal-collection use only (Card_Images/ is gitignored); nothing is
+redistributed.
+"""
 
 import json
 import logging
@@ -28,12 +29,13 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit
 
 from lorebook.core.fileio import atomic_write_bytes
-from lorebook.core.game_types import BASE_DATABASE_PATH, game_folders, resolve_game_folder
-from lorebook.core.net import fetch_bytes as _download
-from lorebook.core.net import fetch_json as _fetch_json
+from lorebook.core.game_types import CARD_IMAGES_DIR
+from lorebook.core.games import game_folders, resolve_game_folder
+from lorebook.core.net import fetch_bytes, fetch_json
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ RIFTBOUND_GALLERY_URL = "https://riftbound.leagueoflegends.com/en-us/card-galler
 @dataclass
 class FetchStats:
     """Result of a download_new_images() run."""
+
     downloaded: int = 0
     skipped: int = 0
     failed: int = 0
@@ -90,7 +93,7 @@ def is_promo_printing(card: dict) -> bool:
     return bool(denom) and not denom.isdigit()
 
 
-def lorcana_targets(data) -> Iterator[tuple[str, str, str]]:
+def lorcana_targets(data: Any) -> Iterator[tuple[str, str, str]]:
     """
     Yield (set_code, number, image_url) for every Lorcana card with a full image.
 
@@ -118,10 +121,12 @@ def lorcana_targets(data) -> Iterator[tuple[str, str, str]]:
 
 
 def _riot_api_key() -> str:
+    """Return the Riot API key from RIOT_API_KEY, or '' when it is not set."""
     return os.environ.get("RIOT_API_KEY", "").strip()
 
 
 def _is_riot_host(url: str) -> bool:
+    """Return True when url points at a Riot API host, the only hosts the key is sent to."""
     host = urlsplit(url).hostname or ""
     return host == "api.riotgames.com" or host.endswith(".api.riotgames.com")
 
@@ -138,7 +143,7 @@ def _fetch_riftbound_pages(url: str, size: int = 100) -> list:
     page_no, last_first_id = 1, None
     for _ in range(200):  # hard cap: never loop forever on a misbehaving API
         sep = "&" if "?" in url else "?"
-        data = _fetch_json(f"{url}{sep}size={size}&page={page_no}")
+        data = fetch_json(f"{url}{sep}size={size}&page={page_no}")
         if isinstance(data, dict):
             items = data.get("items") or data.get("cards") or []
             total = data.get("total")
@@ -174,21 +179,25 @@ def _gallery_cards(html: str) -> list[dict]:
     try:
         blades = json.loads(match.group(1))["props"]["pageProps"]["page"]["blades"]
         items = next(b["cards"]["items"] for b in blades if isinstance(b.get("cards"), dict))
-        return [{
-            "id": item["id"],
-            "name": ", ".join(p for p in (item.get("name"), item.get("subtitle")) if p),
-            # The gallery writes signatures as "unl-229-star-219", Riftcodex as "unl-229*-219".
-            "riftbound_id": item["id"].replace("-star-", "*-"),
-            "collector_number": item["collectorNumber"],
-            "set": {"set_id": item["set"]["value"]["id"]},
-            "media": {"image_url": item["cardImage"]["url"]},
-        } for item in items]
+        return [
+            {
+                "id": item["id"],
+                "name": ", ".join(p for p in (item.get("name"), item.get("subtitle")) if p),
+                # The gallery writes signatures as "unl-229-star-219", Riftcodex as "unl-229*-219".
+                "riftbound_id": item["id"].replace("-star-", "*-"),
+                "collector_number": item["collectorNumber"],
+                "set": {"set_id": item["set"]["value"]["id"]},
+                "media": {"image_url": item["cardImage"]["url"]},
+            }
+            for item in items
+        ]
     except (KeyError, TypeError, StopIteration, AttributeError) as e:
         raise ValueError(f"unexpected gallery page format: {e!r}") from e
 
 
 def _fetch_gallery_cards() -> list[dict]:
-    return _gallery_cards(_download(RIFTBOUND_GALLERY_URL).decode("utf-8", "replace"))
+    """Download the official card gallery page and return the cards embedded in it."""
+    return _gallery_cards(fetch_bytes(RIFTBOUND_GALLERY_URL).decode("utf-8", "replace"))
 
 
 def fetch_riftbound_open_sources(url: str = RIFTBOUND_FALLBACK_URL) -> list:
@@ -208,11 +217,13 @@ def fetch_riftbound_open_sources(url: str = RIFTBOUND_FALLBACK_URL) -> list:
     extra = [c for c in gallery if _riftbound_set_code(c) not in known]
     if extra:
         new_sets = sorted({_riftbound_set_code(c) for c in extra})
-        logger.info("Riftcodex doesn't have %s yet; using the official card gallery for it", ", ".join(new_sets))
+        logger.info(
+            "Riftcodex doesn't have %s yet; using the official card gallery for it", ", ".join(new_sets)
+        )
     return cards + extra
 
 
-def _fetch_riftbound(url: str):
+def _fetch_riftbound(url: str) -> Any:
     """
     Fetch the Riftbound card list. On the default URL, the official Riot
     content endpoint is used when RIOT_API_KEY is set; without a key — or if
@@ -226,16 +237,16 @@ def _fetch_riftbound(url: str):
             logger.info("RIOT_API_KEY not set; using %s", RIFTBOUND_FALLBACK_URL)
             return fetch_riftbound_open_sources()
         try:
-            return _fetch_json(url, headers={"X-Riot-Token": key})
+            return fetch_json(url, headers={"X-Riot-Token": key})
         except (OSError, ValueError) as e:  # network/HTTP error or bad JSON
             logger.warning("Riot API fetch failed (%s); falling back to %s", e, RIFTBOUND_FALLBACK_URL)
             return fetch_riftbound_open_sources()
     if _is_riot_host(url):
-        return _fetch_json(url, headers={"X-Riot-Token": key} if key else None)
+        return fetch_json(url, headers={"X-Riot-Token": key} if key else None)
     return _fetch_riftbound_pages(url)
 
 
-def _first_field(card: dict, *names):
+def _first_field(card: dict, *names: str) -> str | int | None:
     """First non-empty scalar among the named fields (nested objects don't
     stringify into usable codes/URLs, so they count as missing)."""
     for name in names:
@@ -282,7 +293,7 @@ def _riftbound_printing(card: dict, set_code: str) -> tuple[str, str]:
     return parts[1].replace("*", "s"), "-".join(parts[2:])
 
 
-def _riftbound_cards(data) -> Iterator[dict]:
+def _riftbound_cards(data: Any) -> Iterator[dict]:
     """Flatten either Riftbound payload shape into a stream of card dicts."""
     if isinstance(data, dict):
         if isinstance(data.get("sets"), list):  # Riot content: sets → cards
@@ -294,7 +305,7 @@ def _riftbound_cards(data) -> Iterator[dict]:
     yield from (c for c in data or [] if isinstance(c, dict))
 
 
-def riftbound_printings(data) -> Iterator[tuple[str, str, str, dict]]:
+def riftbound_printings(data: Any) -> Iterator[tuple[str, str, str, dict]]:
     """
     Yield (set_code, number, image_url, card) for every Riftbound card with art.
     Image filenames and card names both come from here, so they can't disagree.
@@ -315,12 +326,15 @@ def riftbound_printings(data) -> Iterator[tuple[str, str, str, dict]]:
     for card in _riftbound_cards(data):
         set_code = _riftbound_set_code(card)
         code, denominator = _riftbound_printing(card, set_code)
-        number = code or str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
+        number = (
+            code or str(_first_field(card, "collectorNumber", "collector_number", "number") or "").strip()
+        )
         art = card.get("art")
         media = card.get("media")
         url = (
-            _first_field(art if isinstance(art, dict) else {},
-                         "fullUrl", "full_url", "thumbnailUrl", "thumbnail_url")
+            _first_field(
+                art if isinstance(art, dict) else {}, "fullUrl", "full_url", "thumbnailUrl", "thumbnail_url"
+            )
             or _first_field(media if isinstance(media, dict) else {}, "image_url", "imageUrl")
             or _first_field(card, "image_url", "imageUrl", "image")
         )
@@ -340,7 +354,7 @@ def riftbound_printings(data) -> Iterator[tuple[str, str, str, dict]]:
         yield set_code, number, url, card
 
 
-def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
+def riftbound_targets(data: Any) -> Iterator[tuple[str, str, str]]:
     """(set_code, number, image_url) for every Riftbound card with art."""
     for set_code, number, url, _card in riftbound_printings(data):
         yield set_code, number, url
@@ -348,12 +362,12 @@ def riftbound_targets(data) -> Iterator[tuple[str, str, str]]:
 
 # game key (lowercased folder name) → (bulk-data URL, fetcher, targets fn)
 GAMES = {
-    "lorcana": (LORCANA_URL, _fetch_json, lorcana_targets),
+    "lorcana": (LORCANA_URL, fetch_json, lorcana_targets),
     "riftbound": (RIFTBOUND_RIOT_URL, _fetch_riftbound, riftbound_targets),
 }
 
 
-def selectable_games(base: str = BASE_DATABASE_PATH) -> list[str]:
+def selectable_games(base: str = CARD_IMAGES_DIR) -> list[str]:
     """
     Games to offer in the UI: every game folder, plus registered games with no
     folder yet. Their art only downloads once the folder exists, so listing
@@ -364,7 +378,7 @@ def selectable_games(base: str = BASE_DATABASE_PATH) -> list[str]:
     return sorted(found + [key.capitalize() for key in GAMES if key not in have])
 
 
-def ensure_game_folder(game: str | None, base: str = BASE_DATABASE_PATH) -> None:
+def ensure_game_folder(game: str | None, base: str = CARD_IMAGES_DIR) -> None:
     """
     Create the folder for a registered game so the next build downloads its
     art. Only called when the user asks for a rebuild: startup builds every
@@ -402,30 +416,130 @@ def _remove_partial_downloads(folder: str) -> None:
                 pass
 
 
+@dataclass(frozen=True)
+class FetchOptions:
+    """How download_new_images() fetches and stores card art.
+
+    out_dir: where images go; defaults to Card_Images/<Game>.
+    url: card-list URL, overriding the game's registered source.
+    sets: restrict to these set codes ('9' and '009' both match); None = all.
+    fmt: "webp" (re-encode via OpenCV) or "jpg" (keep the source bytes).
+    quality: WebP quality, 1-100.
+    limit: stop after this many downloads; None = no limit.
+    force: download even when the file already exists.
+    delay: seconds to pause between downloads.
+    dry_run: report what would download without fetching images or writing.
+    """
+
+    out_dir: str | None = None
+    url: str | None = None
+    sets: Iterable[str] | None = None
+    fmt: str = "webp"
+    quality: int = 95
+    limit: int | None = None
+    force: bool = False
+    delay: float = 0.05
+    dry_run: bool = False
+
+
+CardTarget = tuple[str, str, str]  # (set_code, number, image_url)
+
+
+class _ImageDownload:
+    """One download_new_images() run: where files go, how, and the running totals."""
+
+    def __init__(self, out_dir: str, options: FetchOptions, report: Callable[[str], None]) -> None:
+        """Start a run that saves into out_dir and narrates through report."""
+        self.out_dir = out_dir
+        self.options = options
+        self.report = report
+        self.stats = FetchStats()
+        self._ext = ".webp" if options.fmt == "webp" else ".jpg"
+
+    def run(self, targets: list[CardTarget], cancelled: Callable[[], bool]) -> FetchStats:
+        """Fetch every target that is not on disk yet, stopping on cancel or the limit."""
+        limit = self.options.limit
+        for set_code, number, image_url in targets:
+            if cancelled():
+                self.report("Download cancelled.")
+                break
+            dest = self._destination(set_code, number)
+            if dest is None:
+                continue
+            if limit is not None and self.stats.downloaded >= limit:
+                break
+            self._fetch(image_url, dest)
+        return self.stats
+
+    def _destination(self, set_code: str, number: str) -> str | None:
+        """Return where a card's image should be saved, or None when there is nothing to fetch.
+
+        None means the card was counted instead: failed for a code that is
+        not a safe filename, skipped for an image that is already on disk.
+        """
+        filename = _safe_filename(set_code, number, self._ext)
+        if filename is None:
+            self.stats.failed += 1
+            logger.warning("Skipping card with unsafe code %r-%r", set_code, number)
+            self.report(f"  SKIPPED unsafe card code {set_code!r}-{number!r}")
+            return None
+        dest = os.path.join(self.out_dir, filename)
+        # A 0-byte file is a failed write, not a card — fetch it again.
+        if not self.options.force and os.path.exists(dest) and os.path.getsize(dest) > 0:
+            self.stats.skipped += 1
+            return None
+        return dest
+
+    def _fetch(self, image_url: str, dest: str) -> None:
+        """Download one image to dest (or just announce it on a dry run) and count the result."""
+        filename = os.path.basename(dest)
+        if self.options.dry_run:
+            self.report(f"  would fetch {filename}  <- {image_url}")
+            self.stats.downloaded += 1
+            return
+        try:
+            raw = fetch_bytes(image_url)
+            payload = _to_webp(raw, self.options.quality) if self.options.fmt == "webp" else raw
+            # Temp file "<name>.<random>.part", renamed into place when
+            # complete: a killed download never leaves a truncated image
+            # under the real name (which later runs would skip forever).
+            atomic_write_bytes(dest, payload, suffix=_PART_SUFFIX)
+            self.stats.downloaded += 1
+            self.report(f"  {filename}  ({len(payload) // 1024} KB)")
+        # Boundary: one bad image (network, decode, disk) is counted and the
+        # batch moves on; it must never abort the whole download.
+        except Exception as e:  # noqa: BLE001
+            self.stats.failed += 1
+            logger.warning("Failed to fetch card image %s: %s", filename, e)
+            self.report(f"  FAILED {filename}: {e}")
+        if self.options.delay:
+            time.sleep(self.options.delay)
+
+
+def _wanted_targets(game_key: str, options: FetchOptions, report: Callable[[str], None]) -> list[CardTarget]:
+    """Fetch the game's card list and return the targets in the requested sets."""
+    default_url, fetcher, target_fn = GAMES[game_key]
+    url = options.url or default_url
+    report(f"Fetching card list from {url} ...")
+    data = fetcher(url)
+    wanted = {_norm(s) for s in options.sets} if options.sets else None
+    return [t for t in target_fn(data) if wanted is None or _norm(t[0]) in wanted]
+
+
 def download_new_images(
     game: str,
-    out_dir: str | None = None,
+    options: FetchOptions | None = None,
+    *,
     progress_callback: Callable[[str], None] | None = None,
-    url: str | None = None,
-    sets: Iterable[str] | None = None,
-    fmt: str = "webp",
-    quality: int = 95,
-    limit: int | None = None,
-    force: bool = False,
-    delay: float = 0.05,
-    dry_run: bool = False,
     cancel_event: threading.Event | None = None,
 ) -> FetchStats | None:
     """
-    Download any missing card images for a game into out_dir.
+    Download any missing card images for a game.
 
     game: game folder name (e.g. "Lorcana"). Returns None when no fetcher is
     registered for it in GAMES — callers should skip silently.
-    out_dir: defaults to Card_Images/<Game>.
+    options: where and how to download (see FetchOptions); defaults apply when None.
     progress_callback: receives one-line status strings (per-image and summary).
-    sets: restrict to these set codes ('9' and '009' both match); None = all.
-    fmt: "webp" (re-encode via OpenCV) or "jpg" (keep the source bytes).
-    dry_run: report what would download without fetching images or writing.
     cancel_event: when set, stops between images (the in-flight request
     finishes first); already-downloaded files stay and partial stats return.
 
@@ -435,86 +549,38 @@ def download_new_images(
     key = game.strip().lower()
     if key not in GAMES:
         return None
+    options = options or FetchOptions()
+    report = progress_callback or (lambda _message: None)
 
-    def report(msg: str) -> None:
-        if progress_callback:
-            progress_callback(msg)
+    def cancelled() -> bool:
+        """Return True once the caller has asked the download to stop."""
+        return cancel_event is not None and cancel_event.is_set()
 
-    default_url, fetcher, target_fn = GAMES[key]
-    resolved_url = url or default_url
-    resolved_out = out_dir or os.path.join(
-        BASE_DATABASE_PATH, resolve_game_folder(game) or game.strip().capitalize()
+    out_dir = options.out_dir or os.path.join(
+        CARD_IMAGES_DIR, resolve_game_folder(game) or game.strip().capitalize()
     )
-    ext = ".webp" if fmt == "webp" else ".jpg"
-    wanted = {_norm(s) for s in sets} if sets else None
-
-    report(f"Fetching card list from {resolved_url} ...")
-    data = fetcher(resolved_url)
-    if cancel_event is not None and cancel_event.is_set():
+    targets = _wanted_targets(key, options, report)
+    if cancelled():
         report("Download cancelled.")
         return FetchStats()
-
-    targets = [t for t in target_fn(data) if wanted is None or _norm(t[0]) in wanted]
-    stats = FetchStats()
     if not targets:
-        msg = ("No cards matched." if wanted else
-               "No cards found — the source format may have changed.")
+        message = (
+            "No cards matched." if options.sets else "No cards found — the source format may have changed."
+        )
         # Logged as well as reported: the GUI only flashes progress text, so
         # a silently empty parse otherwise leaves no trace in the log file.
-        logger.warning("%s image fetch from %s: %s", game, resolved_url, msg)
-        report(msg)
-        return stats
+        logger.warning("%s image fetch from %s: %s", game, options.url or GAMES[key][0], message)
+        report(message)
+        return FetchStats()
 
     found_sets = sorted({t[0] for t in targets})
     logger.info("%s image fetch: %d cards across sets %s", game, len(targets), ", ".join(found_sets))
+    if not options.dry_run:
+        os.makedirs(out_dir, exist_ok=True)
+        _remove_partial_downloads(out_dir)
 
-    if not dry_run:
-        os.makedirs(resolved_out, exist_ok=True)
-        _remove_partial_downloads(resolved_out)
-
-    report(f"{len(targets)} card(s) to consider -> {resolved_out}  (format: {fmt})")
-    for set_code, number, img_url in targets:
-        if cancel_event is not None and cancel_event.is_set():
-            report("Download cancelled.")
-            break
-        fname = _safe_filename(set_code, number, ext)
-        if fname is None:
-            stats.failed += 1
-            logger.warning("Skipping card with unsafe code %r-%r", set_code, number)
-            report(f"  SKIPPED unsafe card code {set_code!r}-{number!r}")
-            continue
-        dest = os.path.join(resolved_out, fname)
-
-        # A 0-byte file is a failed write, not a card — fetch it again.
-        if not force and os.path.exists(dest) and os.path.getsize(dest) > 0:
-            stats.skipped += 1
-            continue
-        if limit is not None and stats.downloaded >= limit:
-            break
-        if dry_run:
-            report(f"  would fetch {fname}  <- {img_url}")
-            stats.downloaded += 1
-            continue
-
-        try:
-            raw = _download(img_url)
-            payload = _to_webp(raw, quality) if fmt == "webp" else raw
-            # Temp file "<name>.<random>.part", renamed into place when
-            # complete: a killed download never leaves a truncated image
-            # under the real name (which later runs would skip forever).
-            atomic_write_bytes(dest, payload, suffix=_PART_SUFFIX)
-            stats.downloaded += 1
-            report(f"  {fname}  ({len(payload) // 1024} KB)")
-        # Boundary: one bad image (network, decode, disk) is counted and the
-        # batch moves on; it must never abort the whole download.
-        except Exception as e:  # noqa: BLE001
-            stats.failed += 1
-            logger.warning("Failed to fetch card image %s: %s", fname, e)
-            report(f"  FAILED {fname}: {e}")
-        if delay:
-            time.sleep(delay)
-
-    verb = "would download" if dry_run else "downloaded"
-    report(f"Done. {verb} {stats.downloaded}, skipped {stats.skipped} existing, "
-           f"{stats.failed} failed.")
+    report(f"{len(targets)} card(s) to consider -> {out_dir}  (format: {options.fmt})")
+    stats = _ImageDownload(out_dir, options, report).run(targets, cancelled)
+    verb = "would download" if options.dry_run else "downloaded"
+    report(f"Done. {verb} {stats.downloaded}, skipped {stats.skipped} existing, {stats.failed} failed.")
     return stats

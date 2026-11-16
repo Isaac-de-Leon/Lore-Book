@@ -1,10 +1,10 @@
-# collection_view.py — Collection tab: browse a game's <Game>List.csv and export it.
+"""Collection tab: browse a game's <Game>List.csv and export it."""
 
 import logging
 import os
 import shutil
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QStandardPaths, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -25,7 +25,15 @@ from lorebook.core.game_types import csv_for_game
 from lorebook.core.image_fetcher import selectable_games
 from lorebook.ui.icons import get_icon
 
+logger = logging.getLogger(__name__)
+
 _COLUMNS = ["Set", "Card", "Variant", "Count", "Name"]
+
+
+def _export_folder() -> str:
+    """Return the folder to suggest for exports: Documents, or the home folder if there is none."""
+    documents = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+    return os.path.normpath(documents or os.path.expanduser("~"))  # Qt hands back forward slashes
 
 
 class CollectionView(QWidget):
@@ -37,9 +45,9 @@ class CollectionView(QWidget):
 
     cleared = Signal(str)  # game whose collection CSV was emptied
 
-    def __init__(self, initial_game: str | None = None, parent=None):
+    def __init__(self, initial_game: str | None = None, parent: QWidget | None = None) -> None:
+        """Build the toolbar and table, then load initial_game's collection."""
         super().__init__(parent)
-        self.logger = logging.getLogger(__name__)
 
         # Toolbar row
         self.game_combo = QComboBox()
@@ -104,15 +112,32 @@ class CollectionView(QWidget):
         self.clear_btn.setIcon(get_icon("trash", danger_color))
 
     def current_game(self) -> str:
+        """Return the game selected in the dropdown."""
         return self.game_combo.currentText()
+
+    def _sync_games(self) -> None:
+        """Pick up game folders created (or removed) since the dropdown was filled, keeping the selection."""
+        games = selectable_games()
+        if games == [self.game_combo.itemText(i) for i in range(self.game_combo.count())]:
+            return
+        current = self.current_game()
+        self.game_combo.blockSignals(True)  # refresh() is already running; don't re-enter it
+        try:
+            self.game_combo.clear()
+            self.game_combo.addItems(games)
+            if current in games:
+                self.game_combo.setCurrentText(current)
+        finally:
+            self.game_combo.blockSignals(False)
 
     def refresh(self) -> None:
         """Reload the table from the selected game's CSV."""
+        self._sync_games()
         game = self.current_game()
         try:
             rows = read_collection_rows(game, strict=True) if game else []
         except CsvReadError as e:
-            self.logger.error(str(e))
+            logger.error(str(e))
             self.table.setRowCount(0)
             self.summary_label.setText(f"Couldn't read {csv_for_game(game)} — check the file.")
             return
@@ -131,13 +156,15 @@ class CollectionView(QWidget):
             count_item.setData(Qt.ItemDataRole.DisplayRole, count_val)  # int → numeric sort
 
             name = name_for(set_code, card_code, game) or ""
-            for c, item in enumerate([
-                QTableWidgetItem(set_code),
-                QTableWidgetItem(card_code),
-                QTableWidgetItem(variant),
-                count_item,
-                QTableWidgetItem(name),
-            ]):
+            for c, item in enumerate(
+                [
+                    QTableWidgetItem(set_code),
+                    QTableWidgetItem(card_code),
+                    QTableWidgetItem(variant),
+                    count_item,
+                    QTableWidgetItem(name),
+                ]
+            ):
                 self.table.setItem(r, c, item)
         self.table.setSortingEnabled(True)
 
@@ -152,18 +179,22 @@ class CollectionView(QWidget):
         if not os.path.exists(source):
             self.summary_label.setText("Nothing to export — no collection file yet.")
             return
-        dest, _ = QFileDialog.getSaveFileName(
-            self, "Export collection CSV", source, "CSV files (*.csv)"
-        )
+        # Suggest the Documents folder: pre-filling the collection file's own
+        # path made the default answer "copy the file onto itself".
+        suggested = os.path.join(_export_folder(), os.path.basename(source))
+        dest, _ = QFileDialog.getSaveFileName(self, "Export collection CSV", suggested, "CSV files (*.csv)")
         if not dest:
             return  # user cancelled
+        if os.path.exists(dest) and os.path.samefile(source, dest):
+            self.summary_label.setText("That is the collection file itself — pick another name or folder.")
+            return
         try:
             shutil.copyfile(source, dest)
             self.summary_label.setText(f"Exported to {dest}")
-            self.logger.info("Exported %s to %s", source, dest)
+            logger.info("Exported %s to %s", source, dest)
         except OSError as e:
             self.summary_label.setText(f"Export failed: {e}")
-            self.logger.error("Error exporting %s to %s: %s", source, dest, e)
+            logger.error("Error exporting %s to %s: %s", source, dest, e)
 
     def _clear_csv(self) -> None:
         """Empty the selected game's collection CSV after an explicit confirm."""
@@ -189,8 +220,16 @@ class CollectionView(QWidget):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        clear_collection(game)
-        self.logger.info("Cleared collection CSV for %s", game)
+        try:
+            clear_collection(game)
+        except OSError as e:  # locked (e.g. open in Excel) — the file is untouched
+            logger.error("Could not clear %s: %s", csv_for_game(game), e)
+            self.summary_label.setText(
+                f"Not cleared — {os.path.basename(csv_for_game(game))} could not be updated "
+                "(open in another program?)"
+            )
+            return
+        logger.info("Cleared collection CSV for %s", game)
         # The scanner's single-level Undo now points at rows that no longer
         # exist — whoever owns it should disable it.
         self.cleared.emit(game)

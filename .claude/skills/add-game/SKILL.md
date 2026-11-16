@@ -12,7 +12,7 @@ that has to know about the game.
 ## 1. Minimum: scanning + CSV
 
 - `Card_Images/<Game>/` with images named `<SetCode>-<CardCode>.<ext>` (see `split_filename()`
-  in `lorebook/core/csv_manager.py`). The folder is gitignored, so never commit images.
+  in `lorebook/core/games.py`). The folder is gitignored, so never commit images.
 - `csv_for_game()` derives `<Game>List.csv` from the folder name automatically.
 - Settings builds `selected_games`/`selected_sets` from whatever folders exist, and
   `resolve_game_folder()` resolves the lowercased settings key back to the folder's real casing
@@ -32,7 +32,7 @@ Unregistered games are skipped silently everywhere, so add only what has a real 
 | Data | Registry | Entry shape |
 |------|----------|-------------|
 | Card art | `lorebook/core/image_fetcher.py` `GAMES` | `(url, fetcher, targets_fn)`, where `targets_fn(data)` yields `(set_code, number, image_url)` |
-| Names | `scripts/fetch_card_names.py` `GAMES` | `(url, fetcher, mapper)`, where mapper returns `{"<set>-<number>": name}` |
+| Names | `lorebook/core/name_fetcher.py` `GAMES` | `(url, fetcher, mapper)`, where mapper returns `{"<set>-<number>": name}` |
 | Prices | `lorebook/core/price_fetcher.py` `GAMES` | `(base_url, fetcher(url, progress_cb), mapper)`, where mapper returns `{"<set>-<number>": {"usd", "usd_foil"}}` |
 
 Follow the existing patterns: zero-pad numbers with `_pad()`, dedupe keys, tolerate `None`/missing

@@ -1,4 +1,4 @@
-# matching.py — Vector normalization and cosine-similarity matching.
+"""Vector normalization and cosine-similarity matching."""
 
 import logging
 
@@ -32,16 +32,14 @@ def l2_normalize(vec: np.ndarray) -> np.ndarray:
     return v / n if n else v
 
 
-# Backward-compat alias (was private; features.py and callers need it).
-_l2_normalize = l2_normalize
-
-
-def _cosine_score(a: np.ndarray, b: np.ndarray) -> float:
+def cosine_score(a: np.ndarray, b: np.ndarray) -> float:
     """
     Cosine similarity for L2-normalized vectors.
     Raises ValueError if either vector is not L2-normalized.
     """
+
     def _is_normalized(v: np.ndarray, tol: float = 1e-3) -> bool:
+        """Return True when v has unit length, within tol."""
         return bool(abs(np.linalg.norm(v) - 1.0) < tol)
 
     if not _is_normalized(a) or not _is_normalized(b):
@@ -65,7 +63,7 @@ def find_best_matches(
         if vec is None or np.size(vec) == 0:
             continue
         try:
-            score = _cosine_score(q, vec)
+            score = cosine_score(q, vec)
         except ValueError:
             # One corrupt/unnormalized cache vector must not kill the scan.
             logger.warning("Skipping unnormalized/corrupt DB vector for %s", fname)
@@ -88,6 +86,7 @@ class MatchIndex:
     """
 
     def __init__(self, feature_db: dict[str, np.ndarray]):
+        """Stack the usable vectors into one normalized matrix, skipping corrupt entries."""
         names: list[str] = []
         vectors: list[np.ndarray] = []
         dim: int | None = None
@@ -98,9 +97,7 @@ class MatchIndex:
             if dim is None:
                 dim = v.size
             elif v.size != dim:
-                logger.warning(
-                    "MatchIndex: skipping %s (dim %s != %s)", fname, v.size, dim
-                )
+                logger.warning("MatchIndex: skipping %s (dim %s != %s)", fname, v.size, dim)
                 continue
             # Normalize defensively: cache vectors are normalized at
             # extraction time, but a corrupt/legacy row must not distort
@@ -115,6 +112,7 @@ class MatchIndex:
         self._matrix = np.vstack(vectors) if vectors else np.empty((0, dim or 0), np.float32)
 
     def __len__(self) -> int:
+        """Return the number of indexed reference vectors."""
         return len(self._names)
 
     def find(self, input_features: np.ndarray, threshold: float = 0.70) -> list[tuple[str, float]]:
@@ -123,9 +121,7 @@ class MatchIndex:
             return []
         q = l2_normalize(np.asarray(input_features, dtype=np.float32).ravel())
         if q.size != self._matrix.shape[1]:
-            logger.error(
-                "MatchIndex: query dim %s != index dim %s", q.size, self._matrix.shape[1]
-            )
+            logger.error("MatchIndex: query dim %s != index dim %s", q.size, self._matrix.shape[1])
             return []
         scores = self._matrix @ q
         hits = np.flatnonzero(scores >= threshold)

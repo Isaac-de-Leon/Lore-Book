@@ -1,4 +1,4 @@
-# app.py — GUI application entry point (also exposed as the `lorebook-ui` script).
+"""GUI application entry point (also exposed as the `lorebook-ui` script)."""
 
 import logging
 import os
@@ -23,6 +23,7 @@ _ICON_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "
 
 
 def main() -> int:
+    """Start the Qt application, show the main window, and return the exit code."""
     setup_logging()
     app = QApplication(sys.argv)
     app.setApplicationName("LoreBook")

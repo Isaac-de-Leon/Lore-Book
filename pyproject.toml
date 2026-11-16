@@ -18,11 +18,12 @@ dependencies = [
 ]
 
 [project.scripts]
+lorebook = "lorebook.cli:main"
 lorebook-ui = "lorebook.ui.app:main"
 lorebook-sort = "lorebook.sorter.__main__:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=9", "ruff>=0.15", "mypy>=2"]  # exact CI pins: requirements-dev.txt
+dev = ["pytest>=9", "pytest-cov>=7", "ruff>=0.15", "mypy>=2"]  # exact CI pins: requirements-dev.txt
 # Desktop GUI + onnx feature backend (default; onnx/h5py build the model
 # from the Keras weights) + keras backend (fallback; builds the .tflite model).
 gui = [
@@ -41,11 +42,12 @@ gui = [
 sorter = ["tflite-runtime"]
 
 [tool.setuptools]
-# Root-level UI.py / PhotoMatching.py are runnable scripts, not part of the
-# installable package; only the lorebook package is packaged.
+# Root-level run_ui.py is a runnable script (the PyInstaller entry), not part of
+# the installable package; only the lorebook package is packaged.
 packages = [
     "lorebook",
     "lorebook.core",
+    "lorebook.core.features",
     "lorebook.ui",
     "lorebook.hardware",
     "lorebook.sorter",
@@ -64,9 +66,31 @@ files = ["lorebook"]
 # imports as untyped rather than failing. PySide6 is installed for the type
 # check (the gui job), so lorebook/ui is checked against its real types.
 ignore_missing_imports = true
+# Every function is annotated, so mypy checks every function body. An
+# unannotated function would be skipped silently, which is how a banned short
+# Qt enum name once went unnoticed.
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Coverage is measured only when asked for: `python -m pytest --cov`. It needs
+# the full desktop install (PySide6, onnxruntime): without them the UI and
+# ONNX tests skip and those modules count as untested. CI's gui job runs it.
+[tool.coverage.run]
+source = ["lorebook"]
+
+[tool.coverage.report]
+# Measured 95% when this was set. What is left is lorebook/ui/app.py (only runs
+# when the real app starts), fallbacks for optional packages (only one side
+# can run in a given install) and handlers for rare I/O failures.
+# Raise it as tests are added; don't lower it to get a change through.
+fail_under = 92
+show_missing = true
+skip_covered = true
+exclude_also = ["if TYPE_CHECKING:"]
 
 [tool.ruff]
 target-version = "py311"
@@ -79,11 +103,34 @@ line-length = 110
 # (no f-strings in log calls); I: sorted imports; BLE: no blind
 # `except Exception` — catch what can actually happen, or mark a real
 # boundary (worker thread, Qt callback, per-item batch loop, CLI top level)
-# with `# noqa: BLE001` and a reason.
-select = ["E4", "E7", "E9", "F", "UP", "G", "I", "BLE"]
+# with `# noqa: BLE001` and a reason. N: PEP 8 names. C901/PLR09xx: keep
+# functions small enough to do one thing (complexity, branches, arguments,
+# statements) — split a function rather than raise a limit. D1: a docstring
+# on every module, class and function. E501: the line-length above (code is
+# laid out by `ruff format`; this catches the strings and comments it leaves).
+# RUF100: no `# noqa` that suppresses nothing.
+select = [
+    "E4", "E501", "E7", "E9", "F", "UP", "G", "I", "BLE", "N",
+    "C901", "PLR0912", "PLR0913", "PLR0915", "D1", "RUF100",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pylint]
+# Six leaves room for a constructor's injected collaborators plus a config object.
+max-args = 6
 
 [tool.ruff.lint.per-file-ignores]
-# Backward-compat re-export shim: every import IS the public API.
-"PhotoMatching.py" = ["F401"]
+# Qt event handlers and OpenCV stand-ins override camelCase methods.
+"lorebook/ui/*.py" = ["N802"]
+"tests/test_camera.py" = ["N802"]
+# One test walks a whole scenario step by step; length is not complexity there.
+"tests/*.py" = ["PLR0915", "D1"]
+# The hook is a tiny standalone script.
+".claude/hooks/*.py" = ["D1"]
 # TF env vars and warning filters must be set before the imports they affect.
-"lorebook/core/features.py" = ["E402"]
+"lorebook/core/features/__init__.py" = ["E402"]

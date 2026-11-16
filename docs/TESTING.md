@@ -22,7 +22,7 @@ python scripts/fetch_card_images.py --game Lorcana   # optional: card art
 
 ## 1. Startup & database build
 
-- [ ] `python UI.py` — the progress bar runs for **each** game folder in turn
+- [ ] `python run_ui.py` — the progress bar runs for **each** game folder in turn
       (watch it reset to 0 between Lorcana and Riftbound) and ends with
       "All databases ready. Scan a card to begin."
       *(Round-1 fix: it used to go dark after the first game.)*
@@ -174,3 +174,91 @@ Behaviour shouldn't change: the short enum names resolved to the same objects as
       asks for confirmation.
 - [ ] Turn on Debug mode with the camera running: the heatmap overlay appears, and the window
       stays responsive during a Rebuild Database.
+
+## Legacy names removed (PhotoMatching.py → `python -m lorebook`)
+
+Behaviour shouldn't change: this was renames only, plus the build/match command moving into the package.
+
+- [ ] `python -m lorebook --game Lorcana --build` prints a percentage per batch and ends with
+      `DB entries: N` (N = number of images in `Card_Images/Lorcana/`). Running it again right
+      away prints `100% -` and the same N.
+- [ ] `python -m lorebook --game Lorcana --match Card_Images/Lorcana/001-040.webp` prints
+      `1.0000  001-040.webp` first. `python -m lorebook` with no flags prints a usage error.
+- [ ] `python run_ui.py`: scan a card. The status line under the preview shows the score and file
+      name, Add shows the green "Added 1× …" message on the right, and Undo removes it again.
+- [ ] Settings: every game lists its sets, Apply keeps the selection, and Rebuild Database runs.
+- [ ] Auto-scan on: placing a card triggers exactly one scan.
+
+## Long functions split (no behaviour change)
+
+The cache build, the refresh-and-build job, the image downloader, the CSV batch update, the
+sorter loop and the three window builders were split into smaller functions. Offscreen renders of
+the Scanner, Collection, Settings and match views are pixel-identical before and after, but a real
+camera and a real build were not exercised.
+
+- [ ] `python run_ui.py` with a new image dropped into `Card_Images/Lorcana/`: the progress dialog
+      counts up, ends with "All databases ready. Scan a card to begin.", and the new card scans.
+- [ ] Press Cancel during a Rebuild Database: the dialog shows "Cancelling…", then the status line
+      reads "Database build cancelled." Rebuild again and it resumes rather than starting over.
+- [ ] Unplug the network and Rebuild Database: the build still finishes (warnings in
+      `logs/card_scanner.log`, no error dialog).
+- [ ] Settings: all rows are present in the same order as before (Theme, Camera, the four
+      checkboxes, both thresholds, Price currency, Debug mode, Filter Sets), and Apply works.
+- [ ] Scan, then Add with Foil ticked and count 2: the CSV row gains 2 foil; Undo removes them.
+- [ ] `python scripts/fetch_card_images.py --game Lorcana --set 1 --dry-run` lists what it would
+      fetch and writes nothing.
+- [ ] `python -m lorebook.sorter --game Lorcana --source Card_Images/Lorcana --max-cards 5`
+      logs five `card=… → bin=…` lines and the per-bin totals.
+
+## Modules moved and `UI.py` renamed to `run_ui.py`
+
+Code moved between files without changing: game-folder helpers into `core/games.py`,
+`card_database.py` renamed `feature_cache.py`, name fetching into `core/name_fetcher.py`, and
+`features.py` split into the `core/features/` package. Real ONNX vectors and heatmaps are
+byte-identical before and after; the Keras and tflite backends and the installer build were not run.
+
+- [ ] `python run_ui.py` starts the app as `python UI.py` used to (and `UI.py` is gone).
+- [ ] Scan a card and step through A/D: same matches and scores as before.
+- [ ] Debug mode on: the heatmap overlay appears on the preview.
+- [ ] `python scripts/fetch_card_names.py --game Lorcana` prints `Wrote N card names to
+      card_names_Lorcana.json`, and card names still show on scans.
+- [ ] Release build (next tag): the installer builds from `run_ui.py` and the installed app starts.
+- [ ] Only if TensorFlow can load on the machine: `LOREBOOK_BACKEND=keras python run_ui.py` scans,
+      and `LOREBOOK_TF_TESTS=1 python -m pytest tests/test_tf_integration.py -v` passes.
+- [ ] On the Pi: `python -m lorebook.sorter --backend tflite ...` still finds
+      `mobilenetv2_features.tflite` at the repo root.
+
+## Bug fixes: Collection, Scanner, Settings, rebuild, sorter
+
+- [ ] **Clear with the file locked.** Open `LorcanaList.csv` in Excel, then Collection → Clear… →
+      Yes: the summary reads "Not cleared — LorcanaList.csv could not be updated (open in another
+      program?)" and the table is unchanged. Close Excel, Clear again: it empties.
+- [ ] **Export.** Collection → Export CSV…: the dialog opens in Documents with
+      `LorcanaList.csv` pre-filled (asking before replacing an existing file). Navigating to the
+      collection file itself and saving shows "That is the collection file itself — pick another
+      name or folder."
+- [ ] **New game folder.** With the app running, create `Card_Images/Pokemon/`, switch to the
+      Scanner page and back to Collection: Pokemon is in the Game dropdown, and the game that was
+      selected still is.
+- [ ] **Add after Undo.** Scan a card, Add (the button greys out), Undo: Add is clickable again.
+      Add, press `D`: Add is clickable for the alternative; press `A`: greyed out again for the
+      card already added.
+- [ ] **Status message.** Add a card, then within three seconds Add with the CSV open in Excel:
+      the red "Not added…" message stays for about eight seconds instead of vanishing with the
+      green one.
+- [ ] **Confidence threshold.** Settings → set Confidence Threshold to 57 → Apply → reopen
+      Settings: it shows 57 (it used to show 56). Same for 29 and 58.
+- [ ] **Rebuild during a build.** Start the app with new images to process, and while the
+      progress dialog is still running open Settings, tick a game that has no folder yet and
+      press Rebuild Database: when the first build ends a second one starts and builds that
+      game. Pressing Cancel instead stops without starting again.
+- [ ] **Sorter with the CSV locked.** Run `python -m lorebook.sorter --game Lorcana --source
+      Card_Images/Lorcana --no-dry-run --max-cards 60` with `LorcanaList.csv` open in Excel:
+      the log shows "CSV write failed … kept to retry" and sorting continues. Close Excel
+      during the run: the cards are written. Left open to the end: each card is listed as
+      "NOT RECORDED in the CSV" and the command ends with an error.
+- [ ] **tflite model on the Pi.** After `pip install .[sorter]`, run `lorebook-sort --backend
+      tflite …` from the folder holding `mobilenetv2_features.tflite`: the model is found.
+      From a folder without it, the error names the path it looked at.
+- [ ] `LOREBOOK_BACKEND=nonsense python -m lorebook --game Lorcana --match some.jpg` reports
+      "Unknown extractor backend: 'nonsense' (from LOREBOOK_BACKEND)".

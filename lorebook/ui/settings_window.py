@@ -1,4 +1,4 @@
-# settings_window.py — Settings dialog for camera, UI, and game/set selection.
+"""Settings dialog for camera, UI, and game/set selection."""
 
 import logging
 import os
@@ -22,14 +22,12 @@ from PySide6.QtWidgets import (
 )
 
 from lorebook.core.card_prices import SUPPORTED_CURRENCIES
-from lorebook.core.csv_manager import get_available_sets
-from lorebook.core.game_types import (
-    BASE_DATABASE_PATH,
-    sets_to_display,
-    sets_to_store,
-)
+from lorebook.core.game_types import CARD_IMAGES_DIR
+from lorebook.core.games import available_sets
 from lorebook.core.image_fetcher import GAMES, selectable_games
-from lorebook.core.settings import AppSettings
+from lorebook.core.settings import AppSettings, sets_to_display, sets_to_store
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsWindow(QDialog):
@@ -43,12 +41,11 @@ class SettingsWindow(QDialog):
     touches its parent's state directly.
     """
 
-    logger = logging.getLogger("SettingsWindow")
-
-    applied = Signal(object)        # AppSettings
+    applied = Signal(object)  # AppSettings
     rebuild_requested = Signal()
 
-    def __init__(self, settings: AppSettings, parent=None):
+    def __init__(self, settings: AppSettings, parent: QWidget | None = None) -> None:
+        """Build the dialog pre-filled from settings (which is copied, never modified)."""
         super().__init__(parent)
         self._settings = settings.copy()
         self.setWindowTitle("Settings")
@@ -57,11 +54,39 @@ class SettingsWindow(QDialog):
         self.setMinimumWidth(390)
         # Stylesheet is inherited from the parent MainWindow, so the dialog
         # always matches the active theme.
-        self.logger.info("Initializing settings window")
+        logger.info("Initializing settings window")
 
         layout = QFormLayout()
+        self._add_camera_and_theme_rows(layout, settings)
+        self._add_scan_option_rows(layout, settings)
+        self.set_tree = self._build_game_tree(settings)
+        layout.addRow("Filter Sets:", self.set_tree)
 
-        # Theme selector
+        rebuild_button = QPushButton("Rebuild Database")
+        rebuild_button.setToolTip("Re-scan all card images and rebuild the feature cache")
+        rebuild_button.clicked.connect(self._rebuild_database)
+
+        self.apply_button = QPushButton("Apply")
+        # lambda guards against QPushButton.clicked's `checked` bool binding to `close`
+        self.apply_button.clicked.connect(lambda: self.apply_settings())
+
+        form = QWidget()
+        form.setLayout(layout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(form)
+
+        outer = QVBoxLayout()
+        outer.addWidget(scroll, stretch=1)
+        outer.addWidget(rebuild_button)
+        outer.addWidget(self.apply_button)
+        self.setLayout(outer)
+        self._fit_to_screen(parent)
+
+    def _add_camera_and_theme_rows(self, layout: QFormLayout, settings: AppSettings) -> None:
+        """Add the theme and camera selectors to the form."""
         self.theme_combo = QComboBox()
         self.theme_combo.addItem("Dark", userData="dark")
         self.theme_combo.addItem("Light", userData="light")
@@ -76,10 +101,14 @@ class SettingsWindow(QDialog):
         self.camera_combo.setCurrentIndex(min(settings.camera_index, 4))
         layout.addRow("Camera:", self.camera_combo)
 
-        help_label = QLabel("Note: If camera doesn't work, try a different index\nand restart the application.")
+        help_label = QLabel(
+            "Note: If camera doesn't work, try a different index\nand restart the application."
+        )
         help_label.setObjectName("statusLabel")  # themed muted text
         layout.addRow(help_label)
 
+    def _add_scan_option_rows(self, layout: QFormLayout, settings: AppSettings) -> None:
+        """Add the scan checkboxes, the two thresholds, the price currency and debug mode."""
         self.keep_foil_checked = QCheckBox("Keep Foil Checked")
         self.keep_foil_checked.setChecked(settings.keep_foil_checked)
         layout.addRow(self.keep_foil_checked)
@@ -96,14 +125,11 @@ class SettingsWindow(QDialog):
         self.auto_scan_checkbox.setChecked(settings.auto_scan)
         layout.addRow(self.auto_scan_checkbox)
 
-        self.confidence_input = QLineEdit(
-            str(int(100 * settings.confidence_threshold))
-        )
+        # :g, not int(): 100 * 0.57 is 56.99999999999999, which int() showed as 56.
+        self.confidence_input = QLineEdit(f"{100 * settings.confidence_threshold:g}")
         layout.addRow("Confidence Threshold (%):", self.confidence_input)
 
-        self.foil_threshold_input = QLineEdit(
-            str(round(100 * settings.foil_threshold, 1))
-        )
+        self.foil_threshold_input = QLineEdit(str(round(100 * settings.foil_threshold, 1)))
         layout.addRow("Foil Threshold (%):", self.foil_threshold_input)
 
         # Display currency for scanned-card market prices (source data is USD)
@@ -118,72 +144,52 @@ class SettingsWindow(QDialog):
         self.debug_mode_checkbox.setChecked(settings.debug_mode)
         layout.addRow(self.debug_mode_checkbox)
 
-        # Game / set tree
-        self.set_tree = QTreeWidget()
-        self.set_tree.setHeaderHidden(True)
-        self.set_tree.setMinimumHeight(200)
-
-        selected_games = settings.selected_games
-        selected_sets = settings.selected_sets
-
+    def _build_game_tree(self, settings: AppSettings) -> QTreeWidget:
+        """Return the game/set tree: one checkable item per game with its sets beneath."""
+        tree = QTreeWidget()
+        tree.setHeaderHidden(True)
+        tree.setMinimumHeight(200)
         for game_name in selectable_games():
-            key = game_name.lower()
-            is_selected = bool(selected_games.get(key, False))
-            game_root = QTreeWidgetItem(self.set_tree, [game_name])
-            game_root.setFlags(
-                game_root.flags() | Qt.ItemFlag.ItemIsAutoTristate | Qt.ItemFlag.ItemIsUserCheckable
-            )
-            # Only used as-is when the folder has no sets yet; with children
-            # the box is derived from them (Qt auto-tristate).
-            game_root.setCheckState(0, Qt.CheckState.Checked if is_selected else Qt.CheckState.Unchecked)
-
-            # Pass db_path explicitly — avoids touching the global database path
-            game_db_path = os.path.join(BASE_DATABASE_PATH, game_name)
-            try:
-                game_sets = get_available_sets(db_path=game_db_path)
-                if not game_sets and key in GAMES:
-                    game_root.setToolTip(0, "No cards yet. Tick this game and press Rebuild Database to download them.")
-                ticked = set(sets_to_display(selected_sets.get(key, []), game_sets, is_selected))
-                for set_code in game_sets:
-                    set_item = QTreeWidgetItem(game_root, [f"Set {set_code}"])
-                    set_item.setFlags(set_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                    set_item.setCheckState(0, Qt.CheckState.Checked if set_code in ticked else Qt.CheckState.Unchecked)
-                    set_item.setData(0, Qt.ItemDataRole.UserRole, set_code)
-            except OSError as e:
-                self.logger.warning("Error getting sets for %s: %s", game_name, e)
-
+            self._add_game_item(tree, game_name, settings)
         # One active game at a time: ticking a game (or any of its sets)
         # unticks the others, so the dialog never shows a selection that
         # scanning would silently ignore.
-        self.set_tree.itemChanged.connect(self._enforce_single_game)
+        tree.itemChanged.connect(self._enforce_single_game)
+        tree.expandAll()
+        return tree
 
-        self.set_tree.expandAll()
-        layout.addRow("Filter Sets:", self.set_tree)
+    def _add_game_item(self, tree: QTreeWidget, game_name: str, settings: AppSettings) -> None:
+        """Add one game and its set codes to the tree, ticked to match settings."""
+        key = game_name.lower()
+        is_selected = bool(settings.selected_games.get(key, False))
+        game_root = QTreeWidgetItem(tree, [game_name])
+        game_root.setFlags(
+            game_root.flags() | Qt.ItemFlag.ItemIsAutoTristate | Qt.ItemFlag.ItemIsUserCheckable
+        )
+        # Only used as-is when the folder has no sets yet; with children
+        # the box is derived from them (Qt auto-tristate).
+        game_root.setCheckState(0, Qt.CheckState.Checked if is_selected else Qt.CheckState.Unchecked)
 
-        rebuild_button = QPushButton("Rebuild Database")
-        rebuild_button.setToolTip("Re-scan all card images and rebuild the feature cache")
-        rebuild_button.clicked.connect(self._rebuild_database)
+        try:
+            game_sets = available_sets(os.path.join(CARD_IMAGES_DIR, game_name))
+        except OSError as e:
+            logger.warning("Error getting sets for %s: %s", game_name, e)
+            return
+        if not game_sets and key in GAMES:
+            game_root.setToolTip(
+                0, "No cards yet. Tick this game and press Rebuild Database to download them."
+            )
+        ticked = set(sets_to_display(settings.selected_sets.get(key, []), game_sets, is_selected))
+        for set_code in game_sets:
+            set_item = QTreeWidgetItem(game_root, [f"Set {set_code}"])
+            set_item.setFlags(set_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            set_item.setCheckState(
+                0, Qt.CheckState.Checked if set_code in ticked else Qt.CheckState.Unchecked
+            )
+            set_item.setData(0, Qt.ItemDataRole.UserRole, set_code)
 
-        apply_button = QPushButton("Apply")
-        # lambda guards against QPushButton.clicked's `checked` bool binding to `close`
-        apply_button.clicked.connect(lambda: self.apply_settings())
-
-        form = QWidget()
-        form.setLayout(layout)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setWidget(form)
-
-        outer = QVBoxLayout()
-        outer.addWidget(scroll, stretch=1)
-        outer.addWidget(rebuild_button)
-        outer.addWidget(apply_button)
-        self.setLayout(outer)
-        self.apply_button = apply_button
-
-        # Preferred 715px tall, capped to the screen's usable height.
+    def _fit_to_screen(self, parent: QWidget | None) -> None:
+        """Size the dialog to 715px tall, capped to the screen's usable height."""
         screen = (parent.screen() if parent is not None else None) or QGuiApplication.primaryScreen()
         avail = screen.availableGeometry().height() if screen is not None else 715
         self.resize(420, max(320, min(715, avail - 60)))
@@ -225,9 +231,7 @@ class SettingsWindow(QDialog):
         close=False applies without dismissing the dialog (Rebuild Database).
         """
         new = self.result_settings()
-        self.logger.info(
-            "Applying settings — games: %s, sets: %s", new.selected_games, new.selected_sets
-        )
+        logger.info("Applying settings — games: %s, sets: %s", new.selected_games, new.selected_sets)
         self.applied.emit(new)
         if close:
             self.close()
@@ -247,7 +251,7 @@ class SettingsWindow(QDialog):
         finally:
             self.set_tree.blockSignals(False)
 
-    def _rebuild_database(self):
+    def _rebuild_database(self) -> None:
         """Apply current settings, request a background DB rebuild, then close."""
         self.apply_settings(close=False)
         self.rebuild_requested.emit()

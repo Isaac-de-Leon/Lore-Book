@@ -1,23 +1,25 @@
-# card_prices.py — optional card market-price lookup (display only).
-#
-# Prices come from a local card_prices_<Game>.json written by
-# lorebook.core.price_fetcher ({"fetched_at": ..., "prices": {"<set>-<number>":
-# {"usd": 1.24, "usd_foil": 3.8}}}). The GUI refreshes it in the background
-# when it's missing or older than a day; scripts/fetch_card_prices.py does the
-# same from the command line. The file is optional and gitignored: every
-# lookup degrades to None when it's absent. Prices never enter the collection
-# CSV — that file must stay 4-column for Dreamborn.ink bulk import.
-#
-# Source prices are USD (TCGplayer, via the Lorcast API). Other display
-# currencies are converted with the daily USD rates cached in
-# currency_rates.json (Frankfurter/ECB), falling back to USD when no rate is
-# available.
+"""Optional card market-price lookup (display only).
+
+Prices come from a local card_prices_<Game>.json written by
+lorebook.core.price_fetcher ({"fetched_at": ..., "prices": {"<set>-<number>":
+{"usd": 1.24, "usd_foil": 3.8}}}). The GUI refreshes it in the background
+when it's missing or older than a day; scripts/fetch_card_prices.py does the
+same from the command line. The file is optional and gitignored: every
+lookup degrades to None when it's absent. Prices never enter the collection
+CSV — that file must stay 4-column for Dreamborn.ink bulk import.
+
+Source prices are USD (TCGplayer, via the Lorcast API). Other display
+currencies are converted with the daily USD rates cached in
+currency_rates.json (Frankfurter/ECB), falling back to USD when no rate is
+available.
+"""
 
 import json
 import logging
 import os
 import time
 from datetime import datetime
+from typing import Any
 
 from lorebook.core.card_names import normalize_key
 from lorebook.core.paths import data_path
@@ -49,6 +51,7 @@ def clear_price_cache() -> None:
 
 
 def _read_json(file: str) -> dict | None:
+    """Return the JSON object stored in file, or None if it is unreadable or not an object."""
     try:
         with open(file, encoding="utf-8") as f:
             raw = json.load(f)
@@ -58,7 +61,8 @@ def _read_json(file: str) -> dict | None:
         return None
 
 
-def _as_float(value) -> float | None:
+def _as_float(value: Any) -> float | None:
+    """Return value as a float, or None if it is not a number."""
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -116,8 +120,7 @@ def rate_for(currency: str, path: str | None = None) -> float | None:
     return _cache[file].get(currency)
 
 
-def format_price(entry: dict | None, currency: str = "USD",
-                 rate: float | None = None) -> str:
+def format_price(entry: dict | None, currency: str = "USD", rate: float | None = None) -> str:
     """
     Render a price entry as e.g. "$1.24 · foil $3.80" (missing halves omitted,
     "" when there's nothing to show). Stored prices are USD; a non-USD
@@ -141,8 +144,7 @@ def format_price(entry: dict | None, currency: str = "USD",
     return " · ".join(parts)
 
 
-def prices_stale(game: str | None = None, path: str | None = None,
-                 max_age_hours: float = 24.0) -> bool:
+def prices_stale(game: str | None = None, path: str | None = None, max_age_hours: float = 24.0) -> bool:
     """
     True when the prices file (or, with path=RATES_FILE, the rates file) is
     missing or its fetched_at is older than max_age_hours or unparseable.

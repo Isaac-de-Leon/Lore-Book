@@ -39,7 +39,7 @@ python scripts/fetch_card_names.py --game Riftbound
 Then build the feature database once:
 
 ```bash
-python PhotoMatching.py --game Lorcana --build
+python -m lorebook --game Lorcana --build
 ```
 
 ## Usage
@@ -47,7 +47,7 @@ python PhotoMatching.py --game Lorcana --build
 Run the GUI:
 
 ```bash
-python UI.py
+python run_ui.py
 ```
 
 Scan a card, review the match (navigate alternatives with `A`/`D`), toggle Foil with `F`, and add it to your collection with **+ Add to Collection** (`Ctrl+S`); undo a mistaken add with `Ctrl+Z`. The collection lives in `<Game>List.csv` and is browsable in the **Collection** tab.

@@ -1,10 +1,11 @@
-# scanner_view.py — the Scanner page: camera preview, match results, Add/Undo.
-#
-# A view plus its own result-panel logic (Prev/Next, foil-only lock, writing
-# the current match to the collection CSV with single-level Undo). It owns no
-# camera, model or thread: MainWindow feeds it frames (show_frame), status
-# text (set_status_text) and scan results (show_matches), and listens for
-# scan_requested / collection_changed.
+"""The Scanner page: camera preview, match results, Add/Undo.
+
+A view plus its own result-panel logic (Prev/Next, foil-only lock, writing
+the current match to the collection CSV with single-level Undo). It owns no
+camera, model or thread: MainWindow feeds it frames (show_frame), status
+text (set_status_text) and scan results (show_matches), and listens for
+scan_requested / collection_changed.
+"""
 
 import logging
 import os
@@ -27,8 +28,9 @@ from PySide6.QtWidgets import (
 
 from lorebook.core.card_names import name_for
 from lorebook.core.card_prices import format_price, price_for, rate_for
-from lorebook.core.csv_manager import split_filename, update_cardlist
-from lorebook.core.game_types import BASE_DATABASE_PATH, csv_for_game, game_type_from_name, is_foil_only_card
+from lorebook.core.csv_manager import update_cardlist
+from lorebook.core.game_types import CARD_IMAGES_DIR, csv_for_game, game_type_from_name, is_foil_only_card
+from lorebook.core.games import split_filename
 from lorebook.core.settings import AppSettings
 from lorebook.ui.icons import get_icon
 from lorebook.ui.qt_images import show_bgr
@@ -44,25 +46,35 @@ class ScannerView(QWidget):
     AMBIGUOUS_GAP = 0.02
 
     scan_requested = Signal()
-    collection_changed = Signal()   # a CSV was written (Add / Undo)
+    collection_changed = Signal()  # a CSV was written (Add / Undo)
 
     def __init__(self, settings: AppSettings, parent: QWidget | None = None):
+        """Create the page with no results shown; settings supplies the user's preferences."""
         super().__init__(parent)
         self.settings = settings
         self._tokens: dict[str, str] = {}
 
         self.last_matches: list[tuple[str, float]] = []
         self.current_match_idx = 0
-        self.matches_game: str | None = None   # the game the shown matches belong to
+        self.matches_game: str | None = None  # the game the shown matches belong to
         self._last_add: tuple[str, bool, int, str] | None = None  # (fname, foil, count, game)
-        self._foil_locked = False        # Foil checkbox forced on for foil-only rarities
-        self._foil_before_lock = False   # user's checkbox state to restore on unlock
+        self._added: set[str] = set()  # matches from the current scan already in the CSV
+        self._scan_failed = False  # the shown matches are from an earlier scan
+        self._foil_locked = False  # Foil checkbox forced on for foil-only rarities
+        self._foil_before_lock = False  # user's checkbox state to restore on unlock
 
         self._build_widgets()
+
+        # One timer for the Add/Undo message, restarted per message: separate
+        # one-shot timers let an old message's timeout wipe a newer message.
+        self._csv_status_timer = QTimer(self)
+        self._csv_status_timer.setSingleShot(True)
+        self._csv_status_timer.timeout.connect(lambda: self.csv_status.setText(""))
 
     # ------------------------------------------------------------------ layout
 
     def _build_widgets(self) -> None:
+        """Create the page: preview, status line, result panel and the Scan button."""
         self.preview_label = QLabel("Camera stopped")
         self.preview_label.setObjectName("previewLabel")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -70,10 +82,32 @@ class ScannerView(QWidget):
         self.preview_label.setMinimumSize(640, 360)
 
         # Status / DB-build message (below camera, above result panel)
-        self.match_label = QLabel("—")
-        self.match_label.setObjectName("statusLabel")
-        self.match_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label = QLabel("—")
+        self.status_label.setObjectName("statusLabel")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+        self._build_result_panel()
+
+        self.capture_btn = QPushButton("SCAN CARD")
+        self.capture_btn.setObjectName("scanBtn")
+        self.capture_btn.clicked.connect(self.scan_requested.emit)
+        scan_row = QHBoxLayout()
+        scan_row.addStretch()
+        scan_row.addWidget(self.capture_btn)
+        scan_row.addStretch()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(self.preview_label, stretch=1)
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.result_panel)
+        layout.addLayout(scan_row)
+
+        self._set_tooltips_and_focus()
+
+    def _build_result_panel(self) -> None:
+        """Create the result panel: card thumbnail beside the match details and actions."""
         self.result_panel = QFrame()
         self.result_panel.setObjectName("resultPanel")  # height set by apply_scale
 
@@ -88,7 +122,22 @@ class ScannerView(QWidget):
         self.match_price_label = QLabel("")  # market value; empty when unknown
         self.match_price_label.setObjectName("matchDetail")
 
-        # ‹ position › grouped in one compact pager pill
+        info_col = QVBoxLayout()
+        info_col.setContentsMargins(10, 10, 10, 10)
+        info_col.setSpacing(4)
+        for w in (self.match_name_label, self.match_detail_label, self.match_price_label):
+            info_col.addWidget(w)
+        info_col.addLayout(self._build_pager_row())
+        info_col.addStretch()
+        info_col.addLayout(self._build_actions_row())
+        panel_inner = QHBoxLayout(self.result_panel)
+        panel_inner.setContentsMargins(10, 10, 10, 10)
+        panel_inner.setSpacing(10)
+        panel_inner.addWidget(self.image_label)
+        panel_inner.addLayout(info_col, stretch=1)
+
+    def _build_pager_row(self) -> QHBoxLayout:
+        """Create the ‹ position › pager for stepping through alternative matches."""
         self.prev_btn = QPushButton()
         self.prev_btn.setFixedSize(24, 24)
         self.prev_btn.clicked.connect(self.prev_match)
@@ -98,6 +147,7 @@ class ScannerView(QWidget):
         self.next_btn = QPushButton()
         self.next_btn.setFixedSize(24, 24)
         self.next_btn.clicked.connect(self.next_match)
+        # ‹ position › grouped in one compact pager pill
         pager = QFrame()
         pager.setObjectName("pagerPill")
         pager_row = QHBoxLayout(pager)
@@ -109,7 +159,10 @@ class ScannerView(QWidget):
         nav_row.setContentsMargins(0, 0, 0, 0)
         nav_row.addWidget(pager)
         nav_row.addStretch()
+        return nav_row
 
+    def _build_actions_row(self) -> QHBoxLayout:
+        """Create the Foil / count / Add / Undo row and its status message."""
         self.foil_check = QCheckBox("Foil")
         self.foil_check.setChecked(self.settings.keep_foil_checked)
         self.count_edit = QLineEdit("1")
@@ -131,37 +184,10 @@ class ScannerView(QWidget):
             actions_row.addWidget(widget)
         actions_row.addStretch()
         actions_row.addWidget(self.csv_status)
+        return actions_row
 
-        info_col = QVBoxLayout()
-        info_col.setContentsMargins(10, 10, 10, 10)
-        info_col.setSpacing(4)
-        for w in (self.match_name_label, self.match_detail_label, self.match_price_label):
-            info_col.addWidget(w)
-        info_col.addLayout(nav_row)
-        info_col.addStretch()
-        info_col.addLayout(actions_row)
-        panel_inner = QHBoxLayout(self.result_panel)
-        panel_inner.setContentsMargins(10, 10, 10, 10)
-        panel_inner.setSpacing(10)
-        panel_inner.addWidget(self.image_label)
-        panel_inner.addLayout(info_col, stretch=1)
-
-        self.capture_btn = QPushButton("SCAN CARD")
-        self.capture_btn.setObjectName("scanBtn")
-        self.capture_btn.clicked.connect(self.scan_requested.emit)
-        scan_row = QHBoxLayout()
-        scan_row.addStretch()
-        scan_row.addWidget(self.capture_btn)
-        scan_row.addStretch()
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(8)
-        layout.addWidget(self.preview_label, stretch=1)
-        layout.addWidget(self.match_label)
-        layout.addWidget(self.result_panel)
-        layout.addLayout(scan_row)
-
+    def _set_tooltips_and_focus(self) -> None:
+        """Label each control with its shortcut and keep keyboard focus on the window."""
         self.capture_btn.setToolTip("Scan Card (C)")
         self.add_csv_btn.setToolTip("Add to Collection (Ctrl+S or Alt+S)")
         self.undo_btn.setToolTip("Undo last add (Ctrl+Z)")
@@ -169,8 +195,14 @@ class ScannerView(QWidget):
         self.next_btn.setToolTip("Next match (D)")
         self.foil_check.setToolTip("Toggle Foil (F)")
         # Keyboard shortcuts belong to the window; only the count field takes focus.
-        for button in (self.capture_btn, self.add_csv_btn, self.undo_btn, self.prev_btn,
-                  self.next_btn, self.foil_check):
+        for button in (
+            self.capture_btn,
+            self.add_csv_btn,
+            self.undo_btn,
+            self.prev_btn,
+            self.next_btn,
+            self.foil_check,
+        ):
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.count_edit.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
@@ -212,26 +244,30 @@ class ScannerView(QWidget):
         game = settings.active_game()
         if self.last_matches and game != self.matches_game:
             self.clear_results()
-            self.match_label.setText("Game changed — scan a card.")
+            self.status_label.setText("Game changed — scan a card.")
         if self._foil_locked:
             self._foil_before_lock = settings.keep_foil_checked
         else:
             self.foil_check.setChecked(settings.keep_foil_checked)
 
     def show_frame(self, frame_bgr: np.ndarray) -> None:
+        """Show a camera frame in the preview, cropped to fill it."""
         show_bgr(self.preview_label, frame_bgr, fill=True)
 
     def show_camera_message(self, text: str) -> None:
+        """Replace the preview image with a message such as 'Camera stopped'."""
         self.preview_label.setText(text)
 
     def set_status_text(self, text: str) -> None:
-        self.match_label.setText(text)
+        """Set the status line under the preview."""
+        self.status_label.setText(text)
 
     def set_scanning(self, busy: bool) -> None:
+        """Disable the Scan button and show 'Scanning…' while a scan runs; restore it after."""
         self.capture_btn.setEnabled(not busy)
         self.capture_btn.setText("SCANNING…" if busy else "SCAN CARD")
         if busy:
-            self.match_label.setText("Scanning…")
+            self.status_label.setText("Scanning…")
 
     def prepare_scan(self, probably_foil: bool) -> None:
         """Before a scan: drop any foil-only lock and pre-set the Foil box."""
@@ -241,8 +277,10 @@ class ScannerView(QWidget):
         self.foil_check.setChecked(self.settings.keep_foil_checked or probably_foil)
 
     def scan_failed(self, text: str) -> None:
-        self.match_label.setText(text)
-        self.add_csv_btn.setEnabled(False)
+        """Show why the scan produced nothing and disable Add."""
+        self.status_label.setText(text)
+        self._scan_failed = True  # any matches still on screen belong to an earlier card
+        self._update_add_enabled()
 
     def show_matches(self, matches: list[tuple[str, float]], game: str) -> None:
         """Show scan results (already filtered to the selected sets)."""
@@ -252,11 +290,12 @@ class ScannerView(QWidget):
         self.matches_game = game
         self.last_matches = matches[:20]
         self.current_match_idx = 0
+        self._added.clear()
+        self._scan_failed = False
         self._show_match_at(0)
-        self.add_csv_btn.setEnabled(True)
         # After _show_match_at so the warning isn't overwritten by its label text.
         if len(matches) >= 2 and (matches[0][1] - matches[1][1]) < self.AMBIGUOUS_GAP:
-            self.match_label.setText(
+            self.status_label.setText(
                 f"⚠ Close match ({matches[0][1]:.1%} vs {matches[1][1]:.1%}) — "
                 "check alternatives with A/D before adding."
             )
@@ -267,10 +306,12 @@ class ScannerView(QWidget):
             self._show_match_at(self.current_match_idx)
 
     def clear_results(self) -> None:
+        """Empty the result panel and release any foil-only lock."""
         self.last_matches = []
         self.current_match_idx = 0
         self.matches_game = None
-        self.add_csv_btn.setEnabled(False)
+        self._added.clear()
+        self._update_add_enabled()
         if self._foil_locked:
             self._foil_locked = False
             self.foil_check.setEnabled(True)
@@ -285,6 +326,7 @@ class ScannerView(QWidget):
     # ------------------------------------------------------------------ result panel
 
     def _show_match_at(self, idx: int) -> None:
+        """Show match number idx (clamped to the list): name, score, price and thumbnail."""
         if not self.last_matches:
             return
         idx = max(0, min(idx, len(self.last_matches) - 1))
@@ -303,10 +345,11 @@ class ScannerView(QWidget):
         price = price_for(set_code, card_code, game) if game else None
         self.match_price_label.setText(format_price(price, currency, rate_for(currency)))
         self.match_pos_label.setText(f"{idx + 1} / {len(self.last_matches)}")
-        self.match_label.setText(f"{score:.3f}  {fname}")
+        self.status_label.setText(f"{score:.3f}  {fname}")
+        self._update_add_enabled()
 
         if game:
-            path = os.path.join(BASE_DATABASE_PATH, game, fname)
+            path = os.path.join(CARD_IMAGES_DIR, game, fname)
             img = cv2.imread(path, cv2.IMREAD_COLOR)
             if img is not None:
                 show_bgr(self.image_label, img, fill=False)  # replaces the placeholder text
@@ -329,27 +372,40 @@ class ScannerView(QWidget):
             self.foil_check.setEnabled(True)
             self.foil_check.setChecked(self._foil_before_lock)
 
+    def _update_add_enabled(self) -> None:
+        """Enable Add only for a match from the latest scan that has not been added yet.
+
+        Adding disables the button so a second click can't double-count the
+        card; Undo, or stepping to a different match, makes it available again.
+        """
+        shown = self.last_matches[self.current_match_idx][0] if self.last_matches else None
+        self.add_csv_btn.setEnabled(shown is not None and not self._scan_failed and shown not in self._added)
+
     def prev_match(self) -> None:
+        """Show the previous alternative match."""
         if self.last_matches:
             self._show_match_at(self.current_match_idx - 1)
 
     def next_match(self) -> None:
+        """Show the next alternative match."""
         if self.last_matches:
             self._show_match_at(self.current_match_idx + 1)
 
     # ------------------------------------------------------------------ collection writes
 
-    def set_status(self, message: str, is_error: bool = False, timeout_ms: int = 3500) -> None:
+    def flash_csv_status(self, message: str, is_error: bool = False, timeout_ms: int = 3500) -> None:
+        """Show a success or error message beside the Add button, clearing it after timeout_ms."""
         color = self._tokens.get("danger" if is_error else "success", "")
         self.csv_status.setStyleSheet(f"color: {color}; padding-left: 8px;")
         self.csv_status.setText(message)
+        self._csv_status_timer.stop()
         if timeout_ms > 0:
-            QTimer.singleShot(timeout_ms, lambda: self.csv_status.setText(""))
+            self._csv_status_timer.start(timeout_ms)
 
     def add_to_csv(self) -> None:
         """Write the current match to its game's collection CSV."""
         if not self.last_matches:
-            self.set_status("No match to add.", is_error=True)
+            self.flash_csv_status("No match to add.", is_error=True)
             return
         fname = self.last_matches[self.current_match_idx][0]
         try:
@@ -359,7 +415,7 @@ class ScannerView(QWidget):
         if count < 1:
             # Refuse rather than silently adding 1 — a typo'd count ("1o",
             # empty field) must not corrupt the collection.
-            self.set_status("Invalid count — enter a number from 1 to 999.", is_error=True)
+            self.flash_csv_status("Invalid count — enter a number from 1 to 999.", is_error=True)
             return
         is_foil = self.foil_check.isChecked()
         # The game the match came from — not whatever Settings says now.
@@ -369,13 +425,17 @@ class ScannerView(QWidget):
             update_cardlist(fname, is_foil, count, game=game)
         except OSError as e:  # unreadable or locked (e.g. open in Excel) — file untouched
             logger.error("Could not add %s to %s: %s", fname, target, e)
-            self.set_status(f"Not added — {target} could not be updated (open in another program?)",
-                            is_error=True, timeout_ms=8000)
+            self.flash_csv_status(
+                f"Not added — {target} could not be updated (open in another program?)",
+                is_error=True,
+                timeout_ms=8000,
+            )
             return
         self._last_add = (fname, is_foil, count, game)
         self.undo_btn.setEnabled(True)
-        self.set_status(f"Added {count}× {fname} to {target}")
-        self.add_csv_btn.setEnabled(False)
+        self.flash_csv_status(f"Added {count}× {fname} to {target}")
+        self._added.add(fname)
+        self._update_add_enabled()
         self.collection_changed.emit()
 
     def undo_last_add(self) -> None:
@@ -387,18 +447,23 @@ class ScannerView(QWidget):
             update_cardlist(fname, is_foil, -count, game=game, allow_negative=True)
         except OSError as e:  # keep _last_add so the user can retry
             logger.error("Could not undo %s: %s", fname, e)
-            self.set_status("Undo failed — the collection file could not be updated.",
-                            is_error=True, timeout_ms=8000)
+            self.flash_csv_status(
+                "Undo failed — the collection file could not be updated.", is_error=True, timeout_ms=8000
+            )
             return
         self._last_add = None
         self.undo_btn.setEnabled(False)
-        self.set_status(f"Removed {count}× {fname}")
+        self.flash_csv_status(f"Removed {count}× {fname}")
+        self._added.discard(fname)
+        self._update_add_enabled()
         self.collection_changed.emit()
 
     def forget_last_add(self) -> None:
         """The collection was cleared elsewhere: Undo would point at nothing."""
         self._last_add = None
         self.undo_btn.setEnabled(False)
+        self._added.clear()  # nothing from this scan is in the CSV any more
+        self._update_add_enabled()
 
     # ------------------------------------------------------------------ keyboard
 
@@ -407,7 +472,9 @@ class ScannerView(QWidget):
         key, mods = event.key(), event.modifiers()
         if key == Qt.Key.Key_C:
             self.scan_requested.emit()
-        elif key == Qt.Key.Key_S and (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)):
+        elif key == Qt.Key.Key_S and (
+            mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
+        ):
             if self.add_csv_btn.isEnabled():
                 self.add_to_csv()
         elif key == Qt.Key.Key_Z and (mods & Qt.KeyboardModifier.ControlModifier):

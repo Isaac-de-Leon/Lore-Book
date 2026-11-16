@@ -1,4 +1,4 @@
-# main_window.py — MainWindow: app shell that wires settings, data and workers to the pages.
+"""MainWindow: app shell that wires settings, data and workers to the pages."""
 
 import logging
 import os
@@ -8,7 +8,7 @@ import time
 import cv2
 import numpy as np
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QKeyEvent
+from PySide6.QtGui import QCloseEvent, QFocusEvent, QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
 from lorebook import __version__
 from lorebook.core.build import BuildReport
 from lorebook.core.card_prices import clear_price_cache
-from lorebook.core.csv_manager import split_filename
-from lorebook.core.game_types import BASE_DATABASE_PATH, game_folders
+from lorebook.core.game_types import CARD_IMAGES_DIR
+from lorebook.core.games import game_folders, split_filename
 from lorebook.core.image_fetcher import ensure_game_folder
 from lorebook.core.image_utils import (
     card_motion_gate,
@@ -42,9 +42,10 @@ from lorebook.ui.scanner_view import ScannerView
 from lorebook.ui.settings_window import SettingsWindow
 from lorebook.ui.styles import DEFAULT_THEME, THEMES, build_stylesheet, theme_tokens
 from lorebook.ui.threads import WorkerThread
-from lorebook.ui.workers import BuildWorker, CameraWorker, ScanResult, ScanWorker
+from lorebook.ui.workers import BuildWorker, CameraState, CameraWorker, ScanResult, ScanWorker
 
 logger = logging.getLogger(__name__)
+
 
 class MainWindow(QWidget):
     """
@@ -67,20 +68,21 @@ class MainWindow(QWidget):
     card database (ScanWorker owns both, including the debug heatmap), so a
     running build can't freeze the window. Scan results carry a token so a
     superseded scan's result is dropped. Model use is serialized by
-    features._model_lock, with a waiting scan served before the build's
+    features.keras_backend.model_lock, with a waiting scan served before the build's
     next batch.
     """
 
     # Queued requests to the workers (connected in _start_workers).
-    camera_start_requested = Signal(int)                       # camera index
+    camera_start_requested = Signal(int)  # camera index
     camera_stop_requested = Signal()
     scan_job_requested = Signal(int, object, float, str)  # token, image, threshold, game
     warm_up_requested = Signal()
-    heatmap_requested = Signal(object)                    # preview frame (debug mode)
-    scan_db_invalidated = Signal()                        # caches rebuilt → ScanWorker reloads
-    build_requested = Signal(object, object)                   # game folders, cancel Event
+    heatmap_requested = Signal(object)  # preview frame (debug mode)
+    scan_db_invalidated = Signal()  # caches rebuilt → ScanWorker reloads
+    build_requested = Signal(object, object)  # game folders, cancel Event
 
     def __init__(self) -> None:
+        """Load settings, build the UI, start the workers and queue the startup database build."""
         super().__init__()
         self.setWindowTitle(f"Lore Book v{__version__}")
         self.resize(1000, 840)
@@ -92,10 +94,11 @@ class MainWindow(QWidget):
 
         self.last_frame: np.ndarray | None = None
         self.last_frame_time: float | None = None
-        self._camera_state = "idle"  # idle | starting | running
+        self._camera_state = CameraState.IDLE
         self._scan_token = 0
         self._scan_busy = False
         self._build_running = False
+        self._rebuild_queued = False  # Rebuild was pressed while a build was running
         self._build_cancel_event = threading.Event()
         self._progress_dialog: BuildProgressDialog | None = None
 
@@ -116,8 +119,31 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ layout
 
     def _build_ui(self) -> None:
-        title_label = QLabel("LORE BOOK")
-        title_label.setObjectName("appTitle")
+        """Create the shell: sidebar on the left, header and pages on the right."""
+        self._build_header_widgets()
+        self._build_nav_buttons()
+        self._build_pages()
+
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(self._title_label)
+        top.addStretch()
+        top.addWidget(self.camera_btn)
+        content = QVBoxLayout()
+        content.setContentsMargins(16, 12, 16, 12)
+        content.setSpacing(8)
+        content.addLayout(top)
+        content.addWidget(self.stack, stretch=1)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._build_sidebar())
+        root.addLayout(content, stretch=1)
+
+    def _build_header_widgets(self) -> None:
+        """Create the title, the camera toggle and the sidebar logo."""
+        self._title_label = QLabel("LORE BOOK")
+        self._title_label.setObjectName("appTitle")
         # One smart camera toggle; label/icon/style track _camera_state.
         self.camera_btn = QPushButton("Start")
         self.camera_btn.setObjectName("cameraBtn")
@@ -129,7 +155,11 @@ class MainWindow(QWidget):
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.logo_label.setToolTip("Lore Book")
 
+    def _build_nav_buttons(self) -> None:
+        """Create the sidebar buttons: Scanner and Collection pages, and Settings."""
+
         def nav_button(tooltip: str, checkable: bool = False) -> QPushButton:
+            """Return an icon-only sidebar button."""
             btn = QPushButton()
             btn.setObjectName("navBtn")
             btn.setIconSize(QSize(22, 22))
@@ -145,8 +175,10 @@ class MainWindow(QWidget):
         self.settings_btn = nav_button("Settings")
         self.settings_btn.clicked.connect(self.open_settings)
 
+    def _build_pages(self) -> None:
+        """Create the Scanner and Collection pages and wire them to each other and the nav."""
         self.scanner = ScannerView(self.settings)
-        self.scanner.scan_requested.connect(self.capture_and_match)
+        self.scanner.scan_requested.connect(self.request_scan)
         self.collection_view = CollectionView(initial_game=self.get_active_game())
         self.scanner.collection_changed.connect(self.collection_view.refresh)
         self.collection_view.cleared.connect(lambda _game: self.scanner.forget_last_add())
@@ -162,6 +194,8 @@ class MainWindow(QWidget):
         nav_group.addButton(self.nav_collection_btn, 1)
         nav_group.idClicked.connect(self.stack.setCurrentIndex)
 
+    def _build_sidebar(self) -> QFrame:
+        """Return the sidebar: logo, page buttons, and Settings at the bottom."""
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(64)
@@ -174,24 +208,10 @@ class MainWindow(QWidget):
         side.addWidget(self.nav_collection_btn, 0, Qt.AlignmentFlag.AlignHCenter)
         side.addStretch(1)
         side.addWidget(self.settings_btn, 0, Qt.AlignmentFlag.AlignHCenter)
-
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        top.addWidget(title_label)
-        top.addStretch()
-        top.addWidget(self.camera_btn)
-        content = QVBoxLayout()
-        content.setContentsMargins(16, 12, 16, 12)
-        content.setSpacing(8)
-        content.addLayout(top)
-        content.addWidget(self.stack, stretch=1)
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(sidebar)
-        root.addLayout(content, stretch=1)
+        return sidebar
 
     def _start_workers(self) -> None:
+        """Create the three worker threads, connect their signals and start them."""
         self._camera = WorkerThread(CameraWorker(), "lorebook-camera")
         self._scan = WorkerThread(ScanWorker(), "lorebook-scan")
         self._build = WorkerThread(BuildWorker(), "lorebook-build")
@@ -221,6 +241,7 @@ class MainWindow(QWidget):
             worker.start()
 
     def _workers(self) -> list[WorkerThread]:
+        """Return the camera, scan and build worker threads."""
         return [self._camera, self._scan, self._build]
 
     # ------------------------------------------------------------------ theme / scale
@@ -239,7 +260,8 @@ class MainWindow(QWidget):
         self.collection_view.apply_icons(tokens["text"], tokens["danger"])
         self.scanner.apply_scale(self.height())
 
-    def resizeEvent(self, event) -> None:
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Rescale the Scanner page's fixed-size controls to the new window height."""
         self.scanner.apply_scale(self.height())
         super().resizeEvent(event)
 
@@ -250,12 +272,14 @@ class MainWindow(QWidget):
         return self.settings.active_game()
 
     def _make_settings_dialog(self) -> SettingsWindow:
+        """Return a Settings dialog wired to apply settings and request rebuilds."""
         dlg = SettingsWindow(self.settings, self)
         dlg.applied.connect(self._apply_settings)
         dlg.rebuild_requested.connect(self._rebuild_database)
         return dlg
 
     def open_settings(self) -> None:
+        """Show the Settings dialog and wait until it closes."""
         self._make_settings_dialog().exec()
 
     def _apply_settings(self, new: AppSettings) -> None:
@@ -266,15 +290,18 @@ class MainWindow(QWidget):
         self.scanner.apply_settings(new)
 
     def save_settings(self) -> None:
+        """Write the current settings to ui_settings.json."""
         self.settings.save()
 
     # ------------------------------------------------------------------ shutdown
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        """Save settings, release the camera and stop the workers before the window closes."""
         self.save_settings()
         # Release the camera, stop a running build at its next safe point
         # (downloads and cache writes are atomic), drop any in-flight scan.
         self.stop_camera()
+        self._rebuild_queued = False
         self._build_cancel_event.set()
         self._scan_token += 1
         self.stop_workers()
@@ -304,10 +331,10 @@ class MainWindow(QWidget):
     def start_db_build_in_background(self) -> None:
         """Build every game folder's database on the build worker."""
         try:
-            os.makedirs(BASE_DATABASE_PATH, exist_ok=True)
-            folders = game_folders(BASE_DATABASE_PATH)
+            os.makedirs(CARD_IMAGES_DIR, exist_ok=True)
+            folders = game_folders(CARD_IMAGES_DIR)
         except OSError as e:
-            logger.error("Error scanning %s: %s", BASE_DATABASE_PATH, e)
+            logger.error("Error scanning %s: %s", CARD_IMAGES_DIR, e)
             self.scanner.set_status_text("Error scanning Card_Images directory")
             return
         if not folders:
@@ -317,8 +344,11 @@ class MainWindow(QWidget):
         if self._progress_dialog is None:
             self._progress_dialog = BuildProgressDialog(self)
             self._progress_dialog.cancel_requested.connect(self._cancel_db_build)
-        # One build at a time — Rebuild during the startup build re-shows its dialog.
+        # One build at a time. The running build was given its folder list when
+        # it started, so run again when it finishes to pick up what changed
+        # since (a game folder Rebuild just created, newly added images).
         if self._build_running:
+            self._rebuild_queued = True
             self._progress_dialog.show()
             self._progress_dialog.raise_()
             return
@@ -331,18 +361,23 @@ class MainWindow(QWidget):
         self.build_requested.emit(folders, self._build_cancel_event)
 
     def _cancel_db_build(self) -> None:
+        """Ask the running database build to stop at its next safe point."""
         logger.info("Database build cancel requested")
+        self._rebuild_queued = False  # Cancel means stop, not "stop, then start over"
         self._build_cancel_event.set()  # thread-safe; read by the build job
 
     def _on_build_status(self, text: str) -> None:
+        """Show the build's latest status line in the progress dialog."""
         if self._progress_dialog is not None:
             self._progress_dialog.set_status(text)
 
     def _on_build_progress(self, pct: int) -> None:
+        """Move the progress bar to the build's latest percentage."""
         if self._progress_dialog is not None:
             self._progress_dialog.set_progress(pct)
 
     def _on_build_done(self, report: BuildReport) -> None:
+        """Hide the progress dialog, report how the build ended and reload stale data."""
         self._build_running = False
         if self._progress_dialog is not None:
             self._progress_dialog.hide()
@@ -356,39 +391,42 @@ class MainWindow(QWidget):
                 f"Database build failed for {', '.join(report.failed)} — see logs/card_scanner.log."
             )
         self.scan_db_invalidated.emit()  # vectors may be stale after a rebuild
-        clear_price_cache()        # price/rate files may have been rewritten
+        clear_price_cache()  # price/rate files may have been rewritten
         if report.prices_refreshed:
             self.scanner.refresh_current_match()
+        queued, self._rebuild_queued = self._rebuild_queued, False
+        if queued and not report.cancelled:
+            self.start_db_build_in_background()
 
     # ------------------------------------------------------------------ camera
 
     def _on_camera_btn(self) -> None:
         """The smart toggle: Start when idle, Stop when running."""
-        if self._camera_state == "running":
+        if self._camera_state == CameraState.RUNNING:
             self.stop_camera()
-        elif self._camera_state == "idle":
+        elif self._camera_state == CameraState.IDLE:
             self.start_camera()
 
-    def _set_camera_state(self, state: str) -> None:
+    def _set_camera_state(self, state: CameraState) -> None:
         """Sync the camera toggle's text/icon/enabled + [cam=...] QSS state."""
         self._camera_state = state
         tokens = theme_tokens(self.settings.theme)
         text, icon, color, enabled = {
-            "starting": ("Starting…", "camera", tokens["muted"], False),
-            "running": ("Stop", "stop", tokens["danger"], True),
+            CameraState.STARTING: ("Starting…", "camera", tokens["muted"], False),
+            CameraState.RUNNING: ("Stop", "stop", tokens["danger"], True),
         }.get(state, ("Start", "play", tokens["on_accent"], True))
         self.camera_btn.setText(text)
         self.camera_btn.setIcon(get_icon(icon, color))
         self.camera_btn.setEnabled(enabled)
         # Property-based QSS needs an explicit repolish to take effect
-        self.camera_btn.setProperty("cam", state)
+        self.camera_btn.setProperty("cam", state.value)  # styles.py: cameraBtn[cam="..."]
         self.camera_btn.style().unpolish(self.camera_btn)
         self.camera_btn.style().polish(self.camera_btn)
 
     def start_camera(self) -> None:
         """Ask the camera worker to open the camera (probing + warm-up run there)."""
         self.last_frame = None
-        self._set_camera_state("starting")
+        self._set_camera_state(CameraState.STARTING)
         self.scanner.show_camera_message("Starting camera…")
         self.scanner.set_status_text("Starting camera…")
         self.camera_start_requested.emit(self.settings.camera_index)
@@ -399,28 +437,33 @@ class MainWindow(QWidget):
         self._show_camera_stopped()
 
     def _show_camera_stopped(self) -> None:
+        """Reset the camera state and the preview to their stopped appearance."""
         self.watchdog.stop()
         self.last_frame = None
         self.last_frame_time = None
-        self._set_camera_state("idle")
+        self._set_camera_state(CameraState.IDLE)
         self.scanner.show_camera_message("Camera stopped")
 
     def _on_camera_state(self, state: str) -> None:
-        if state == "running":
+        """Follow the camera worker's state: start the watchdog on running, reset on idle."""
+        camera_state = CameraState(state)  # the signal carries plain text
+        if camera_state == CameraState.RUNNING:
             self.last_frame_time = time.monotonic()
             self.watchdog.start()
-            self._set_camera_state("running")
+            self._set_camera_state(CameraState.RUNNING)
             self.scanner.set_status_text("Camera running …")
-        elif state == "idle":
+        elif camera_state == CameraState.IDLE:
             self._show_camera_stopped()
         else:
-            self._set_camera_state(state)
+            self._set_camera_state(camera_state)
 
     def _on_camera_failed(self, message: str) -> None:
+        """Reset the camera UI and tell the user why the camera failed."""
         self._show_camera_stopped()
         QMessageBox.warning(self, "Camera Error", f"{message}\n\nTry a different camera index in Settings.")
 
     def _watchdog_tick(self) -> None:
+        """Stop the camera if no frame has arrived for three seconds."""
         if self.last_frame_time is not None and (time.monotonic() - self.last_frame_time) > 3.0:
             self.stop_camera()
             self._on_camera_failed("No frames received for 3 seconds. Camera stopped.")
@@ -428,14 +471,14 @@ class MainWindow(QWidget):
     def _on_frame(self, frame: np.ndarray) -> None:
         """A new camera frame: keep it, maybe auto-scan, show it with the overlay."""
         try:
-            if self._camera_state != "running":
+            if self._camera_state != CameraState.RUNNING:
                 return  # a frame sent before a Stop/failure arrived late
             self.last_frame_time = time.monotonic()
             if self.settings.rotate_display:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
             self.last_frame = frame
             if self.settings.auto_scan and self._motion_gate.update(motion_sample(frame)):
-                self.capture_and_match()
+                self.request_scan()
             overlay = draw_focus_overlay(frame)
             if self.settings.debug_mode:
                 # The heatmap needs a model prediction: computed on the scan
@@ -450,12 +493,13 @@ class MainWindow(QWidget):
             self._camera.worker.frame_consumed()  # ready for the next frame
 
     def _on_heatmap(self, image: np.ndarray) -> None:
+        """Keep the latest debug heatmap and allow the next one to be requested."""
         self._heatmap_pending = False
         self._last_heatmap = image if self.settings.debug_mode else None
 
     # ------------------------------------------------------------------ scanning
 
-    def capture_and_match(self) -> None:
+    def request_scan(self) -> None:
         """Scan the current frame on the scan worker; results arrive in _on_scan_done."""
         if self._scan_busy:
             return  # one scan at a time; auto-scan simply skips this trigger
@@ -476,6 +520,7 @@ class MainWindow(QWidget):
         self.scan_job_requested.emit(self._scan_token, img, self.settings.confidence_threshold, game)
 
     def _on_scan_done(self, token: int, result: ScanResult) -> None:
+        """Show the scan worker's result, unless a newer scan has replaced it."""
         if token != self._scan_token:
             return  # superseded (or the window is closing)
         self._scan_busy = False
@@ -502,14 +547,17 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------ pages / keyboard
 
     def _on_page_changed(self, index: int) -> None:
+        """Reload the collection table when its page is shown."""
         if self.stack.widget(index) is self.collection_view:
             self.collection_view.refresh()
 
-    def focusInEvent(self, event) -> None:
+    def focusInEvent(self, event: QFocusEvent) -> None:
+        """Keep keyboard focus on the window so the scan shortcuts keep working."""
         self.setFocus()
         super().focusInEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Route key presses to the Scanner page's shortcuts while that page is showing."""
         # Scan shortcuts are Scanner-page-only: browsing the collection table
         # must not trigger captures or foil toggles.
         if self.stack.currentWidget() is self.scanner and self.scanner.handle_key(event):

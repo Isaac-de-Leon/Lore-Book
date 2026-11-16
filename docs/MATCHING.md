@@ -15,10 +15,10 @@ camera frame ──► focus-box crop ──► MobileNetV2 ──► 1280-dim v
    `focus_rect()` / `crop_to_card()` in `lorebook/core/image_utils.py` — so
    the model sees the card, not the table.
 
-2. **Feature extraction.** `lorebook/core/features.py` runs MobileNetV2
+2. **Feature extraction.** `lorebook/core/features/` runs MobileNetV2
    (ImageNet weights, no top, global average pooling): the image is resized
    to 224×224, scaled to [-1, 1], and pooled into a **1280-dim float32
-   vector**, which is L2-normalized (`_finalize`). Three interchangeable
+   vector**, which is L2-normalized (`finalize_vector`). Three interchangeable
    backends — `"onnx"` (desktop default when onnxruntime is installed),
    `"keras"` (TensorFlow fallback) and `"tflite"` (Raspberry Pi) — share
    identical preprocessing, so their vectors are cache-compatible
@@ -30,11 +30,11 @@ camera frame ──► focus-box crop ──► MobileNetV2 ──► 1280-dim v
    but allows Microsoft-signed onnxruntime. `LOREBOOK_BACKEND` overrides the
    default. DB builds use
    `extract_batch()` to amortize predict overhead; single-image scans call
-   the model directly instead (`_infer`), since `predict()` builds a tf.data
+   the model directly instead (`infer`), since `predict()` builds a tf.data
    pipeline on every call.
 
 3. **The reference cache.** `build_feature_database()`
-   (`lorebook/core/card_database.py`) extracts a vector for every image in
+   (`lorebook/core/feature_cache.py`) extracts a vector for every image in
    `Card_Images/<Game>/` and stores them in `DBCardCache_<Game>.db`
    (SQLite, filename → **float32** vector blob — float32 is a contract:
    blobs are read back with `np.frombuffer(dtype=np.float32)`, so any other

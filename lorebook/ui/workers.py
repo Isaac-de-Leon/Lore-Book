@@ -1,25 +1,35 @@
-# workers.py — QObject workers that run on their own QThread (ui/threads.py).
-#
-# Each worker exposes slots the GUI calls through queued signals, and reports
-# back only through its own signals (delivered on the GUI thread). Slots are
-# boundaries: whatever happens inside, the GUI must hear back, so each one
-# ends by emitting its result even on an unexpected error.
+"""QObject workers that run on their own QThread (ui/threads.py).
+
+Each worker exposes slots the GUI calls through queued signals, and reports
+back only through its own signals (delivered on the GUI thread). Slots are
+boundaries: whatever happens inside, the GUI must hear back, so each one
+ends by emitting its result even on an unexpected error.
+"""
 
 import contextlib
 import logging
 import threading
 from dataclasses import dataclass
+from enum import StrEnum
 
 import cv2
 import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from lorebook.core.build import BuildReport, refresh_and_build
-from lorebook.core.card_database import GameDatabase
+from lorebook.core.feature_cache import GameDatabase
 from lorebook.core.features import extract_features, get_extractor, visualize_activation_overlay
 from lorebook.hardware.camera import open_capture
 
 logger = logging.getLogger(__name__)
+
+
+class CameraState(StrEnum):
+    """Where the camera is in its lifecycle; sent as text by CameraWorker.state_changed."""
+
+    IDLE = "idle"
+    STARTING = "starting"
+    RUNNING = "running"
 
 
 class BuildWorker(QObject):
@@ -30,16 +40,17 @@ class BuildWorker(QObject):
     """
 
     status = Signal(str)
-    progress = Signal(int)       # 0–100, or -1 for indeterminate
-    done = Signal(object)        # BuildReport
+    progress = Signal(int)  # 0–100, or -1 for indeterminate
+    done = Signal(object)  # BuildReport
 
     @Slot(object, object)
     def run(self, games: list[str], cancel_event: threading.Event) -> None:
+        """Run the refresh-and-build job for games and emit done with its report, even on failure."""
         try:
             report = refresh_and_build(
                 games, cancel_event=cancel_event, status=self.status.emit, progress=self.progress.emit
             )
-        except Exception:  # noqa: BLE001 — boundary: the GUI must always get done()
+        except Exception:  # boundary: the GUI must always get done()
             logger.exception("Database build job failed")
             report = BuildReport(failed=list(games), cancelled=cancel_event.is_set())
         self.done.emit(report)
@@ -53,17 +64,18 @@ class CameraWorker(QObject):
     frame_ready one at a time: the next is only sent after the GUI calls
     frame_consumed(), so a slow GUI drops frames instead of queueing a backlog.
 
-    States (state_changed): "starting" → "running" → "idle".
+    States (state_changed, see CameraState): STARTING → RUNNING → IDLE.
     """
 
     state_changed = Signal(str)
-    frame_ready = Signal(object)   # np.ndarray (BGR); never mutated after emit
+    frame_ready = Signal(object)  # np.ndarray (BGR); never mutated after emit
     failed = Signal(str)
 
-    MAX_READ_FAILS = 20            # consecutive bad reads before giving up
-    READ_INTERVAL_MS = 5           # read() itself blocks until the next frame
+    MAX_READ_FAILS = 20  # consecutive bad reads before giving up
+    READ_INTERVAL_MS = 5  # read() itself blocks until the next frame
 
     def __init__(self) -> None:
+        """Start with no camera open."""
         super().__init__()
         self._cap: cv2.VideoCapture | None = None
         self._timer: QTimer | None = None
@@ -77,14 +89,15 @@ class CameraWorker(QObject):
 
     @Slot(int)
     def start(self, camera_index: int) -> None:
+        """Open the camera and begin reading frames; emits failed if it can't be opened."""
         self._close()
-        self.state_changed.emit("starting")
+        self.state_changed.emit(CameraState.STARTING)
         try:
             cap = open_capture(camera_index)
         # Boundary: whatever happens, the GUI must hear back (it sits in
         # "Starting…" until state_changed/failed arrives).
         except Exception as e:  # noqa: BLE001
-            self.state_changed.emit("idle")
+            self.state_changed.emit(CameraState.IDLE)
             self.failed.emit(str(e))
             return
         self._cap = cap
@@ -95,12 +108,13 @@ class CameraWorker(QObject):
             self._timer.setInterval(self.READ_INTERVAL_MS)
             self._timer.timeout.connect(self._read_frame)
         self._timer.start()
-        self.state_changed.emit("running")
+        self.state_changed.emit(CameraState.RUNNING)
 
     @Slot()
     def stop(self) -> None:
+        """Stop reading frames and release the camera."""
         self._close()
-        self.state_changed.emit("idle")
+        self.state_changed.emit(CameraState.IDLE)
 
     def release(self) -> None:
         """Free the camera after the thread has stopped (shutdown path).
@@ -111,11 +125,13 @@ class CameraWorker(QObject):
         self._release_capture()
 
     def _close(self) -> None:
+        """Stop the read timer and release the camera."""
         if self._timer is not None:
             self._timer.stop()
         self._release_capture()
 
     def _release_capture(self) -> None:
+        """Release the OpenCV capture, tolerating a camera that has already died."""
         if self._cap is not None:
             try:
                 with contextlib.suppress(cv2.error):  # a dead camera may refuse
@@ -124,6 +140,7 @@ class CameraWorker(QObject):
                 self._cap = None
 
     def _read_frame(self) -> None:
+        """Read one frame and emit it if the GUI is ready; give up after too many failed reads."""
         if self._cap is None:
             return
         try:
@@ -135,7 +152,7 @@ class CameraWorker(QObject):
             self._fails += 1
             if self._fails > self.MAX_READ_FAILS:
                 self._close()
-                self.state_changed.emit("idle")
+                self.state_changed.emit(CameraState.IDLE)
                 self.failed.emit("Camera not delivering frames.")
             return
         self._fails = 0
@@ -146,10 +163,12 @@ class CameraWorker(QObject):
 
 @dataclass
 class ScanResult:
+    """What one scan produced: the matches, or why there are none."""
+
     game: str
-    matches: list[tuple[str, float]] | None   # None: no database, or extraction failed
+    matches: list[tuple[str, float]] | None  # None: no database, or extraction failed
     error: str | None = None
-    no_database: bool = False                 # the game's feature cache is empty/missing
+    no_database: bool = False  # the game's feature cache is empty/missing
 
 
 class ScanWorker(QObject):
@@ -161,14 +180,15 @@ class ScanWorker(QObject):
     - heatmap: the debug-mode activation overlay for a preview frame.
     - warm_up: load the model at startup so the first scan doesn't stall.
     The worker owns its GameDatabase; nothing else reads it. Model use is
-    serialized by features._model_lock, with scans taking priority over
+    serialized by features.keras_backend.model_lock, with scans taking priority over
     DB-build batches.
     """
 
-    done = Signal(int, object)        # (token, ScanResult)
-    heatmap_ready = Signal(object)    # np.ndarray (BGR)
+    done = Signal(int, object)  # (token, ScanResult)
+    heatmap_ready = Signal(object)  # np.ndarray (BGR)
 
     def __init__(self) -> None:
+        """Create the worker with no game's vectors loaded yet."""
         super().__init__()
         self._db = GameDatabase()
 
@@ -187,6 +207,7 @@ class ScanWorker(QObject):
 
     @Slot(int, object, float, str)
     def scan(self, token: int, img_bgr: np.ndarray, threshold: float, game: str) -> None:
+        """Match one image against the game's database and emit done with the result."""
         try:
             if not self._db.ensure(game):  # reloads only after a game switch or rebuild
                 result = ScanResult(game, None, no_database=True)
@@ -195,13 +216,14 @@ class ScanWorker(QObject):
                 matches = self._db.index.find(features, threshold=threshold) if features is not None else None
                 result = ScanResult(game, matches)
         # Boundary: the GUI stays in "Scanning…" until done() arrives.
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.exception("Scan failed")
             result = ScanResult(game, None, str(e))
         self.done.emit(token, result)
 
     @Slot(object)
     def heatmap(self, frame_bgr: np.ndarray) -> None:
+        """Emit the frame with the activation heatmap blended in, or unchanged if that fails."""
         try:
             out = visualize_activation_overlay(frame_bgr)
         except Exception as e:  # noqa: BLE001 — debug aid; show the plain frame instead
